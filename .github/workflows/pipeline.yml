@@ -1,0 +1,343 @@
+# =============================================================================
+# CI/CD Pipeline (single workflow)
+# =============================================================================
+# Triggered:
+#   - On every PR (whatever the target branch).
+#   - On every push to `develop` or `main`.
+#
+# All stages are wired together via `needs:`. Failures stop the pipeline; CD
+# stages NEVER run if any CI stage failed because they literally depend on
+# the preceding job tree.
+#
+# Stages:
+#   lint -> typecheck -> test ┬ build-verify   (on PR only; no publish)
+#                              └ build-publish (on push only)
+#                                       └ deploy-develop (push to develop)
+#                                       └ deploy-prod    (push to main)
+#
+# What the pipeline does per push to a protected branch:
+#   - Validates the change (lint / typecheck / test).
+#   - Builds an immutable Docker image tagged with the commit SHA and pushes
+#     it to GCP Artifact Registry.
+#   - Deploys that image to the matching Cloud Run service. Per-environment
+#     differences live in env vars / secrets injected at runtime.
+#
+# Note: in this gitflow `develop` (integration of WIP features) and `main`
+# (merged stable) hold genuinely different code at any moment, so each push
+# produces ITS OWN artifact for ITS environment. We are NOT promoting one
+# image across environments — the value is immutability, traceability and
+# fast rollback.
+#
+# ----------------------------------------------------------------------------
+# STATUS: scaffolded but NOT YET ACTIVE for build/deploy stages.
+# Every GCP step in `build-publish` and `deploy-*` is commented out so the
+# workflow runs green until the repo configures secrets/variables (see
+# `.github/workflows/README.md`). Uncomment the blocks marked
+# `# ---- Uncomment everything below ...` once GCP is set up.
+# ----------------------------------------------------------------------------
+# =============================================================================
+
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+# Cancel previous runs from the same PR to avoid wasted compute. Do NOT cancel
+# in-progress runs from pushes (deploy must not be left half-applied).
+concurrency:
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: write       # required to create release tags
+  id-token: write       # required for Workload Identity Federation (GCP auth)
+  pull-requests: write
+  checks: write
+
+# Opt every javascript action into the Node.js 24 runtime ahead of the
+# 2026-06-02 default switch, so we are not affected by the Node 20 deprecation
+# warning on `actions/checkout@v4` and similar actions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  # ===========================================================================
+  # CI: LINT — formatting and static rules
+  # ===========================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # TODO: set up runtime + dependency cache.
+      # Examples:
+      #   - uses: actions/setup-node@v4
+      #     with: { node-version: '20', cache: 'npm' }
+      #   - uses: actions/setup-python@v5
+      #     with: { python-version: '3.12', cache: 'pip' }
+      #   - uses: oven-sh/setup-bun@v2
+
+      # TODO: install dependencies.
+      # - run: npm ci
+      # - run: pip install -r requirements.txt
+
+      # TODO: run linters / formatters (must fail the job on errors).
+      # - run: npm run lint
+      # - run: npm run format:check
+      # - run: ruff check .
+      # - run: black --check .
+
+  # ===========================================================================
+  # CI: TYPE CHECK — static type verification (if applicable to the stack)
+  # ===========================================================================
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # TODO: set up runtime + dependencies (same as the lint job).
+
+      # TODO: type-check sources.
+      # - run: npm run typecheck      # tsc --noEmit
+      # - run: mypy src/
+      # - run: pyright
+
+  # ===========================================================================
+  # CI: TEST — unit + integration tests
+  # ===========================================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: typecheck
+
+    # TODO: services required for integration tests.
+    # services:
+    #   postgres:
+    #     image: postgres:16
+    #     env:
+    #       POSTGRES_PASSWORD: test
+    #       POSTGRES_DB: test_db
+    #     ports: ['5432:5432']
+    #     options: >-
+    #       --health-cmd pg_isready
+    #       --health-interval 10s
+    #       --health-timeout 5s
+    #       --health-retries 5
+    #   redis:
+    #     image: redis:7
+    #     ports: ['6379:6379']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # TODO: set up runtime + dependencies.
+
+      # TODO: run tests with coverage. The job MUST fail if any test fails.
+      # - run: npm test -- --coverage
+      # - run: pytest --cov=src --cov-report=xml
+
+      # TODO: upload coverage (Codecov / Coveralls / artifact).
+      # - uses: codecov/codecov-action@v4
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     fail_ci_if_error: false
+
+      # TODO: publish test report as a PR check.
+      # - uses: dorny/test-reporter@v1
+      #   if: success() || failure()
+      #   with:
+      #     name: Tests
+      #     path: '**/test-results/*.xml'
+      #     reporter: jest-junit
+
+  # ===========================================================================
+  # CI: BUILD (verification, PRs only)
+  # ===========================================================================
+  build-verify:
+    name: Build (verification)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # TODO: set up runtime + dependencies.
+
+      # TODO: compile / package locally (no push).
+      # - run: npm run build
+      # - run: docker build -t app:ci-${{ github.sha }} .
+      # - run: ./gradlew assemble
+
+  # ===========================================================================
+  # CD: BUILD & PUBLISH (push to develop/main only)
+  # ===========================================================================
+  build-publish:
+    name: Build & publish artifact
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: test
+    # outputs:
+    #   image: ${{ steps.image.outputs.uri }}
+    #   sha_short: ${{ steps.image.outputs.sha_short }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Placeholder
+        run: |
+          echo "Pipeline reached build-publish. Build is not configured yet."
+          echo "Branch: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+
+      # ---- Uncomment everything below once GCP is configured ------------------
+      #
+      # # GCP authentication via Workload Identity Federation (no static keys).
+      # # Configure the WIF provider + service account in the GCP project and
+      # # store their values as repo/org secrets.
+      # - name: Authenticate to Google Cloud
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+      #     service_account: ${{ secrets.GCP_BUILD_SA }}
+      #
+      # - name: Set up gcloud
+      #   uses: google-github-actions/setup-gcloud@v2
+      #
+      # - name: Compute image URI
+      #   id: image
+      #   env:
+      #     HEAD_SHA: ${{ github.sha }}
+      #   run: |
+      #     SHA_SHORT="${HEAD_SHA::7}"
+      #     # TODO: replace these vars (Settings -> Variables) before enabling.
+      #     REGION="${{ vars.GCP_REGION }}"        # e.g. southamerica-east1
+      #     PROJECT="${{ vars.GCP_PROJECT }}"      # e.g. parkit-now
+      #     REPO="${{ vars.GCP_AR_REPO }}"         # Artifact Registry repo name
+      #     SERVICE="${{ vars.SERVICE_NAME }}"     # e.g. parkit-backend
+      #     IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${SERVICE}:${SHA_SHORT}"
+      #     echo "uri=${IMAGE}" >> "$GITHUB_OUTPUT"
+      #     echo "sha_short=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+      #
+      # # TODO: build & push the artifact.
+      # # Option A — Cloud Build (simplest, runs on GCP):
+      # # - run: |
+      # #     gcloud builds submit \
+      # #       --tag "${{ steps.image.outputs.uri }}" \
+      # #       --gcs-log-dir="gs://${{ vars.GCP_BUILD_LOGS_BUCKET }}/logs"
+      # #
+      # # Option B — docker buildx (multi-arch / layer cache):
+      # # - uses: docker/login-action@v3
+      # #   with:
+      # #     registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+      # #     username: oauth2accesstoken
+      # #     password: ${{ steps.auth.outputs.access_token }}
+      # # - uses: docker/build-push-action@v6
+      # #   with:
+      # #     context: .
+      # #     push: true
+      # #     tags: ${{ steps.image.outputs.uri }}
+      # #     cache-from: type=gha
+      # #     cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # CD: DEPLOY -> develop env (when push was to `develop`)
+  # ===========================================================================
+  deploy-develop:
+    name: Deploy -> develop
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: build-publish
+    runs-on: ubuntu-latest
+    # environment:
+    #   name: develop
+    #   url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Placeholder
+        run: echo "Deploy to develop env is not configured yet."
+
+      # ---- Uncomment everything below once GCP is configured ------------------
+      #
+      # - name: Authenticate to Google Cloud
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+      #     service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      #
+      # - name: Set up gcloud
+      #   uses: google-github-actions/setup-gcloud@v2
+      #
+      # - name: Deploy to Cloud Run (develop)
+      #   id: deploy
+      #   run: |
+      #     gcloud run deploy "${{ vars.SERVICE_NAME }}-develop" \
+      #       --image "${{ needs.build-publish.outputs.image }}" \
+      #       --region "${{ vars.GCP_REGION }}" \
+      #       --platform managed \
+      #       --service-account "${{ vars.RUN_SA_DEVELOP }}" \
+      #       --update-env-vars ENVIRONMENT=develop
+      #       # TODO: add --update-secrets KEY=secret-name:latest,...
+      #       # TODO: add --allow-unauthenticated or --no-allow-unauthenticated
+      #       # TODO: add --max-instances / --min-instances / --memory / --cpu
+      #
+      # # TODO (optional): smoke test against the deployed URL.
+      # # - run: curl --fail "${{ steps.deploy.outputs.url }}/health"
+
+  # ===========================================================================
+  # CD: DEPLOY -> production (when push was to `main`)
+  # ===========================================================================
+  deploy-prod:
+    name: Deploy -> PROD
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-publish
+    runs-on: ubuntu-latest
+    # environment:
+    #   name: production
+    #   url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Placeholder
+        run: echo "Deploy to PROD is not configured yet."
+
+      # ---- Uncomment everything below once GCP is configured ------------------
+      #
+      # - name: Authenticate to Google Cloud
+      #   uses: google-github-actions/auth@v2
+      #   with:
+      #     workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+      #     service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      #
+      # - name: Set up gcloud
+      #   uses: google-github-actions/setup-gcloud@v2
+      #
+      # - name: Deploy to Cloud Run (production)
+      #   id: deploy
+      #   run: |
+      #     gcloud run deploy "${{ vars.SERVICE_NAME }}" \
+      #       --image "${{ needs.build-publish.outputs.image }}" \
+      #       --region "${{ vars.GCP_REGION }}" \
+      #       --platform managed \
+      #       --service-account "${{ vars.RUN_SA_PROD }}" \
+      #       --update-env-vars ENVIRONMENT=production
+      #       # TODO: --update-secrets / scaling flags / authentication policy.
+      #
+      # # TODO: tag the release with auto-bumped SemVer derived from
+      # # conventional commits. Examples: release-please, semantic-release,
+      # # or a Conventional Commits action.
+      # # - uses: googleapis/release-please-action@v4
+      # #   with:
+      # #     release-type: node     # or python / go / generic
+      # #     package-name: parkit
+      # #
+      # # The same image (tagged by SHA) is also tagged with the new SemVer,
+      # # so rollbacks become a one-line redeploy of the previous tag.
+      # # - run: |
+      # #     gcloud artifacts docker tags add \
+      # #       "${{ needs.build-publish.outputs.image }}" \
+      # #       "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/${{ vars.GCP_AR_REPO }}/${{ vars.SERVICE_NAME }}:${{ steps.release.outputs.tag_name }}"
