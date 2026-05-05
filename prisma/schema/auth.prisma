@@ -1,0 +1,31 @@
+// Auth: roles and users for the web/desktop/mobile platform.
+// User.id is assigned by Supabase Auth — no @default here.
+//
+// Tenant association does NOT live here. It lives in `UserMembership`
+// (N:M, see memberships.prisma). A tenant equals a parking lot, so:
+//   - owner: 0..N memberships (one per parking lot they run; 0 until they
+//            create their first one).
+//   - operator: 0..N memberships (one per parking lot they work in).
+//   - driver / admin: always 0 memberships.
+// The "active tenant" used by RLS / `prismaForTenant` is carried in the
+// JWT (`app_metadata.tenant_id`) and chosen at login / switch-tenant time.
+
+enum UserRole {
+  admin    // platform-level, no tenant
+  owner    // parking-lot business owner, may run several lots
+  operator // booth operator, may work in several lots
+  driver   // mobile-app end user, no tenant
+
+  @@map("user_role")
+}
+
+model User {
+  id        String   @id @db.Uuid
+  role      UserRole
+  email     String   @unique @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  memberships UserMembership[]
+
+  @@map("users")
+}

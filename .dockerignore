@@ -1,0 +1,17 @@
+node_modules
+dist
+build
+coverage
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.idea
+.vscode
+README.md
+test
+supabase/.branches
+supabase/.temp
