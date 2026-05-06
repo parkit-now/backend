@@ -4,7 +4,7 @@ Este documento describe el flujo de trabajo Git, la convención de commits y la 
 
 ## Modelo de ramas y entornos
 
-Trabajamos con dos ramas permanentes y branches por feature/fix. **No hay SANDBOX**: la validación previa a producción ocurre en `develop` (STAGING).
+Trabajamos con dos ramas permanentes y branches por feature/fix. La validación previa a producción ocurre en `develop`.
 
 ### Ramas permanentes
 
@@ -23,6 +23,9 @@ Trabajamos con dos ramas permanentes y branches por feature/fix. **No hay SANDBO
 | `fix/*`   | Correcciones de bugs                      | `main` | `main`      |
 | `docs/*`  | Cambios solo de documentación             | `main` | `main`      |
 | `chore/*` | Tooling, dependencias, mantenimiento, CI  | `main` | `main`      |
+| `test/*`  | Tests nuevos o corrección de tests        | `main` | `main`      |
+| `refactor/*` | Refactors sin cambios funcionales          | `main` | `main`      |
+| `perf/*`  | Mejoras de performance                    | `main` | `main`      |
 
 Las ramas temporales **siempre salen de `main` actualizado** y **siempre apuntan a `main`** en el PR. `develop` es solo entorno de validación: se llega a STAGING reposicionando la rama de feature sobre `develop` (ver flujo más abajo), no abriendo un PR contra `develop`.
 
@@ -103,7 +106,7 @@ El flujo usa **rebase** para mantener la rama siempre arriba del último `main`.
 ```bash
 git switch main
 git pull --rebase origin main
-git switch -c feat/SCRUM-42-login-con-google
+git switch -c feat/SCRUM-42-branch-name
 ```
 
 ### 2. Desarrollar y commitear
@@ -112,14 +115,14 @@ Trabajar normalmente, aplicando Conventional Commits.
 
 ```bash
 git add .
-git commit -m "feat(auth): agregar handler de OAuth Google"
+git commit -m "feat(scope): descripción del cambio"
 ```
 
 Pushear la rama (la primera vez con `-u`):
 
 ```bash
 git pull --rebase origin main
-git push -u origin feat/SCRUM-42-login-con-google
+git push -u origin feat/SCRUM-42-branch-name
 ```
 
 Si reescribiste historia tras un rebase, usar:
@@ -130,29 +133,20 @@ git push --force-with-lease
 
 > Nunca usar `--force` a secas: `--force-with-lease` aborta el push si alguien más subió commits a tu rama desde tu último fetch, evitando pisar trabajo ajeno.
 
-### 3. Validar en STAGING (`develop`)
+### 3. Validar en `develop`
 
 Antes de pedir review se valida la rama en `develop`. Estamos *reposicionando* la rama de feature encima de `develop` y pusheándola — `develop` no acumula merges de features:
 
 ```bash
-git fetch origin
-git switch feat/SCRUM-42-login-con-google
-git pull --rebase origin main          # rebasear sobre la última main
-git switch -C develop origin/develop   # mover la rama local develop al remoto
-git pull --rebase origin main          # llevar develop también al tope de main
-git merge --ff-only feat/SCRUM-42-login-con-google
-git push --force-with-lease origin develop
+$ git switch <branch con los cambios que queremos subir>
+$ git pull --rebase origin main    # para asegurarnos que nuestros cambios queden sobre el master actual
+$ git switch -C develop            # -C (mayúscula) para crear una nueva rama local llamada develop con nuestros cambios
+$ git pull --rebase                # para hacer rebase de nuestros cambios sobre el develop remoto
+$ git pull --rebase origin main    # para asegurarnos que develop con todo también esté actualizado sobre main
+$ git push                         # para subir develop. puede necesitar `--force-with-lease` pero hay que ver como queda
 ```
 
-Ese push dispara el pipeline de STAGING. Si para QA hace falta historia más prolija, squashear primero los commits del feature:
-
-```bash
-git switch feat/SCRUM-42-login-con-google
-git rebase -i origin/main
-# en el editor: dejar `pick` el primero, `squash` (s) los demás
-```
-
-> **Nota sobre coordinación:** `develop` es compartida. Si otra persona tiene su feature ahí probándose, avisar en el canal del equipo antes de force-pushear. La regla es: el último que sube re-rebasa sobre `main` para evitar dejar el entorno desactualizado.
+Ese push dispara el pipeline de develop, que levanta un entorno de pruebas con los cambios aplicados. Ahí se prueba manualmente, se hacen demos, se valida que no rompió nada, etc.
 
 ### 4. Abrir PR contra `main`
 
@@ -176,7 +170,7 @@ Si los conflictos vienen del feature en sí, resolverlos manualmente y `git reba
 
 ### Reset controlado de `develop` (último recurso, coordinar primero)
 
-Si STAGING quedó inconsistente y se acuerda con el equipo reiniciarla:
+Si develop quedó inconsistente y se acuerda con el equipo reiniciarla:
 
 ```bash
 git fetch origin
@@ -186,6 +180,60 @@ git push --force-with-lease
 ```
 
 Esto borra commits que otras personas pudieran estar probando — **avisar siempre antes** en el canal del equipo.
+
+## Migraciones de base de datos
+
+**Las migraciones son append-only e inmutables en producción.** Una vez que un archivo está mergeado a `main` y aplicado a prod, *no se edita ni se borra nunca más*. Si te equivocaste, escribís **otra** migración que enmiende. Local es lo opuesto: podés borrar / renombrar / resetear todo lo que quieras *antes* de mergear.
+
+Por qué: en prod tenés data real, `supabase db push` sólo aplica archivos nuevos, y cualquier cambio retroactivo desincroniza al resto del equipo (que ya aplicó la versión anterior en su DB local y en sus PR previews).
+
+### Flujo dev → PR → prod
+
+El SQL en `supabase/migrations/` es la fuente de verdad. Los archivos `prisma/schema/*.prisma` se mantienen a mano para que matcheen el SQL — Prisma sólo genera el cliente TypeScript, no maneja migraciones.
+
+**1. Local (todo el laburo iterativo va acá).** Workflow para agregar/modificar el schema:
+
+```bash
+# 1. Crear el archivo de migración vacío
+make migration NAME=add_vehicles
+
+# 2. Editar el SQL en supabase/migrations/<timestamp>_add_vehicles.sql
+#    Si la tabla tiene tenant_id, replicar el patrón RLS de `users` (RLS + REVOKE anon + policies con (select auth.jwt())).
+
+# 3. Reflejar el cambio en prisma/schema/*.prisma (agregar/modificar el model correspondiente).
+
+# 4. Aplicar la migración local + regenerar el cliente Prisma
+make migration-apply
+
+# 5. Si la tabla tiene tenant_id: agregar el modelo a TENANT_MODELS
+#    en src/database/prisma-tenant.ts.
+```
+
+Mientras estés en tu rama podés tirar el archivo, renombrarlo, modificarlo, resetear (`make reset`) cien veces. Local es desechable.
+
+**Cuándo usar `make reset`**: si rompiste el SQL y `make migration-apply` deja la DB en un estado inconsistente, o cuando querés validar que la migración corre limpia desde cero. Borra data local y re-aplica todo.
+
+**Pulleaste cambios de un compañero**: corré `make migration-apply` — aplica las migraciones que él/ella agregó y regenera tu cliente Prisma. Mismo comando que cuando aplicás las tuyas.
+
+**Al mergear a `main`**, el workflow de CI corre `supabase db push --linked` contra prod. Aplica sólo las migraciones nuevas. La data persiste.
+
+A partir de ese momento ese archivo está **congelado**. Cambios futuros van en una migración nueva.
+
+### Reglas para no romper prod
+
+- **Forward-only**: no hay rollback. Si te equivocaste, escribís una migración nueva que enmiende.
+- **Una migración = un cambio coherente**. No mezcles "agregar tabla X" con "renombrar columna Y" en el mismo archivo.
+- **Nunca editar un archivo ya mergeado a `main`**. Si necesitás corregir, una migración nueva.
+- **Cambios destructivos en pasos** (expand/contract):
+    1. Migración: agregar la columna nueva.
+    2. Deploy: el código empieza a leer/escribir las dos.
+    3. Backfill: copiar datos de la vieja a la nueva.
+    4. Deploy: el código deja de usar la vieja.
+    5. Migración: `DROP COLUMN` la vieja (días después, cuando estés seguro).
+- **Renombrar es destructivo**: aplicá expand/contract en vez de `RENAME`.
+- **Backfills grandes en batches**, no en una sola transacción.
+- **Tablas grandes con tráfico**: usar `CREATE INDEX CONCURRENTLY`, evitar `ALTER TABLE` que tome `ACCESS EXCLUSIVE` lock por mucho tiempo.
+- **Probar en una Supabase branch** antes del merge cuando el cambio sea sensible.
 
 ## Reglas de convivencia
 

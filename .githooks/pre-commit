@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-commit hook: verifica formato (Prettier) y linting (ESLint).
+# Si alguno falla, aborta el commit. Para arreglar: `make format && make lint`.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Asegurar que herramientas locales y bun están en PATH (git puede invocar
+# el hook con un PATH mínimo según el cliente).
+export PATH="$PWD/node_modules/.bin:$HOME/.bun/bin:$PATH"
+
+if [[ ! -x "node_modules/.bin/prettier" || ! -x "node_modules/.bin/eslint" ]]; then
+  echo "✗ Faltan dependencias locales. Corré: make install"
+  exit 1
+fi
+
+echo "→ Prettier --check src/"
+if ! ./node_modules/.bin/prettier --check "src/**/*.ts"; then
+  echo ""
+  echo "✗ Prettier encontró archivos sin formatear. Corré: make format"
+  exit 1
+fi
+
+echo "→ ESLint src/"
+if ! ./node_modules/.bin/eslint "src/**/*.ts"; then
+  echo ""
+  echo "✗ ESLint reportó errores. Corré: make lint (auto-fix) o resolvé los errores manualmente."
+  exit 1
+fi
+
+echo "✓ Pre-commit OK"
