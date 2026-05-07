@@ -24,6 +24,12 @@ import { SupabaseJwtService } from './supabase-jwt.service';
     JwtAuthGuard,
     RolesGuard,
   ],
-  exports: [SupabaseJwtService, SupabaseAuthService, JwtAuthGuard, RolesGuard],
+  exports: [
+    UsersModule,
+    SupabaseJwtService,
+    SupabaseAuthService,
+    JwtAuthGuard,
+    RolesGuard,
+  ],
 })
 export class AuthModule {}

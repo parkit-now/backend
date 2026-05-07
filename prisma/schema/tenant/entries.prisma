@@ -1,0 +1,19 @@
+model Entry {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plate       String    @db.VarChar(10)
+  color       String?   @db.VarChar(50)
+  enteredAt   DateTime  @default(now()) @map("entered_at")
+  leftAt      DateTime? @map("left_at")
+  amountPaid  Decimal?  @map("amount_paid") @db.Decimal(10, 2)
+
+  // Relación con el vehículo (Global)
+  vehicleId   String    @map("vehicle_id") @db.Uuid
+  /// @DtoRelationCanConnectOnCreate
+  vehicle     Vehicle   @relation(fields: [vehicleId], references: [id])
+
+  // Relación con el tenant (Local/Entidad)
+  tenantId    String    @map("tenant_id") @db.Uuid
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@map("entries")
+}

@@ -14,7 +14,7 @@
 //   - Refuses to run unless SUPABASE_URL points to localhost / 127.0.0.1.
 //   - Refuses to run without SUPABASE_SERVICE_ROLE_KEY and DATABASE_URL.
 //
-// Trigger: `make seed` or `bun run seed`.
+// Trigger: `make seed-auth` or `bun run seed:auth`.
 
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type UserRole } from '@prisma/client';

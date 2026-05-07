@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { User, UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
-import { UserResponseDto } from './dto/user.dto';
+import { UserDto } from '../generated/nestjs-dto/user.dto';
 
 @Injectable()
 export class UsersService {
@@ -36,11 +36,12 @@ export class UsersService {
     return this.prisma.user.delete({ where: { id } });
   }
 
-  toResponse(user: User): UserResponseDto {
+  toResponse(user: User): UserDto {
     return {
       id: user.id,
       email: user.email,
       role: user.role,
+      createdAt: user.createdAt,
     };
   }
 }

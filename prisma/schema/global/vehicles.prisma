@@ -1,0 +1,13 @@
+model Vehicle {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  brand       String
+  model       String
+  type        String?
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  entries     Entry[]
+
+  @@map("vehicles")
+}
