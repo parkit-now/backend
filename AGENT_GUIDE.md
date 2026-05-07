@@ -54,6 +54,18 @@ Aplicación en este repo (estado actual):
 - CRUD de dominio debe importar desde `src/generated/nestjs-dto/`.
 - DTO manual permitido solo en contratos no-CRUD (por ejemplo `src/auth/dto`, `src/health/dto`, `src/utils/exceptions/dto`).
 
+## OAuth social (Google/GitHub)
+
+- No crear endpoints OAuth en NestJS para este alcance.
+- OAuth se inicia en cliente (web/desktop) con `supabase-js`; backend solo valida JWT bearer.
+- Para evitar `User not provisioned`, mantener aplicada la migración SQL de provisioning automático (`auth.users` -> `public.users` con rol `driver`).
+- Config local: `supabase/config.toml` + variables `SUPABASE_AUTH_EXTERNAL_*` en `.env`.
+- Config cloud: replicar providers/redirects en Supabase Dashboard.
+- `make env-check` debe advertir (no bloquear) cuando falten variables OAuth locales.
+- Hardening operativo:
+  - mantener `enable_manual_linking = false`;
+  - revisar política de verificación de email/proveedor antes de prod.
+
 ## 5) Reglas de seguridad multi-tenant
 
 Para cualquier modelo tenant-local, el agente DEBE verificar:

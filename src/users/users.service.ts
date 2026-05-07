@@ -27,9 +27,16 @@ export class UsersService {
    * Provision the `public.users` row that mirrors a Supabase Auth user.
    * `id` MUST equal `auth.users.id` (FK with ON DELETE CASCADE).
    * Tenant association (if any) is created separately in `user_memberships`.
+   *
+   * Idempotent by design: social OAuth may auto-provision this row in SQL
+   * triggers before the backend touches it.
    */
   create(input: { id: string; role: UserRole; email: string }): Promise<User> {
-    return this.prisma.user.create({ data: input });
+    return this.prisma.user.upsert({
+      where: { id: input.id },
+      create: input,
+      update: { role: input.role, email: input.email },
+    });
   }
 
   delete(id: string): Promise<User> {

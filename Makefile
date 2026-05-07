@@ -78,7 +78,23 @@ env-check: ## Validar que `.env` tenga variables críticas completas (sin placeh
 		if [[ "$$val" == \<* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
 			echo "✗ $$v parece placeholder ($$val). Completala con valores reales."; exit 1; \
 		fi; \
-	done
+	done; \
+	oauth_missing=0; \
+	for v in SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET; do \
+		val="$${!v:-}"; \
+		if [ -z "$$val" ]; then \
+			echo "⚠ $$v no está seteada en .env"; \
+			oauth_missing=1; \
+			continue; \
+		fi; \
+		if [[ "$$val" == \<* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
+			echo "⚠ $$v parece placeholder ($$val)."; \
+			oauth_missing=1; \
+		fi; \
+	done; \
+	if [ "$$oauth_missing" -eq 1 ]; then \
+		echo "⚠ Login social (Google/GitHub) quedará deshabilitado localmente hasta completar esas variables."; \
+	fi
 	@echo "✓ .env validado."
 
 studio: ## Abrir Supabase Studio en el navegador

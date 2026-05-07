@@ -46,6 +46,52 @@ make studio
 make logs
 ```
 
+## OAuth social (Google/GitHub)
+
+### Principio de arquitectura
+
+- El backend **no agrega endpoints OAuth**.
+- Web/Desktop inicia OAuth directo con Supabase (`supabase-js`).
+- La API sigue validando JWT con `SupabaseJwtService` (agnóstico al proveedor).
+
+### Setup local
+
+1. Completar en `.env`:
+   - `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID`
+   - `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET`
+   - `SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID`
+   - `SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET`
+2. Configurar callbacks en Google/GitHub OAuth App:
+   - Callback Supabase local: `http://127.0.0.1:54321/auth/v1/callback`
+3. Redirects de app permitidos (ya definidos en `supabase/config.toml`):
+   - `http://127.0.0.1:3000`
+   - `http://localhost:3000`
+   - `parkit://auth/callback` (desktop)
+4. Reiniciar Supabase local para tomar cambios:
+
+```bash
+make down
+make up
+```
+
+### Producción (Dashboard Supabase)
+
+- Replicar Google/GitHub providers en **Authentication > Providers**.
+- Cargar client ID/secret de cada proveedor.
+- Declarar los redirect URLs exactos de tus apps web y desktop.
+
+### Troubleshooting rápido
+
+- Si faltan variables OAuth, `make env-check` muestra warning y el resto del stack sigue funcionando.
+- El primer login social requiere internet; modo offline usa sesión ya emitida/caché local del cliente.
+- Si el usuario social autentica pero API responde `User not provisioned`, revisar que la migración del trigger esté aplicada.
+
+### Checklist de hardening (operativo)
+
+- Verificar en Supabase que `enable_manual_linking = false` (evita linking manual inseguro).
+- Revisar política de verificación de email/proveedor en Dashboard antes de habilitar signup abierto en prod.
+- Mantener rol inicial de auto-provisioning en `driver` (mínimo privilegio).
+
 ## 4) Seeds
 
 - Global (SQL):

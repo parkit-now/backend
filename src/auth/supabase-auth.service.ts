@@ -8,6 +8,10 @@ import type { SessionDto } from './dto/session.dto';
 
 /**
  * Wraps the Supabase Auth REST API behind our own HTTP surface.
+ * This service intentionally covers email/password + refresh/logout only.
+ * Social OAuth (Google/GitHub) is initiated directly by clients via
+ * supabase-js; backend authorization still works because JWT validation is
+ * provider-agnostic in `SupabaseJwtService`.
  *
  * Two clients live here:
  *   - `admin` — built with `SUPABASE_SERVICE_ROLE_KEY`. Required to create
