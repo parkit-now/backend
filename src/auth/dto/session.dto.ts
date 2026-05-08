@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { UserResponseDto } from '../../users/dto/user.dto';
+import { UserDto } from '../../generated/nestjs-dto/user.dto';
 
 /**
  * Tokens returned by login / refresh / register. Mirrors the relevant fields
@@ -43,9 +43,9 @@ export class SessionDto {
 export class AuthSessionResponseDto {
   @ApiProperty({
     description: 'The authenticated user.',
-    type: UserResponseDto,
+    type: UserDto,
   })
-  user: UserResponseDto;
+  user: UserDto;
 
   @ApiProperty({
     description: 'Tokens to use for subsequent calls.',

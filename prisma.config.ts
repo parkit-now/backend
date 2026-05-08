@@ -1,20 +1,13 @@
 import { defineConfig } from 'prisma/config';
 
-// Prisma 7: connection URLs no longer live in the schema. Define them here.
-//   - migrate.adapter → consumed by `prisma db push` / `prisma migrate`.
-//     Uses DIRECT_URL (no pgbouncer) so DDL commands work end-to-end.
-//   - The runtime client lives in src/database/prisma.service.ts and reads
-//     DATABASE_URL (the pooled URL) directly.
+// Prisma 7: datasource URLs are configured here (not in the schema file).
+// We keep SQL migrations in `supabase/migrations`; Prisma is used for client
+// generation and schema typing.
 export default defineConfig({
-    schema: './prisma/schema',
-    migrate: {
-        async adapter() {
-            const { Pool } = await import('pg');
-            const { PrismaPg } = await import('@prisma/adapter-pg');
-            const pool = new Pool({
-                connectionString: process.env.DIRECT_URL ?? process.env.DATABASE_URL,
-            });
-            return new PrismaPg(pool);
-        },
-    },
+  schema: './prisma/schema',
+  datasource: {
+    // For CLI/database commands that need a connection, prefer DIRECT_URL
+    // and fallback to DATABASE_URL.
+    url: process.env.DIRECT_URL ?? process.env.DATABASE_URL,
+  },
 });

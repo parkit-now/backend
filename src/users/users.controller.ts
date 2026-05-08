@@ -10,12 +10,12 @@ import {
 import type { User } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UserDto } from '../generated/nestjs-dto/user.dto';
 import { ProblemDetailsDto } from '../utils/exceptions/dto/problem-details.dto';
-import { UserResponseDto } from './dto/user.dto';
 import { UsersService } from './users.service';
 
 @ApiTags('Users')
-@ApiExtraModels(ProblemDetailsDto, UserResponseDto)
+@ApiExtraModels(ProblemDetailsDto, UserDto)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -39,7 +39,7 @@ export class UsersController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'The authenticated user.',
-    type: UserResponseDto,
+    type: UserDto,
   })
   @ApiUnauthorizedResponse({
     description:
@@ -77,7 +77,7 @@ export class UsersController {
       },
     },
   })
-  me(@CurrentUser() current: User): UserResponseDto {
+  me(@CurrentUser() current: User): UserDto {
     return this.usersService.toResponse(current);
   }
 }

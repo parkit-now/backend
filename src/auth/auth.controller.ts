@@ -77,9 +77,12 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     operationId: 'authLogin',
-    summary: 'Exchange email + password for a session',
-    description:
-      'Calls Supabase Auth `signInWithPassword`. On success returns short-lived `accessToken` and a long-lived `refreshToken`.',
+    summary: 'Exchange email + password for a session (email/password only)',
+    description: [
+      'Calls Supabase Auth `signInWithPassword`.',
+      '',
+      '**This endpoint is only for email/password login.** Social OAuth (Google/GitHub) is started client-side via Supabase SDK and does NOT call `POST /auth/login`.',
+    ].join('\n'),
   })
   @ApiOkResponse({ type: SessionDto })
   @ApiUnauthorizedResponse({

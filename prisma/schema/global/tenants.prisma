@@ -17,6 +17,7 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   memberships UserMembership[]
+  entries     Entry[]
 
   @@map("tenants")
 }

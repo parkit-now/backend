@@ -15,7 +15,8 @@ CYAN  := \033[36m
 RESET := \033[0m
 
 .PHONY: help install up down dev prod build test lint format \
-        migration migration-apply generate reset seed push status studio logs clean
+        migration migration-apply generate reset seed-all seed-global seed-auth seed-tenant \
+        env-check env-print push status studio logs clean
 
 ## ──────────────────────────────────────────────────────────────────
 ## Setup
@@ -48,7 +49,7 @@ install: ## Instalar bun + supabase CLI si faltan, y dependencias del proyecto
 
 up: install ## Levantar Supabase + aplicar migraciones nuevas (preserva data)
 	@supabase start
-	@-supabase migration up --local
+	@supabase migration up --local
 	@bun run db:generate >/dev/null
 	@echo "✓ Stack listo. Corré 'make dev' para levantar la API."
 
@@ -61,6 +62,40 @@ reset: ## Resetear DB local (borra data, re-aplica todas las migraciones)
 
 status: ## Ver estado de Supabase local
 	@supabase status
+
+env-print: ## Mostrar variables locales sugeridas desde `supabase status -o env`
+	@supabase status -o env
+
+env-check: ## Validar que `.env` tenga variables críticas completas (sin placeholders)
+	@if [ ! -f .env ]; then \
+		echo "✗ Falta .env. Corré: cp .env.example .env"; exit 1; fi
+	@set -a; . ./.env; set +a; \
+	for v in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET; do \
+		val="$${!v:-}"; \
+		if [ -z "$$val" ]; then \
+			echo "✗ $$v está vacía en .env"; exit 1; \
+		fi; \
+		if [[ "$$val" == \<* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
+			echo "✗ $$v parece placeholder ($$val). Completala con valores reales."; exit 1; \
+		fi; \
+	done; \
+	oauth_missing=0; \
+	for v in SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET; do \
+		val="$${!v:-}"; \
+		if [ -z "$$val" ]; then \
+			echo "⚠ $$v no está seteada en .env"; \
+			oauth_missing=1; \
+			continue; \
+		fi; \
+		if [[ "$$val" == \<* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
+			echo "⚠ $$v parece placeholder ($$val)."; \
+			oauth_missing=1; \
+		fi; \
+	done; \
+	if [ "$$oauth_missing" -eq 1 ]; then \
+		echo "⚠ Login social (Google/GitHub) quedará deshabilitado localmente hasta completar esas variables."; \
+	fi
+	@echo "✓ .env validado."
 
 studio: ## Abrir Supabase Studio en el navegador
 	@echo "Studio: http://localhost:54323"
@@ -115,8 +150,19 @@ migration-apply: ## Aplicar migraciones pendientes a DB local + regenerar client
 generate: ## Regenerar cliente Prisma desde el schema (sin tocar la DB)
 	@bun run db:generate
 
-seed: ## Cargar usuarios de demo en Supabase Auth (solo local)
-	@bun run scripts/seed.ts
+seed-all: seed-global seed-auth seed-tenant ## Ejecutar todas las seeds de desarrollo local
+	@echo "✓ Seed completo aplicado."
+
+seed-global: ## Aplicar seed SQL global (tenants + catálogo global) sobre DB local
+	@supabase start >/dev/null
+	@supabase db query --local --file supabase/seed.sql >/dev/null
+	@echo "✓ Seed global aplicado."
+
+seed-auth: env-check ## Cargar usuarios/memberships de demo en Supabase Auth (solo local)
+	@bun run scripts/seed-auth.ts
+
+seed-tenant: env-check ## Cargar datos tenant-locales de demo (entries por tenant)
+	@bun run scripts/seed-tenant.ts
 
 push: ## Aplicar migraciones pendientes a Supabase cloud (linked). Lo normal es que esto lo corra CI/CD
 	@echo "⚠ Vas a aplicar migraciones contra el proyecto Supabase linkeado."

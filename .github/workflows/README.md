@@ -35,14 +35,17 @@ literally cannot run unless every CI job above them succeeded:
                 |
               test
               /  \
-   build-verify   build-publish        (mutually exclusive via `if:`)
-   (PR only)      (push only)
+ migration-smoke   build-publish        (mutually exclusive via `if:`)
+    (PR only)      (push only)
+        |
+   build-verify
+    (PR only)
                        |
               deploy-develop   (push to develop)
               deploy-prod      (push to main)
 ```
 
-- On a **PR** (any target): `lint -> typecheck -> test -> build-verify`.
+- On a **PR** (any target): `lint -> typecheck -> test -> migration-smoke -> build-verify`.
   No publish, no deploy.
 - On a **push** to `develop` or `main`:
   `lint -> typecheck -> test -> build-publish -> deploy-<env>`.

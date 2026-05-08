@@ -1,0 +1,28 @@
+// Prisma — generator and datasource.
+// This file is the only configuration entrypoint; models live in sibling
+// files inside this folder, one per domain.
+//
+// In Prisma 7, `url` and `directUrl` move from the schema into
+// prisma.config.ts. The datasource here only declares the provider.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator nestjsDto {
+  provider                        = "prisma-generator-nestjs-dto"
+  output                          = "../../../src/generated/nestjs-dto"
+  exportRelationModifierClasses   = true
+  reExport                        = false
+  createDtoPrefix                 = "Create"
+  updateDtoPrefix                 = "Update"
+  dtoSuffix                       = "Dto"
+  entityPrefix                    = ""
+  entitySuffix                    = "Entity"
+  classValidation                 = true
+  fileNamingStyle                 = "kebab"
+}
+
+datasource db {
+  provider = "postgresql"
+}
