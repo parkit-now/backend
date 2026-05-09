@@ -1,3 +1,5 @@
-export class ConnectEntryDto {
-  id: string;
-}
+
+  export class ConnectEntryDto {
+    id: string;
+  }
+  

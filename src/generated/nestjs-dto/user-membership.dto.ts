@@ -1,9 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
+
+import {ApiProperty} from '@nestjs/swagger'
+
 
 export class UserMembershipDto {
   @ApiProperty({
-    type: `string`,
-    format: `date-time`,
-  })
-  createdAt: Date;
+  type: `string`,
+  format: `date-time`,
+})
+createdAt: Date ;
 }

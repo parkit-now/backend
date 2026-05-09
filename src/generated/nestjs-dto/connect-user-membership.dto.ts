@@ -1,1 +1,5 @@
-export class ConnectUserMembershipDto {}
+
+  export class ConnectUserMembershipDto {
+    
+  }
+  

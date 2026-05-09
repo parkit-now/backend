@@ -1,3 +1,5 @@
-export class ConnectTenantDto {
-  id: string;
-}
+
+  export class ConnectTenantDto {
+    id: string;
+  }
+  
