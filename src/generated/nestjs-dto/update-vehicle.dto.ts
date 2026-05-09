@@ -1,14 +1,18 @@
-import { Type } from 'class-transformer';
-import { IsOptional, IsString } from 'class-validator';
+
+import {Type} from 'class-transformer'
+import {IsOptional,IsString} from 'class-validator'
+
+
+
 
 export class UpdateVehicleDto {
   @IsOptional()
-  @IsString()
-  brand?: string;
-  @IsOptional()
-  @IsString()
-  model?: string;
-  @IsOptional()
-  @IsString()
-  type?: string;
+@IsString()
+brand?: string;
+@IsOptional()
+@IsString()
+model?: string;
+@IsOptional()
+@IsString()
+type?: string;
 }

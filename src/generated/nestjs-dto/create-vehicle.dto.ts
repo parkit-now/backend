@@ -1,14 +1,18 @@
-import { Type } from 'class-transformer';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+
+import {Type} from 'class-transformer'
+import {IsNotEmpty,IsOptional,IsString} from 'class-validator'
+
+
+
 
 export class CreateVehicleDto {
   @IsNotEmpty()
-  @IsString()
-  brand: string;
-  @IsNotEmpty()
-  @IsString()
-  model: string;
-  @IsOptional()
-  @IsString()
-  type?: string;
+@IsString()
+brand: string;
+@IsNotEmpty()
+@IsString()
+model: string;
+@IsOptional()
+@IsString()
+type?: string;
 }

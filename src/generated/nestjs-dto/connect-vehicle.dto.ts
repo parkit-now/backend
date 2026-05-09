@@ -1,3 +1,5 @@
-export class ConnectVehicleDto {
-  id: string;
-}
+
+  export class ConnectVehicleDto {
+    id: string;
+  }
+  
