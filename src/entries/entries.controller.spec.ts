@@ -1,8 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { EntriesController } from './entries.controller';
 import { EntriesService } from './entries.service';
+import { PrismaService } from '../database/prisma.service';
+import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantInterceptor } from '../database/tenant.interceptor';
+import { TenantContextService } from '../database/tenant-context.service';
 
 describe('EntriesController', () => {
   let controller: EntriesController;
@@ -15,6 +18,12 @@ describe('EntriesController', () => {
           provide: EntriesService,
           useValue: {},
         },
+        {
+          provide: PrismaService,
+          useValue: {},
+        },
+        TenantContextService,
+        TenantInterceptor,
       ],
     })
       .overrideGuard(JwtAuthGuard)

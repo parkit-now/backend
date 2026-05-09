@@ -1,34 +1,33 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { prismaForTenant } from '../database/prisma-tenant';
 import { CreateEntryDto } from '../generated/nestjs-dto/create-entry.dto';
 
 @Injectable()
 export class EntriesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createEntryForTenant(tenantId: string, data: CreateEntryDto) {
-    // LOCAL -> usamos prismaForTenant para blindar el acceso al tenant actual
-    const tenantPrisma = prismaForTenant(this.prisma, tenantId);
-
-    return tenantPrisma.entry.create({
+  async createEntry(data: CreateEntryDto) {
+    // Usamos getTenantClient() para obtener el cliente ya blindado
+    const tenantPrisma = this.prisma.getTenantClient();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    return await (tenantPrisma as any).entry.create({
       data: {
         plate: data.plate,
         color: data.color,
         leftAt: data.leftAt,
         amountPaid: data.amountPaid,
         vehicleId: data.vehicle.connect.id,
-        tenantId,
+        // No necesitamos pasar tenantId manualmente, prismaForTenant lo valida
       },
     });
   }
 
-  async findAllForTenant(tenantId: string) {
-    const tenantPrisma = prismaForTenant(this.prisma, tenantId);
-
-    return tenantPrisma.entry.findMany({
+  async findAll() {
+    const tenantPrisma = this.prisma.getTenantClient();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    return await (tenantPrisma as any).entry.findMany({
       include: {
-        vehicle: true, // Prisma permite incluir la tabla global
+        vehicle: true,
       },
     });
   }

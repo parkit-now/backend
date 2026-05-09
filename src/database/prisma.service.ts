@@ -2,6 +2,8 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
+import { prismaForTenant } from './prisma-tenant';
+import { TenantContextService } from './tenant-context.service';
 
 /**
  * NestJS-managed Prisma 7 client.
@@ -10,10 +12,8 @@ import { Pool } from 'pg';
  * client is built with `@prisma/adapter-pg` and a `pg.Pool` reading
  * `DATABASE_URL` (the pooled URL on Supabase).
  *
- * For tenant-scoped operations consumers should NOT use this service
- * directly — they should call `prismaForTenant(prisma, tenantId)` from
- * `./prisma-tenant.ts`, which returns an extended client that injects /
- * validates `tenantId` on every operation.
+ * For tenant-scoped operations, use the `tenant` getter which automatically
+ * returns a scoped client based on the current request context.
  */
 @Injectable()
 export class PrismaService
@@ -22,10 +22,18 @@ export class PrismaService
 {
   private readonly pool: Pool;
 
-  constructor() {
+  constructor(private readonly tenantContext: TenantContextService) {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     super({ adapter: new PrismaPg(pool) });
     this.pool = pool;
+  }
+
+  /**
+   * Returns a Prisma client scoped to the current tenant in context.
+   */
+  getTenantClient() {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    return prismaForTenant(this, tenantId);
   }
 
   async onModuleInit(): Promise<void> {
