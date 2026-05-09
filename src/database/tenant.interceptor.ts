@@ -5,7 +5,7 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Request } from 'express';
-import { Observable } from 'rxjs';
+import { defer, Observable } from 'rxjs';
 import { TenantContextService } from './tenant-context.service';
 
 /**
@@ -21,12 +21,11 @@ export class TenantInterceptor implements NestInterceptor {
     const tenantId = request.params.tenantId;
 
     if (tenantId && typeof tenantId === 'string') {
-      // We wrap the rest of the request lifecycle in the ALS context
-      return new Observable((subscriber) => {
-        this.tenantContext.runWithTenant(tenantId, () => {
-          next.handle().subscribe(subscriber);
-        });
-      });
+      // We wrap the rest of the request lifecycle in the ALS context using defer
+      // to ensure the subscription is handled correctly by NestJS and RxJS.
+      return defer(() =>
+        this.tenantContext.runWithTenant(tenantId, () => next.handle()),
+      );
     }
 
     return next.handle();

@@ -21,10 +21,10 @@ export class TenantMembershipGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const user = request.user;
-    const tenantId = request.params.tenantId;
+    const tenantId = request.params.tenantId as string;
 
     if (!user) {
-      return false;
+      throw new ForbiddenException('User is not authenticated');
     }
 
     // Admins have global access to all tenants
@@ -33,9 +33,11 @@ export class TenantMembershipGuard implements CanActivate {
     }
 
     if (!tenantId) {
-      // If there's no tenantId in the params, we can't validate membership.
-      // This guard should only be used on tenant-scoped routes.
-      return true;
+      // Fail closed: If the guard is applied to a route that doesn't have a tenantId,
+      // we must deny access to prevent accidental security bypass.
+      throw new ForbiddenException(
+        'Missing tenantId in request parameters. This route is misconfigured for tenant validation.',
+      );
     }
 
     const membership = await this.prisma.userMembership.findUnique({
@@ -49,7 +51,7 @@ export class TenantMembershipGuard implements CanActivate {
 
     if (!membership) {
       throw new ForbiddenException(
-        `User does not have access to tenant: ${tenantId as string}`,
+        `User does not have access to tenant: ${tenantId}`,
       );
     }
 

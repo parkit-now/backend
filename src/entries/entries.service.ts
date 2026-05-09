@@ -9,23 +9,23 @@ export class EntriesService {
   async createEntry(data: CreateEntryDto) {
     // Usamos getTenantClient() para obtener el cliente ya blindado
     const tenantPrisma = this.prisma.getTenantClient();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
-    return await (tenantPrisma as any).entry.create({
+
+    return await tenantPrisma.entry.create({
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       data: {
         plate: data.plate,
         color: data.color,
         leftAt: data.leftAt,
         amountPaid: data.amountPaid,
         vehicleId: data.vehicle.connect.id,
-        // No necesitamos pasar tenantId manualmente, prismaForTenant lo valida
-      },
+        // El tenantId se inyecta automáticamente en la extensión de Prisma
+      } as any,
     });
   }
 
   async findAll() {
     const tenantPrisma = this.prisma.getTenantClient();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
-    return await (tenantPrisma as any).entry.findMany({
+    return await tenantPrisma.entry.findMany({
       include: {
         vehicle: true,
       },

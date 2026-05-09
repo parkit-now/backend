@@ -27,7 +27,7 @@ export class EntriesController {
     name: 'tenantId',
     description: 'The ID of the tenant (parking lot)',
   })
-  async create(@Body() dto: CreateEntryDto): Promise<any> {
+  async create(@Body() dto: CreateEntryDto) {
     return await this.entriesService.createEntry(dto);
   }
 
@@ -36,8 +36,7 @@ export class EntriesController {
     name: 'tenantId',
     description: 'The ID of the tenant (parking lot)',
   })
-  async findAll(): Promise<any[]> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+  async findAll() {
     return await this.entriesService.findAll();
   }
 }

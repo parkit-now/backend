@@ -43,7 +43,6 @@ describe('EntriesService', () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       (mockTenant.entry.findMany as jest.Mock).mockResolvedValue(mockEntries);
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const result = await service.findAll();
 
       expect(result).toEqual(mockEntries);

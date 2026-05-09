@@ -2,7 +2,7 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
-import { prismaForTenant } from './prisma-tenant';
+import { prismaForTenant, TenantPrismaClient } from './prisma-tenant';
 import { TenantContextService } from './tenant-context.service';
 
 /**
@@ -30,8 +30,9 @@ export class PrismaService
 
   /**
    * Returns a Prisma client scoped to the current tenant in context.
+   * For tenant-scoped operations, use `getTenantClient()`.
    */
-  getTenantClient() {
+  getTenantClient(): TenantPrismaClient {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     return prismaForTenant(this, tenantId);
   }
