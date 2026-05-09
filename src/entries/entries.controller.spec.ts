@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { EntriesController } from './entries.controller';
 import { EntriesService } from './entries.service';
 
@@ -17,6 +18,8 @@ describe('EntriesController', () => {
       ],
     })
       .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TenantMembershipGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
