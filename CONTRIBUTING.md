@@ -27,7 +27,7 @@ Trabajamos con dos ramas permanentes y branches por feature/fix. La validación 
 | `refactor/*` | Refactors sin cambios funcionales          | `main` | `main`      |
 | `perf/*`  | Mejoras de performance                    | `main` | `main`      |
 
-Las ramas temporales **siempre salen de `main` actualizado** y **siempre apuntan a `main`** en el PR. `develop` es solo entorno de validación: se llega a STAGING reposicionando la rama de feature sobre `develop` (ver flujo más abajo), no abriendo un PR contra `develop`.
+Las ramas temporales **siempre salen de `main` actualizado**. El flujo de promoción es: `Feature Branch` -> `develop` (para validar en STAGING) -> `main` (para PROD). 
 
 ### Convención de naming
 
@@ -133,24 +133,20 @@ git push --force-with-lease
 
 > Nunca usar `--force` a secas: `--force-with-lease` aborta el push si alguien más subió commits a tu rama desde tu último fetch, evitando pisar trabajo ajeno.
 
-### 3. Validar en `develop`
+### 3. Validar en `develop` (Staging)
 
-Antes de pedir review se valida la rama en `develop`. Estamos *reposicionando* la rama de feature encima de `develop` y pusheándola — `develop` no acumula merges de features:
+Cuando tu feature esté lista para ser probada en el entorno compartido:
+1. Abrí un PR de tu rama contra `develop`.
+2. Una vez mergeado, el pipeline de CI desplegará tus cambios en STAGING.
+3. Validá manualmente, hacé demos y confirmá que no haya regresiones.
 
-```bash
-$ git switch <branch con los cambios que queremos subir>
-$ git pull --rebase origin main    # para asegurarnos que nuestros cambios queden sobre el master actual
-$ git switch -C develop            # -C (mayúscula) para crear una nueva rama local llamada develop con nuestros cambios
-$ git pull --rebase                # para hacer rebase de nuestros cambios sobre el develop remoto
-$ git pull --rebase origin main    # para asegurarnos que develop con todo también esté actualizado sobre main
-$ git push                         # para subir develop. puede necesitar `--force-with-lease` pero hay que ver como queda
-```
+### 4. Abrir PR contra `main` (Producción)
 
-Ese push dispara el pipeline de develop, que levanta un entorno de pruebas con los cambios aplicados. Ahí se prueba manualmente, se hacen demos, se valida que no rompió nada, etc.
-
-### 4. Abrir PR contra `main`
-
-Cuando el cambio está validado en STAGING, abrir el PR de la rama de feature a `main`, asignar al menos 1 reviewer, esperar CI verde y mergear con squash & merge. Borrar la rama tras el merge.
+Cuando el cambio esté validado en STAGING y el código esté pulido:
+1. Abrí el PR de tu rama original de feature contra `main`.
+2. Asigná al menos 1 reviewer.
+3. Esperá CI en verde y aprobación.
+4. **Squash & Merge** y borrar la rama.
 
 ## Casos borde
 

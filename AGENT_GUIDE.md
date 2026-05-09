@@ -27,7 +27,7 @@ Antes de cambiar código, revisar siempre:
   - Global (`users`, `tenants`, `vehicles`, etc)
   - Tenant-local (`entries` y futuros módulos)
 - Defensa en profundidad:
-  - Capa app (`prismaForTenant`, validaciones de membership/tenant)
+  - Capa app (`getTenantClient()`, validaciones de membership/tenant automáticas vía Guards/Interceptors)
   - Capa DB (RLS + policies SQL)
 - Migraciones SQL son append-only en prod (no editar archivos ya mergeados a `main`).
 
@@ -71,15 +71,16 @@ Aplicación en este repo (estado actual):
 Para cualquier modelo tenant-local, el agente DEBE verificar:
 
 1. Tabla con `tenant_id` + FK en migración SQL.
-2. Modelo agregado a `TENANT_MODELS` (`src/database/prisma-tenant.ts`) si aplica.
-3. Endpoints tenant-scoped (`/tenants/:tenantId/...`) o equivalente.
-4. Validación de membership + coherencia de tenant (path/claims/contexto).
+2. Modelo agregado a `TENANT_MODELS` (`src/database/prisma-tenant.ts`).
+3. Controlador con `@UseInterceptors(TenantInterceptor)` y `@UseGuards(TenantMembershipGuard)`.
+4. Servicio usando `this.prisma.getTenantClient().model` (PROHIBIDO pasar `tenantId` manualmente).
 5. RLS/policies SQL correspondientes.
 
 ### Prohibición explícita
 
 No usar `Scope.REQUEST` para `PrismaService`.
-Para contexto por request, usar `AsyncLocalStorage` o contexto explícito.
+Para contexto por request, usar `TenantContextService` (vía `AsyncLocalStorage`) inyectado automáticamente por el `TenantInterceptor`.
+**Nunca pasar `tenantId` como argumento en métodos de servicios de negocio.**
 
 ## 6) Flujo canónico para cambios de schema
 
@@ -151,6 +152,7 @@ Antes de terminar, confirmar:
 
 - No bypass de tenant en servicios tenant-local.
 - No `Scope.REQUEST` en Prisma singleton.
+- **No pasar `tenantId` manualmente en servicios** (usar `getTenantClient()`).
 - No mezclar cambios no relacionados en el mismo PR.
 - No dejar comandos de docs desactualizados con respecto a Makefile.
 - No agregar lockfiles redundantes para package manager no usado.

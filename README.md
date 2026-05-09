@@ -37,14 +37,20 @@ make up
 make dev
 ```
 
-Opcional:
-
 ```bash
 make down
 make status
 make studio
 make logs
 ```
+
+## 4) Multi-tenencia Automática (Aislamiento de Datos)
+
+Este proyecto utiliza un sistema de multi-tenencia automatizado mediante `AsyncLocalStorage` y extensiones de Prisma.
+
+- **Aislamiento por Request**: El `tenantId` se captura automáticamente de la URL mediante un `TenantInterceptor`.
+- **Acceso Blindado**: En los servicios, se debe usar siempre `this.prisma.getTenantClient()` para operar sobre modelos locales. Esto garantiza que las queries estén filtradas por el tenant activo sin pasarlo por parámetro.
+- **Seguridad**: El `TenantMembershipGuard` valida que el usuario autenticado pertenezca realmente al tenant solicitado.
 
 ## OAuth social (Google/GitHub)
 
@@ -92,7 +98,7 @@ make up
 - Revisar política de verificación de email/proveedor en Dashboard antes de habilitar signup abierto en prod.
 - Mantener rol inicial de auto-provisioning en `driver` (mínimo privilegio).
 
-## 4) Seeds
+## 5) Seeds
 
 - Global (SQL):
 
@@ -184,48 +190,31 @@ bun run build
 bun test
 ```
 
-## 9) Git workflow (resumen operativo)
+## 9) Git workflow (GitFlow Simplificado)
 
-### Crear rama
+El equipo utiliza una versión simplificada de GitFlow para mantener la velocidad y la calidad.
 
+### 1. Crear rama de Feature
+Siempre partir de la última versión de `main`.
 ```bash
 git switch main
-git pull --rebase origin main
-git switch -c feat/SCRUM-123-descripcion
+git pull origin main
+git switch -c feat/descripcion-corta
 ```
 
-### Commit
-
-Usar Conventional Commits:
-
+### 2. Commits & Push
+Usar Conventional Commits (`feat:`, `fix:`, `docs:`, etc.).
 ```bash
 git add .
-git commit -m "feat(scope): descripcion"
+git commit -m "feat: implementar aislamiento de tenant"
+git push -u origin feat/descripcion-corta
 ```
 
-### Push
-
-```bash
-git push -u origin feat/SCRUM-123-descripcion
-```
-
-Si hiciste rebase y reescribiste historia:
-
-```bash
-git push --force-with-lease
-```
-
-### PR / Merge
-
-- PR siempre a `main`.
-- Mínimo 1 reviewer.
-- CI en verde obligatorio.
-- Preferir squash & merge.
-
-## 10) Validación en develop (staging)
-
-El equipo usa `develop` como entorno compartido de validación integrada.
-Seguir exactamente el procedimiento de `CONTRIBUTING.md` para evitar pisar trabajo ajeno.
+### 3. Pull Request (PR)
+- Abrir el PR contra `main`.
+- Validar en el entorno de `develop` (Staging) si es necesario.
+- Requiere al menos 1 aprobación y CI en verde.
+- Usar **Squash & Merge** al finalizar.
 
 ## 11) CI/CD que te impacta
 
