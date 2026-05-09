@@ -18,7 +18,7 @@ Para mantener un equilibrio entre velocidad de desarrollo y control estricto:
 
 ## 3. Pipeline de Peticiones (Request Lifecycle)
 
-![Pipeline de NestJS - Placeholder para imagen de StackOverflow](pipeline-nestjs.png)
+![Pipeline de NestJS](img/pipeline-nestjs.png)
 
 A continuación se detalla cómo fluye una petición a través del sistema aplicando la multi-tenencia:
 
