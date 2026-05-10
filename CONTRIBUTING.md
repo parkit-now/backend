@@ -17,17 +17,20 @@ Trabajamos con dos ramas permanentes y branches por feature/fix. La validación 
 
 ### Ramas temporales
 
-| Prefijo   | Para qué sirve                            | Origen | PR apunta a |
-| --------- | ----------------------------------------- | ------ | ----------- |
-| `feat/*`  | Nuevas funcionalidades                    | `main` | `main`      |
-| `fix/*`   | Correcciones de bugs                      | `main` | `main`      |
-| `docs/*`  | Cambios solo de documentación             | `main` | `main`      |
-| `chore/*` | Tooling, dependencias, mantenimiento, CI  | `main` | `main`      |
-| `test/*`  | Tests nuevos o corrección de tests        | `main` | `main`      |
-| `refactor/*` | Refactors sin cambios funcionales          | `main` | `main`      |
-| `perf/*`  | Mejoras de performance                    | `main` | `main`      |
+| Prefijo      | Para qué sirve                           | Origen    | PR apunta a |
+| ------------ | ---------------------------------------- | --------- | ----------- |
+| `feat/*`     | Nuevas funcionalidades                   | `develop` | `develop`   |
+| `fix/*`      | Correcciones de bugs                     | `develop` | `develop`   |
+| `docs/*`     | Cambios solo de documentación            | `develop` | `develop`   |
+| `chore/*`    | Tooling, dependencias, mantenimiento, CI | `develop` | `develop`   |
+| `test/*`     | Tests nuevos o corrección de tests       | `develop` | `develop`   |
+| `refactor/*` | Refactors sin cambios funcionales        | `develop` | `develop`   |
+| `perf/*`     | Mejoras de performance                   | `develop` | `develop`   |
+| `hotfix/*`   | Corrección urgente en PROD               | `main`    | `main`      |
 
-Las ramas temporales **siempre salen de `main` actualizado**. El flujo de promoción es: `Feature Branch` -> `develop` (para validar en STAGING) -> `main` (para PROD). 
+Las ramas temporales **siempre salen de `develop` actualizado**, excepto `hotfix/*` que sale de `main`.
+El flujo de promoción es: `Feature Branch` → `develop` (integración/STAGING) → `main` (PROD).
+Tras mergear un `hotfix/*` a `main`, siempre backportear a `develop` para no perder el fix. 
 
 ### Convención de naming
 
@@ -83,29 +86,30 @@ chore(deps): bump express a 4.19.2
 
 ## Política de Pull Requests
 
-1. **Todos los PR apuntan a `main`**. La validación previa pasa por `develop` (STAGING), no por un PR.
-2. **Mínimo 1 reviewer** debe aprobar antes del merge.
-3. **CI obligatorio en verde:** lint y tests deben pasar. No se mergea con checks rojos.
-4. **Conventional commits** en el título del PR.
-5. **Referencia a JIRA** en el cuerpo del PR (`Refs SCRUM-XXX`).
-6. **Squash & merge** como estrategia por defecto.
+1. **Features apuntan a `develop`**: Toda nueva funcionalidad se integra primero en la rama de integración.
+2. **Promoción a `main`**: Una vez que `develop` es estable, se abre un PR de `develop` hacia `main` (Release).
+3. **Mínimo 1 reviewer** debe aprobar antes del merge.
+4. **CI obligatorio en verde:** lint y tests deben pasar. No se mergea con checks rojos.
+5. **Conventional commits** en el título del PR.
+6. **Referencia a JIRA** en el cuerpo del PR (`Refs SCRUM-XXX`).
+7. **Squash & merge** como estrategia por defecto para Features.
 7. **Borrar la rama** una vez mergeado el PR.
 8. **Un PR = una rama = una tarea**: no mezclar cambios de otras ramas o tareas.
 
 ## Protección de ramas
 
-- `main`: protegida. No se puede pushear directo. Requiere PR aprobado y CI verde.
-- `develop`: compartida. Permite force-push para reposicionar features sobre `main`, pero **siempre con `--force-with-lease`** y coordinando.
+- `main`: Protegida. Solo recibe merges de `develop` o `hotfix/*`.
+- `develop`: Protegida. Recibe merges de las ramas de `feat/*` y `fix/*`.
 
 ## Flujo típico de una feature
 
 El flujo usa **rebase** para mantener la rama siempre arriba del último `main`. Esto evita probar contra una base vieja y minimiza conflictos al abrir el PR.
 
-### 1. Partir de `main` actualizado
+### 1. Partir de `develop` actualizado
 
 ```bash
-git switch main
-git pull --rebase origin main
+git switch develop
+git pull origin develop
 git switch -c feat/SCRUM-42-branch-name
 ```
 
@@ -121,32 +125,22 @@ git commit -m "feat(scope): descripción del cambio"
 Pushear la rama (la primera vez con `-u`):
 
 ```bash
-git pull --rebase origin main
 git push -u origin feat/SCRUM-42-branch-name
 ```
 
-Si reescribiste historia tras un rebase, usar:
+### 3. Validar en `develop` (STAGING)
 
-```bash
-git push --force-with-lease
-```
+Cuando tu feature esté lista para ser probada:
+1. Abrí un PR de tu rama contra **`develop`**.
+2. Una vez aprobado y mergeado, el pipeline de CI desplegará tus cambios en STAGING.
+3. Validá funcionalmente en el entorno integrado.
 
-> Nunca usar `--force` a secas: `--force-with-lease` aborta el push si alguien más subió commits a tu rama desde tu último fetch, evitando pisar trabajo ajeno.
+### 4. Salida a `main` (PRODUCCIÓN)
 
-### 3. Validar en `develop` (Staging)
-
-Cuando tu feature esté lista para ser probada en el entorno compartido:
-1. Abrí un PR de tu rama contra `develop`.
-2. Una vez mergeado, el pipeline de CI desplegará tus cambios en STAGING.
-3. Validá manualmente, hacé demos y confirmá que no haya regresiones.
-
-### 4. Abrir PR contra `main` (Producción)
-
-Cuando el cambio esté validado en STAGING y el código esté pulido:
-1. Abrí el PR de tu rama original de feature contra `main`.
-2. Asigná al menos 1 reviewer.
-3. Esperá CI en verde y aprobación.
-4. **Squash & Merge** y borrar la rama.
+Cuando se decide que la versión en `develop` está lista para ser productiva:
+1. Abrí un PR de `develop` contra **`main`**.
+2. Al mergear, el pipeline desplegará en PROD.
+3. Se recomienda crear un `tag` de versión (ej: `v1.1.0`) sobre `main`.
 
 ## Casos borde
 

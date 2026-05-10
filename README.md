@@ -211,10 +211,9 @@ git push -u origin feat/descripcion-corta
 ```
 
 ### 3. Pull Request (PR)
-- Abrir el PR contra `main`.
-- Validar en el entorno de `develop` (Staging) si es necesario.
-- Requiere al menos 1 aprobación y CI en verde.
-- Usar **Squash & Merge** al finalizar.
+- El flujo de promoción es: `Feature` -> PR contra `develop` (Staging) -> PR contra `main` (Producción).
+- El PR requiere al menos 1 aprobación y CI en verde.
+- Usar **Squash & Merge** para mantener un historial limpio.
 
 ## 11) CI/CD que te impacta
 
