@@ -7,7 +7,8 @@ Este backend usa **una sola base PostgreSQL/Supabase** con dos capas lógicas:
 
 La estrategia es de defensa en profundidad:
 
-- Aislamiento en aplicación (`prismaForTenant(...)`, validaciones de membership, coherencia de tenant activo).
+- Aislamiento en aplicación (`this.prisma.getTenantClient()`, automatizado vía `AsyncLocalStorage`).
+- Autorización en aplicación (`TenantMembershipGuard`, validaciones de membership).
 - Aislamiento en base (RLS + policies SQL).
 
 `supabase/migrations` es la fuente de verdad del schema SQL.
@@ -113,12 +114,14 @@ Si agregas una relación a `Tenant`, no olvides la inversa en `prisma/schema/glo
 
 ### Servicio/controlador
 
-- No usar `this.prisma.<model>` directo.
-- Usar `prismaForTenant(this.prisma, tenantId)`.
-- El endpoint debe estar tenant-scoped (`/tenants/:tenantId/...`).
+- No usar `this.prisma.<model>` directo para modelos locales.
+- Usar `this.prisma.getTenantClient().<model>`.
+- El controlador DEBE usar `@UseInterceptors(TenantInterceptor)` para que el contexto funcione.
+- El controlador DEBE usar `@UseGuards(TenantMembershipGuard)` para validar acceso.
 
 ```ts
-const tenantPrisma = prismaForTenant(this.prisma, tenantId);
+// En el servicio
+const tenantPrisma = this.prisma.getTenantClient();
 return tenantPrisma.entry.findMany();
 ```
 
@@ -137,14 +140,15 @@ Checklist mínimo:
    - tenant efectivo en contexto de DB.
 5. Crear/ajustar policies RLS de la tabla en migración SQL.
 
-### Importante: contexto por request sin romper Prisma singleton
+### Importante: contexto por request automático
 
-Para transportar claims/rol/tenant hacia la capa DB:
+Para transportar el `tenantId` hacia la capa DB sin ensuciar los servicios:
 
-- **Sí** usar `AsyncLocalStorage` (ALS) o contexto explícito en `enhance(...)`.
-- **No** convertir `PrismaService` a `Scope.REQUEST`.
+- **Sí** usar `TenantContextService` (vía `AsyncLocalStorage`).
+- **Sí** usar el `TenantInterceptor` en el controlador para inicializar el contexto.
+- **No** pasar el `tenantId` como argumento a través de múltiples capas de funciones.
 
-`Scope.REQUEST` en Prisma crea una instancia por request y puede agotar conexiones.
+Esto permite que `PrismaService` sea un Singleton eficiente mientras mantiene aislamiento total por request.
 
 ---
 
@@ -236,6 +240,6 @@ Si algo falla acá, el PR no debería abrirse todavía.
 | Ubicación Prisma | `prisma/schema/global/` | `prisma/schema/tenant/` |
 | `tenant_id` | No | Sí |
 | `TENANT_MODELS` | No | Sí |
-| Acceso en servicio | `this.prisma.model` | `prismaForTenant(this.prisma, tenantId).model` |
-| Endpoint típico | `/vehicles` | `/tenants/:tenantId/entries` |
+| Acceso en servicio | `this.prisma.model` | `this.prisma.getTenantClient().model` |
+| Seguridad Req. | `JwtAuthGuard` | `TenantInterceptor` + `TenantMembershipGuard` |
 | RLS específica | Opcional según caso | Obligatoria |

@@ -53,10 +53,11 @@ type SeedUser = {
 };
 
 const USERS: SeedUser[] = [
-    { email: 'admin@once.test',    password: 'AdminPass123!',    role: 'admin'                                                            },
-    { email: 'owner@once.test',    password: 'OwnerPass123!',    role: 'owner',    tenantIds: [TENANTS.once, TENANTS.belgrano]            },
-    { email: 'operator@once.test', password: 'OperatorPass123!', role: 'operator', tenantIds: [TENANTS.once, TENANTS.belgrano]            },
-    { email: 'driver@once.test',   password: 'DriverPass123!',   role: 'driver'                                                           },
+    { email: 'admin@once.test', password: 'AdminPass123!', role: 'admin' },
+    { email: 'owner@once.test', password: 'OwnerPass123!', role: 'owner', tenantIds: [TENANTS.once, TENANTS.belgrano] },
+    { email: 'operator@once.test', password: 'OperatorPass123!', role: 'operator', tenantIds: [TENANTS.once, TENANTS.belgrano] },
+    { email: 'driver@once.test', password: 'DriverPass123!', role: 'driver' },
+    { email: 'solo-once@once.test', password: 'Password123!', role: 'operator', tenantIds: [TENANTS.once] },
 ];
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

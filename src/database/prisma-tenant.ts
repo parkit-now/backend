@@ -78,11 +78,15 @@ export function prismaForTenant(prisma: PrismaClient, tenantId: string) {
             };
 
             if (Array.isArray(createArgs.data)) {
-              for (const row of createArgs.data) {
+              // Inyectar tenantId en cada fila si no está
+              createArgs.data = createArgs.data.map((row) => {
                 assertTenantMatch(row, tenantId, model, operation);
-              }
+                return { ...row, tenantId };
+              });
             } else if (createArgs.data) {
+              // Inyectar tenantId en la fila
               assertTenantMatch(createArgs.data, tenantId, model, operation);
+              createArgs.data = { ...createArgs.data, tenantId };
             }
 
             return query(args);
@@ -103,6 +107,11 @@ export function prismaForTenant(prisma: PrismaClient, tenantId: string) {
     },
   });
 }
+
+/**
+ * Type of the tenant-scoped Prisma client.
+ */
+export type TenantPrismaClient = ReturnType<typeof prismaForTenant>;
 
 function assertTenantMatch(
   data: Record<string, unknown>,
