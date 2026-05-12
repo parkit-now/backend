@@ -66,6 +66,10 @@ async function bootstrap() {
     .setDescription(API_DESCRIPTION)
     .setVersion('0.1.0')
     .addServer('http://localhost:3000', 'Local development')
+    .addServer(
+      process.env.API_PRODUCTION_URL || 'http://localhost:3000',
+      'Production',
+    )
     .addTag(
       'Auth',
       'Public authentication endpoints (`register`, `login`, `refresh`, `logout`) — thin wrappers over Supabase Auth.',
@@ -103,11 +107,9 @@ async function bootstrap() {
   const { httpAdapter } = app.get(HttpAdapterHost);
   app.useGlobalFilters(new ExceptionFilter(httpAdapter));
 
-  const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port);
-  console.log(
-    `Parkit API running on http://localhost:${port} (docs: /api, JSON: /api-json)`,
-  );
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0');
+  console.log(`Parkit API is running on port ${port}`);
 }
 
 void bootstrap();
