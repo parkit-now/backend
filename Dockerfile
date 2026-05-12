@@ -43,7 +43,7 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 COPY --from=builder /app/dist ./dist
 
-EXPOSE 3000
+# Do not EXPOSE port - Cloud Run assigns it dynamically
 
 # Migrations are applied out-of-band by `supabase db push --linked` in CI.
 # The container only runs the API.
