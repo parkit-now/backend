@@ -7,7 +7,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "build": "nest build",
-    "start": "bun run dist/main.js",
+    "start": "bun dist/main.js",
     "start:dev": "bun --hot run src/main.ts",
     "start:debug": "bun --inspect --hot run src/main.ts",
     "start:prod": "bun run dist/main.js",

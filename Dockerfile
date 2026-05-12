@@ -47,4 +47,4 @@ EXPOSE 3000
 
 # Migrations are applied out-of-band by `supabase db push --linked` in CI.
 # The container only runs the API.
-CMD ["bun", "run", "dist/main.js"]
+CMD ["bun", "run", "start"]

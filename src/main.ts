@@ -1,16 +1,25 @@
-import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import {
+  ClassSerializerInterceptor,
+  Logger,
+  ValidationPipe,
+} from '@nestjs/common';
 import { HttpAdapterHost, NestFactory, Reflector } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationError } from 'class-validator';
+
 import { AppModule } from './app.module';
 import { ExceptionFilter } from './utils/exceptions/http-exception/error-filter-handler';
+
 import {
   FormattedExceptionWithValidation,
   ValidationErr,
 } from './utils/exceptions/http-exception/formatted-exeption';
 
+const logger = new Logger('Bootstrap');
+
 export function validationExceptionFactory(errors: ValidationError[]) {
   const parsedErrors: ValidationErr[] = [];
+
   for (const error of errors) {
     if (error.constraints) {
       parsedErrors.push(
@@ -33,83 +42,110 @@ const API_DESCRIPTION = [
   '',
   '## Conventions',
   '',
-  '- **Auth**: every protected endpoint expects `Authorization: Bearer <jwt>`. Tokens are issued by **Supabase Auth** through this API (`POST /auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`). The backend verifies the JWT signature against the Supabase project keys.',
-  '- **Errors**: every non-2xx response follows the [RFC 7807 Problem Details](https://www.rfc-editor.org/rfc/rfc7807) shape: `{ title, status, detail, instance }`. Validation errors add a `validationsErrors: [{ field, reason }]` array.',
-  '- **IDs**: UUIDs assigned by Supabase Auth (users) or `gen_random_uuid()` (everything else). Treat them as opaque strings.',
-  '- **Roles**: `admin` (platform-wide), `owner` (parking-lot owner), `operator` (booth staff), `driver` (mobile-app end user). Authorization is enforced server-side via `RolesGuard`.',
-  '- **Multi-tenancy**: a tenant is a parking lot. Association is N:M between users and tenants — see `user_memberships`. Owners and operators may hold several memberships (one per lot); drivers and admins have none. The "active tenant" for a session is carried in the JWT (`app_metadata.tenant_id`) and selected at login or via switch-tenant. Business rows carry that `tenant_id`; isolation is enforced server-side by `prismaForTenant(prisma, tenantId)` (the backend uses the service role and bypasses RLS).',
   '- **Times**: ISO-8601 UTC strings on the wire.',
-  '',
 ].join('\n');
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  try {
+    logger.log('Starting Parkit API bootstrap...');
 
-  app.enableCors({
-    origin: '*',
-    methods: 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-    allowedHeaders: 'Content-Type, Authorization',
-  });
+    logger.log(`NODE_ENV=${process.env.NODE_ENV}`);
+    logger.log(`PORT=${process.env.PORT}`);
+    logger.log(`DATABASE_URL exists=${Boolean(process.env.DATABASE_URL)}`);
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      exceptionFactory: validationExceptionFactory,
-    }),
-  );
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
+    logger.log('Creating Nest application...');
+    const app = await NestFactory.create(AppModule, {
+      logger: ['log', 'error', 'warn', 'debug', 'verbose'],
+    });
 
-  const config = new DocumentBuilder()
-    .setTitle('Parkit API')
-    .setDescription(API_DESCRIPTION)
-    .setVersion('0.1.0')
-    .addServer('http://localhost:3000', 'Local development')
-    .addServer(
-      process.env.API_PRODUCTION_URL || 'http://localhost:3000',
-      'Production',
-    )
-    .addTag(
-      'Auth',
-      'Public authentication endpoints (`register`, `login`, `refresh`, `logout`) — thin wrappers over Supabase Auth.',
-    )
-    .addTag(
-      'Users',
-      'User-domain endpoints. Currently exposes the current-user lookup; future user management routes (list, update, delete) will land here.',
-    )
-    .addTag(
-      'Health',
-      'Liveness + readiness probe. Reports the status of every external dependency (database, etc.). Safe to call without authentication.',
-    )
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        description:
-          'Paste a Supabase `access_token` (from `supabase.auth.signInWithPassword(...)` or any other Supabase Auth flow). The Swagger UI will then attach `Authorization: Bearer <token>` to every protected request.',
+    logger.log('Nest application created');
+
+    app.enableCors({
+      origin: '*',
+      methods: 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
+      allowedHeaders: 'Content-Type, Authorization',
+    });
+
+    logger.log('CORS enabled');
+
+    app.useGlobalPipes(
+      new ValidationPipe({
+        transform: true,
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        exceptionFactory: validationExceptionFactory,
+      }),
+    );
+
+    logger.log('Validation pipe configured');
+
+    app.useGlobalInterceptors(
+      new ClassSerializerInterceptor(app.get(Reflector)),
+    );
+
+    logger.log('Global interceptors configured');
+
+    const config = new DocumentBuilder()
+      .setTitle('Parkit API')
+      .setDescription(API_DESCRIPTION)
+      .setVersion('0.1.0')
+      .addServer('http://localhost:3000', 'Local development')
+      .addServer(
+        process.env.API_PRODUCTION_URL || 'http://localhost:3000',
+        'Production',
+      )
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+        'bearer',
+      )
+      .build();
+
+    logger.log('Swagger config created');
+
+    const document = SwaggerModule.createDocument(app, config);
+
+    logger.log('Swagger document generated');
+
+    SwaggerModule.setup('api', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+        displayRequestDuration: true,
+        docExpansion: 'list',
+        tryItOutEnabled: true,
       },
-      'bearer',
-    )
-    .build();
+    });
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-      displayRequestDuration: true,
-      docExpansion: 'list',
-      tryItOutEnabled: true,
-    },
-  });
+    logger.log('Swagger mounted at /api');
 
-  const { httpAdapter } = app.get(HttpAdapterHost);
-  app.useGlobalFilters(new ExceptionFilter(httpAdapter));
+    const { httpAdapter } = app.get(HttpAdapterHost);
 
-  const port = process.env.PORT || 3000;
-  await app.listen(port, '0.0.0.0');
-  console.log(`Parkit API is running on port ${port}`);
+    app.useGlobalFilters(new ExceptionFilter(httpAdapter));
+
+    logger.log('Global exception filters configured');
+
+    const port = Number(process.env.PORT) || 3000;
+
+    logger.log(`Attempting to listen on port ${port}...`);
+
+    await app.listen(port, '0.0.0.0');
+
+    logger.log(`✅ Parkit API is running on port ${port}`);
+    logger.log(`✅ Health check URL: http://0.0.0.0:${port}`);
+  } catch (error) {
+    logger.error('❌ Fatal error during bootstrap');
+    logger.error(error);
+
+    if (error instanceof Error) {
+      logger.error(error.message);
+      logger.error(error.stack);
+    }
+
+    process.exit(1);
+  }
 }
 
 void bootstrap();
