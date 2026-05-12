@@ -30,7 +30,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
-ENV PORT=3000
+# PORT is set by Cloud Run - do not override it
 
 COPY package.json bun.lock* ./
 
