@@ -127,7 +127,7 @@ async function bootstrap() {
 
     logger.log('Global exception filters configured');
 
-    const port = Number(process.env.PORT) || 3000;
+    const port = Number(process.env.PORT) || 8080;
 
     logger.log(`Attempting to listen on port ${port}...`);
 
