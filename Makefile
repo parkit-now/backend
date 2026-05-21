@@ -16,7 +16,7 @@ RESET := \033[0m
 
 .PHONY: help install up down dev prod build test lint format \
         migration migration-apply generate reset seed-all seed-global seed-auth seed-tenant \
-        env-check env-print push status studio logs clean
+        env-check env-print push push-dry-run push-linked status studio logs clean
 
 ## ──────────────────────────────────────────────────────────────────
 ## Setup
@@ -164,7 +164,42 @@ seed-auth: env-check ## Cargar usuarios/memberships de demo en Supabase Auth (so
 seed-tenant: env-check ## Cargar datos tenant-locales de demo (entries por tenant)
 	@bun run scripts/seed-tenant.ts
 
-push: ## Aplicar migraciones pendientes a Supabase cloud (linked). Lo normal es que esto lo corra CI/CD
+push: ## Aplicar migraciones a DB remota usando DIRECT_URL de `.env` (sin `supabase link`)
+	@if [ ! -f .env ]; then \
+		echo "✗ Falta .env. Corré: cp .env.example .env"; exit 1; fi
+	@set -a; . ./.env; set +a; \
+	db_url="$${DIRECT_URL:-}"; \
+	if [ -z "$$db_url" ]; then \
+		echo "✗ DIRECT_URL está vacía en .env"; exit 1; \
+	fi; \
+	if [[ "$$db_url" == \<* ]] || [[ "$$db_url" == *"[REF]"* ]] || [[ "$$db_url" == *"[PWD]"* ]]; then \
+		echo "✗ DIRECT_URL parece placeholder. Completala con tu URL real."; exit 1; \
+	fi; \
+	if [[ "$$db_url" == *"localhost"* ]] || [[ "$$db_url" == *"127.0.0.1"* ]]; then \
+		echo "✗ DIRECT_URL apunta a local. Para push remoto descomentá tu DIRECT_URL cloud en .env."; exit 1; \
+	fi; \
+	echo "⚠ Vas a aplicar migraciones contra la DB remota definida en DIRECT_URL."; \
+	echo "  Recomendado: corré antes 'make push-dry-run'."; \
+	echo ""; \
+	supabase db push --db-url "$$db_url"
+
+push-dry-run: ## Preview de migraciones remotas usando DIRECT_URL de `.env` (sin aplicar cambios)
+	@if [ ! -f .env ]; then \
+		echo "✗ Falta .env. Corré: cp .env.example .env"; exit 1; fi
+	@set -a; . ./.env; set +a; \
+	db_url="$${DIRECT_URL:-}"; \
+	if [ -z "$$db_url" ]; then \
+		echo "✗ DIRECT_URL está vacía en .env"; exit 1; \
+	fi; \
+	if [[ "$$db_url" == \<* ]] || [[ "$$db_url" == *"[REF]"* ]] || [[ "$$db_url" == *"[PWD]"* ]]; then \
+		echo "✗ DIRECT_URL parece placeholder. Completala con tu URL real."; exit 1; \
+	fi; \
+	if [[ "$$db_url" == *"localhost"* ]] || [[ "$$db_url" == *"127.0.0.1"* ]]; then \
+		echo "✗ DIRECT_URL apunta a local. Para dry-run remoto descomentá tu DIRECT_URL cloud en .env."; exit 1; \
+	fi; \
+	supabase db push --db-url "$$db_url" --dry-run
+
+push-linked: ## Aplicar migraciones al proyecto Supabase linkeado (flujo alternativo)
 	@echo "⚠ Vas a aplicar migraciones contra el proyecto Supabase linkeado."
 	@echo "  Asegurate de haber corrido: supabase link --project-ref <ref>"
 	@echo ""
