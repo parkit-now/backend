@@ -66,6 +66,52 @@ Aplicación en este repo (estado actual):
   - mantener `enable_manual_linking = false`;
   - revisar política de verificación de email/proveedor antes de prod.
 
+## Contrato de errores HTTP (codes estables)
+
+Toda respuesta de error sigue Problem Details (RFC 7807) extendido con un campo
+`code` estable. Los clientes hacen lookup en español por ese `code`; NO leen el
+campo `detail` para el usuario (queda en ingles, solo para logs).
+
+### Catalogo
+
+- Fuente unica: `src/utils/exceptions/error-codes.ts`.
+- Formato: `SCREAMING_SNAKE_CASE`, con prefijo por dominio (`AUTH_`, `DB_`, etc).
+- Reglas:
+  - Nunca renombrar un code ya publicado. Si cambia la semantica, agregar uno
+    nuevo y deprecar el viejo.
+  - Al agregar codes nuevos, actualizar tambien `CODE_MESSAGES` en los 3
+    frontends (`front-{web,desktop,mobile}/src/lib/api/translate.ts`).
+
+### Como emitirlos
+
+- Para errores propios: `throw new FormattedException(title, status, detail, instance, code)`.
+  El parametro `code` es `ErrorCode` (typesafe contra el catalogo).
+- Validation pipe ya inyecta automaticamente:
+  - `code = VALIDATION_FAILED` en el ProblemDetails externo.
+  - `code = <constraint name de class-validator>` (`isEmail`, `minLength`, etc.)
+    en cada `ValidationFieldErrorDto`. Hay tabla de prioridad en
+    `main.ts::CONSTRAINT_PRIORITY` para elegir un constraint relevante cuando
+    multiples fallan (ej. `isNotEmpty` antes que `maxLength`).
+- Errores Prisma se mapean automaticamente a `DB_*` en el filter
+  (`prismaCodeToErrorCode`).
+- Para `HttpException` plana de Nest (sin code), el filter aplica
+  `defaultCodeForStatus(status)` como red de seguridad. Aun asi, preferir
+  siempre `FormattedException` para tener control explicito.
+
+### Smoke
+
+```bash
+curl -X POST localhost:3000/auth/login -d '{}' -H "Content-Type: application/json"
+# -> { "code": "VALIDATION_FAILED", "validationsErrors": [{ "code": "isEmail", ... }] }
+```
+
+### Anti-patrones
+
+- No `throw new UnauthorizedException(...)` ni `BadRequestException(...)` cuando
+  quieras un code especifico: usar `FormattedException`.
+- No reutilizar un mismo code para casos semanticamente distintos.
+- No incluir el code dentro de `detail` o `title` (son campos independientes).
+
 ## 5) Reglas de seguridad multi-tenant
 
 Para cualquier modelo tenant-local, el agente DEBE verificar:
