@@ -14,9 +14,12 @@ SHELL := bash
 CYAN  := \033[36m
 RESET := \033[0m
 
+ENV_LOCAL := .env.local
+ENV_PROD  := .env.production
+
 .PHONY: help install up down dev prod build test lint format \
         migration migration-apply generate reset seed-all seed-global seed-auth seed-tenant \
-        env-check env-print push status studio logs clean
+        env-check env-print env-use-local env-use-prod push status studio logs clean
 
 ## ──────────────────────────────────────────────────────────────────
 ## Setup
@@ -106,10 +109,27 @@ studio: ## Abrir Supabase Studio en el navegador
 ## Run
 ## ──────────────────────────────────────────────────────────────────
 
-dev: ## API en dev (hot reload). Requiere `make up` previo
+env-use-local: ## Activar entorno local (copia .env.local → .env)
+	@if [ ! -f $(ENV_LOCAL) ]; then \
+		echo "✗ Falta $(ENV_LOCAL). Si ya tenés un .env de dev, renombralo:  mv .env .env.local"; \
+		exit 1; \
+	fi
+	@cp $(ENV_LOCAL) .env
+	@echo "✓ .env apunta a entorno LOCAL ($(ENV_LOCAL))"
+
+env-use-prod: ## Activar entorno produccion (copia .env.production → .env)
+	@if [ ! -f $(ENV_PROD) ]; then \
+		echo "✗ Falta $(ENV_PROD). Copialo desde .env.production.example y completá valores reales."; \
+		exit 1; \
+	fi
+	@echo "⚠ Vas a usar .env.production: el backend va a conectarse a la DB de PRODUCCION."
+	@cp $(ENV_PROD) .env
+	@echo "✓ .env apunta a entorno PRODUCCION ($(ENV_PROD))"
+
+dev: env-use-local ## API en dev (hot reload). Usa .env.local. Requiere `make up` previo
 	@bun run start:dev
 
-prod: build ## Build + correr API en modo producción
+prod: env-use-prod build ## Build + correr API contra entorno PROD (cuidado: DB real)
 	@bun run start:prod
 
 build: ## Compilar TS (nest build)
