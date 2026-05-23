@@ -7,6 +7,7 @@ import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { EntriesModule } from './entries/entries.module';
+import { PasswordRecoveryModule } from './password-recovery/password-recovery.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { EntriesModule } from './entries/entries.module';
     PrismaModule,
     UsersModule,
     AuthModule,
+    PasswordRecoveryModule,
     HealthModule,
     TenantsModule,
     VehiclesModule,
