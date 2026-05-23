@@ -8,6 +8,7 @@ import {
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
+import { defaultCodeForStatus, ErrorCode, ErrorCodes } from '../error-codes';
 import { PrismaErrorFormatter } from '../prisma-client-exception/prisma-error-formatter.filter';
 import { ProblemDetails } from './formatted-exeption';
 
@@ -34,6 +35,7 @@ export class ExceptionFilter extends BaseExceptionFilter {
         status: HttpStatus.BAD_REQUEST,
         detail: 'Invalid query input for the database',
         instance,
+        code: ErrorCodes.DB_VALIDATION_ERROR,
       });
     }
 
@@ -52,6 +54,7 @@ export class ExceptionFilter extends BaseExceptionFilter {
       detail:
         'A server error occurred, please try again or contact administrator',
       instance,
+      code: ErrorCodes.INTERNAL_ERROR,
     });
   }
 
@@ -65,7 +68,12 @@ export class ExceptionFilter extends BaseExceptionFilter {
 
     if (typeof body === 'object' && body !== null && 'title' in body) {
       const problem = body as ProblemDetails;
-      return this.send(response, { ...problem, status, instance });
+      return this.send(response, {
+        ...problem,
+        status,
+        instance,
+        code: problem.code ?? defaultCodeForStatus(status),
+      });
     }
 
     const message =
@@ -79,6 +87,7 @@ export class ExceptionFilter extends BaseExceptionFilter {
       status,
       detail: Array.isArray(message) ? message.join(', ') : message,
       instance,
+      code: defaultCodeForStatus(status),
     });
   }
 
@@ -102,6 +111,7 @@ export class ExceptionFilter extends BaseExceptionFilter {
       status,
       detail: formatter.getFriendlyMessage(),
       instance,
+      code: this.prismaCodeToErrorCode(exception.code),
     });
   }
 
@@ -119,6 +129,21 @@ export class ExceptionFilter extends BaseExceptionFilter {
       [HttpStatus.UNPROCESSABLE_ENTITY]: 'Unprocessable Entity',
     };
     return map[status] ?? 'Error';
+  }
+
+  private prismaCodeToErrorCode(prismaCode: string): ErrorCode {
+    const map: Record<string, ErrorCode> = {
+      P2001: ErrorCodes.DB_NOT_FOUND,
+      P2002: ErrorCodes.DB_UNIQUE_CONSTRAINT,
+      P2003: ErrorCodes.DB_FOREIGN_KEY_VIOLATION,
+      P2015: ErrorCodes.DB_NOT_FOUND,
+      P2021: ErrorCodes.DB_NOT_FOUND,
+      P2022: ErrorCodes.DB_NOT_FOUND,
+      P2024: ErrorCodes.DB_CONNECTION_TIMEOUT,
+      P2025: ErrorCodes.DB_NOT_FOUND,
+      P2034: ErrorCodes.DB_UNIQUE_CONSTRAINT,
+    };
+    return map[prismaCode] ?? ErrorCodes.DB_ERROR;
   }
 
   private prismaCodeToStatus(code: string): HttpStatus {

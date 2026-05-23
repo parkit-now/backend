@@ -10,6 +10,7 @@ import { ValidationError } from 'class-validator';
 import { AppModule } from './app.module';
 import { ExceptionFilter } from './utils/exceptions/http-exception/error-filter-handler';
 
+import { ErrorCodes } from './utils/exceptions/error-codes';
 import {
   FormattedExceptionWithValidation,
   ValidationErr,
@@ -17,14 +18,43 @@ import {
 
 const logger = new Logger('Bootstrap');
 
+// Orden de prioridad cuando un campo viola varios constraints a la vez:
+// se reporta el primero que matchee este array. Asi una contraseña vacia
+// dispara `isNotEmpty` y no `maxLength` (que tambien falla con undefined).
+const CONSTRAINT_PRIORITY = [
+  'isDefined',
+  'isNotEmpty',
+  'isString',
+  'isNumber',
+  'isInt',
+  'isBoolean',
+  'isEmail',
+  'isUUID',
+  'isDate',
+  'isIn',
+  'isEnum',
+  'minLength',
+  'maxLength',
+  'min',
+  'max',
+];
+
+function pickConstraint(
+  constraints: Record<string, string>,
+): [code: string, reason: string] {
+  for (const key of CONSTRAINT_PRIORITY) {
+    if (constraints[key]) return [key, constraints[key]];
+  }
+  return Object.entries(constraints)[0];
+}
+
 export function validationExceptionFactory(errors: ValidationError[]) {
   const parsedErrors: ValidationErr[] = [];
 
   for (const error of errors) {
     if (error.constraints) {
-      parsedErrors.push(
-        new ValidationErr(error.property, Object.values(error.constraints)[0]),
-      );
+      const [code, reason] = pickConstraint(error.constraints);
+      parsedErrors.push(new ValidationErr(error.property, reason, code));
     }
   }
 
@@ -33,6 +63,7 @@ export function validationExceptionFactory(errors: ValidationError[]) {
     400,
     'Validation failed for the request',
     'https://tools.ietf.org/html/rfc7231#section-6.5.1',
+    ErrorCodes.VALIDATION_FAILED,
     parsedErrors,
   );
 }

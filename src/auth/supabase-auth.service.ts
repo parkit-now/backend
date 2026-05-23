@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { User, UserRole } from '@prisma/client';
 import { AuthError, createClient, type Session } from '@supabase/supabase-js';
 import { UsersService } from '../users/users.service';
+import { ErrorCode, ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import type { SessionDto } from './dto/session.dto';
 
@@ -66,8 +67,9 @@ export class SupabaseAuthService implements OnModuleInit {
     if (createErr || !created.user) {
       throw this.toHttp(
         createErr,
-        'register',
+        '/auth/register',
         'Failed to create the auth user',
+        ErrorCodes.AUTH_REGISTER_FAILED,
       );
     }
 
@@ -112,6 +114,7 @@ export class SupabaseAuthService implements OnModuleInit {
         HttpStatus.UNAUTHORIZED,
         'Invalid or expired refresh token',
         '/auth/refresh',
+        ErrorCodes.AUTH_REFRESH_INVALID,
       );
     }
     return this.toSessionDto(data.session);
@@ -123,7 +126,12 @@ export class SupabaseAuthService implements OnModuleInit {
     // expires (this is how Supabase Auth works — there's no JWT blacklist).
     const { error } = await this.admin.auth.admin.signOut(accessToken);
     if (error) {
-      throw this.toHttp(error, 'logout', 'Failed to sign out');
+      throw this.toHttp(
+        error,
+        '/auth/logout',
+        'Failed to sign out',
+        ErrorCodes.AUTH_LOGOUT_FAILED,
+      );
     }
   }
 
@@ -141,6 +149,7 @@ export class SupabaseAuthService implements OnModuleInit {
         HttpStatus.UNAUTHORIZED,
         error?.message ?? 'Invalid credentials',
         '/auth/login',
+        ErrorCodes.AUTH_INVALID_CREDENTIALS,
       );
     }
     return this.toSessionDto(data.session);
@@ -160,13 +169,16 @@ export class SupabaseAuthService implements OnModuleInit {
     error: AuthError | null,
     instance: string,
     fallbackDetail: string,
+    fallbackCode: ErrorCode,
   ): FormattedException {
     const status = this.statusForAuthError(error);
+    const code = this.codeForAuthError(error) ?? fallbackCode;
     return new FormattedException(
       this.titleForStatus(status),
       status,
       error?.message ?? fallbackDetail,
-      `/auth/${instance}`,
+      instance,
+      code,
     );
   }
 
@@ -183,6 +195,19 @@ export class SupabaseAuthService implements OnModuleInit {
       return HttpStatus.BAD_REQUEST;
     }
     return HttpStatus.BAD_REQUEST;
+  }
+
+  private codeForAuthError(error: AuthError | null): ErrorCode | undefined {
+    if (!error?.code) return undefined;
+    switch (error.code) {
+      case 'email_exists':
+      case 'user_already_exists':
+        return ErrorCodes.AUTH_EMAIL_ALREADY_EXISTS;
+      case 'weak_password':
+        return ErrorCodes.AUTH_WEAK_PASSWORD;
+      default:
+        return undefined;
+    }
   }
 
   private titleForStatus(status: HttpStatus): string {

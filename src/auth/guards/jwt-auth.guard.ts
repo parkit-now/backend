@@ -1,12 +1,14 @@
 import {
   CanActivate,
   ExecutionContext,
+  HttpStatus,
   Injectable,
-  UnauthorizedException,
 } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { Request } from 'express';
 import { UsersService } from '../../users/users.service';
+import { ErrorCodes } from '../../utils/exceptions/error-codes';
+import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import { SupabaseJwtService } from '../supabase-jwt.service';
 
 /**
@@ -35,13 +37,37 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const token = this.extractBearerToken(request);
     if (!token) {
-      throw new UnauthorizedException('Missing bearer token');
+      throw new FormattedException(
+        'Unauthorized',
+        HttpStatus.UNAUTHORIZED,
+        'Missing bearer token',
+        request.url,
+        ErrorCodes.AUTH_MISSING_TOKEN,
+      );
     }
 
-    const payload = await this.jwt.verify(token);
+    let payload: Awaited<ReturnType<SupabaseJwtService['verify']>>;
+    try {
+      payload = await this.jwt.verify(token);
+    } catch {
+      throw new FormattedException(
+        'Unauthorized',
+        HttpStatus.UNAUTHORIZED,
+        'Invalid or expired token',
+        request.url,
+        ErrorCodes.AUTH_INVALID_TOKEN,
+      );
+    }
+
     const user = await this.users.findByIdOrNull(payload.sub);
     if (!user) {
-      throw new UnauthorizedException('User not provisioned');
+      throw new FormattedException(
+        'Unauthorized',
+        HttpStatus.UNAUTHORIZED,
+        'User not provisioned',
+        request.url,
+        ErrorCodes.AUTH_USER_NOT_PROVISIONED,
+      );
     }
 
     (request as AuthenticatedRequest).user = user;

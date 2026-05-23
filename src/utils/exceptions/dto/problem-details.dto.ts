@@ -1,8 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 /**
- * Problem Details object as defined in RFC 7807.
- * This is the canonical error shape returned by every endpoint of the Parkit API.
+ * Problem Details object as defined in RFC 7807, extended with a stable
+ * `code` field (RFC 7807 §3.2 explicitly allows extension members).
+ *
+ * The `code` is the canonical identifier the client uses to look up a
+ * localized message. `detail` stays in English and is only meant for
+ * logs / debug surfaces.
  *
  * @see https://www.rfc-editor.org/rfc/rfc7807
  */
@@ -24,7 +28,7 @@ export class ProblemDetailsDto {
 
   @ApiProperty({
     description:
-      'A human-readable explanation specific to this occurrence of the problem.',
+      'A human-readable explanation specific to this occurrence of the problem. English. Clients should not display this verbatim — use `code` to look up a localized message.',
     example: 'Email already registered',
   })
   detail: string;
@@ -34,6 +38,13 @@ export class ProblemDetailsDto {
     example: '/auth/register',
   })
   instance: string;
+
+  @ApiProperty({
+    description:
+      'Stable, machine-readable identifier of the error class (SCREAMING_SNAKE_CASE). Independent of HTTP status and wording. Clients map this to a localized user-facing message.',
+    example: 'AUTH_EMAIL_ALREADY_EXISTS',
+  })
+  code: string;
 }
 
 export class ValidationFieldErrorDto {
@@ -45,16 +56,24 @@ export class ValidationFieldErrorDto {
 
   @ApiProperty({
     description:
-      'Reason the field failed validation (first matching constraint).',
+      'Reason the field failed validation (first matching constraint). English; intended for logs.',
     example: 'password must be longer than or equal to 8 characters',
   })
   reason: string;
+
+  @ApiProperty({
+    description:
+      'Stable, machine-readable identifier of the failed constraint (class-validator constraint name, camelCase). Examples: `isEmail`, `minLength`, `isNotEmpty`. Clients map this to a localized user-facing message.',
+    example: 'minLength',
+  })
+  code: string;
 }
 
 /**
  * Returned when one or more body fields fail class-validator constraints
  * (HTTP 400). Same shape as `ProblemDetailsDto` plus a `validationsErrors` array
- * with one entry per offending field.
+ * with one entry per offending field. The outer `code` is always
+ * `VALIDATION_FAILED`; per-field codes live inside each `validationsErrors[i].code`.
  */
 export class ValidationProblemDetailsDto extends ProblemDetailsDto {
   @ApiProperty({
