@@ -9,7 +9,7 @@ Prioridades:
 
 1. No romper aislamiento multi-tenant.
 2. Mantener SQL en `supabase/migrations/` como source of truth.
-3. Mantener consistencia entre migraciones, schema Prisma/ZenStack y código Nest.
+3. Mantener consistencia entre migraciones, schema Prisma y código Nest.
 4. Entregar cambios verificables (`build`, `test`, smoke de migraciones).
 
 ## 2) Fuentes de verdad obligatorias
@@ -33,26 +33,36 @@ Antes de cambiar código, revisar siempre:
 
 ## 4) Regla estricta de DTOs
 
-### REGLA DE ARQUITECTURA: Estrategia Híbrida de DTOs (ZenStack vs. Manuales)
+### REGLA DE ARQUITECTURA: Estrategia Híbrida de DTOs (auto-generados vs. manuales)
 
-1. **DTOs auto-generados (ZenStack)**
-   - Usar para CRUD estándar 1:1 con modelo de DB.
-   - Importar tipos/DTOs generados desde `.zmodel`.
-   - No crear DTOs manuales para esos casos.
+1. **DTOs auto-generados (`prisma-generator-nestjs-dto`)**
+   - Generador configurado en `prisma/schema/global/base.prisma` (output: `src/generated/nestjs-dto/`).
+   - Regenerados en cada `bun install` (postinstall) y `bun run db:generate`.
+   - Usar para CRUD estándar 1:1 con un modelo de DB.
+   - Importar siempre desde `src/generated/nestjs-dto/` (p.ej. `CreateEntryDto`, `UpdateTenantDto`).
+   - Los DTOs autogenerados se commitean (ver `EntriesController` para el patrón canónico).
+   - No crear DTOs manuales para CRUD estándar.
 
-2. **DTOs manuales (`class-validator`/`class-transformer`)**
-   - Usar para endpoints orquestadores o lógica compleja no 1:1.
-   - Casos obligatorios:
+2. **DTOs manuales (`class-validator` / `class-transformer`)**
+   - Usar cuando el payload del endpoint **no mapea 1:1 a una tabla**: orquestación, agregación, validaciones que el generador no expresa, o contratos que deben ser más estrictos que lo que sale del schema.
+   - Casos típicos:
      - Webhooks de hardware (LPR).
      - Integraciones de pagos (Mercado Pago).
      - Reportes/estadísticas con filtros combinados.
      - Operaciones multi-mutación sobre varias tablas.
+     - Flujos de auth/recovery donde el payload mezcla campos de varias entidades o ninguna (p.ej. `{ token, password }`).
+     - Endpoints donde el contrato público debe ser un subset estricto del modelo de DB (no exponer columnas internas como `status`, `ipAddress`, etc.).
 
 Objetivo: DRY en CRUD estándar, control estricto de contratos en APIs críticas.
 
 Aplicación en este repo (estado actual):
 - CRUD de dominio debe importar desde `src/generated/nestjs-dto/`.
-- DTO manual permitido solo en contratos no-CRUD (por ejemplo `src/auth/dto`, `src/health/dto`, `src/utils/exceptions/dto`).
+- DTO manual permitido solo en contratos no-CRUD. Ejemplos en el repo:
+  - `src/auth/dto` (login, register, refresh, session — mezclan campos de `users` con campos que no existen en DB como `password`).
+  - `src/password-recovery/dto` (forgot/reset — el payload público es un subset estricto que oculta columnas internas de `password_reset_requests` como `status`/`ipAddress`, y `ResetPasswordDto` no mapea a ninguna tabla).
+  - `src/health/dto`, `src/utils/exceptions/dto`.
+
+Cuando hay un modelo en Prisma para auditar/persistir pero el payload del endpoint es distinto, el patrón es: **DTO manual para el contrato HTTP + Prisma client autogenerado para escribir en DB**. Ver `PasswordRecoveryService` como referencia (manual `ForgotPasswordDto` en el controller, `prisma.passwordResetRequest.create(...)` en el service).
 
 ## OAuth social (Google/GitHub)
 
