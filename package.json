@@ -21,7 +21,7 @@
     "seed:tenant": "bun run scripts/seed-tenant.ts",
     "seed:all": "bun run scripts/seed-auth.ts && bun run scripts/seed-tenant.ts",
     "db:diff": "supabase db diff -f",
-    "db:push": "supabase db push --linked",
+    "db:push": "bash -c 'set -a; . ./.env; set +a; supabase db push --db-url \"$DIRECT_URL\"'",
     "studio": "prisma studio"
   },
   "dependencies": {

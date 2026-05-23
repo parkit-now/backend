@@ -205,7 +205,7 @@ Mientras estés en tu rama podés tirar el archivo, renombrarlo, modificarlo, re
 
 **Pulleaste cambios de un compañero**: corré `make migration-apply` — aplica las migraciones que él/ella agregó y regenera tu cliente Prisma. Mismo comando que cuando aplicás las tuyas.
 
-**Al mergear a `main`**, el workflow de CI corre `supabase db push --linked` contra prod. Aplica sólo las migraciones nuevas. La data persiste.
+**Al desplegar a prod** (manual o CI), corré `make push` para aplicar migraciones usando `DIRECT_URL` del `.env` (o de variables inyectadas en CI). Aplica sólo las migraciones nuevas. La data persiste.
 
 A partir de ese momento ese archivo está **congelado**. Cambios futuros van en una migración nueva.
 
