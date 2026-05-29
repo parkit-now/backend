@@ -18,6 +18,7 @@ model Tenant {
 
   memberships UserMembership[]
   entries     Entry[]
+  rates       Rate[]
 
   @@map("tenants")
 }

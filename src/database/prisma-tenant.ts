@@ -32,7 +32,7 @@ import { PrismaClient } from '@prisma/client';
  * tenant-scoped business models to the list as they appear.
  */
 
-const TENANT_MODELS: readonly string[] = ['entry'];
+const TENANT_MODELS: readonly string[] = ['entry', 'rate'];
 
 const READ_OPS = new Set([
   'findMany',

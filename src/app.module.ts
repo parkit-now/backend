@@ -8,6 +8,7 @@ import { TenantsModule } from './tenants/tenants.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { EntriesModule } from './entries/entries.module';
 import { PasswordRecoveryModule } from './password-recovery/password-recovery.module';
+import { RatesModule } from './rates/rates.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PasswordRecoveryModule } from './password-recovery/password-recovery.mo
     TenantsModule,
     VehiclesModule,
     EntriesModule,
+    RatesModule,
   ],
 })
 export class AppModule {}
