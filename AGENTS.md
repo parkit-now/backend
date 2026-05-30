@@ -9,7 +9,7 @@ Prioridades:
 
 1. No romper aislamiento multi-tenant.
 2. Mantener SQL en `supabase/migrations/` como source of truth.
-3. Mantener consistencia entre migraciones, schema Prisma/ZenStack y código Nest.
+3. Mantener consistencia entre migraciones, schema Prisma y código Nest.
 4. Entregar cambios verificables (`build`, `test`, smoke de migraciones).
 
 ## 2) Fuentes de verdad obligatorias
@@ -33,26 +33,36 @@ Antes de cambiar código, revisar siempre:
 
 ## 4) Regla estricta de DTOs
 
-### REGLA DE ARQUITECTURA: Estrategia Híbrida de DTOs (ZenStack vs. Manuales)
+### REGLA DE ARQUITECTURA: Estrategia Híbrida de DTOs (auto-generados vs. manuales)
 
-1. **DTOs auto-generados (ZenStack)**
-   - Usar para CRUD estándar 1:1 con modelo de DB.
-   - Importar tipos/DTOs generados desde `.zmodel`.
-   - No crear DTOs manuales para esos casos.
+1. **DTOs auto-generados (`prisma-generator-nestjs-dto`)**
+   - Generador configurado en `prisma/schema/global/base.prisma` (output: `src/generated/nestjs-dto/`).
+   - Regenerados en cada `bun install` (postinstall) y `bun run db:generate`.
+   - Usar para CRUD estándar 1:1 con un modelo de DB.
+   - Importar siempre desde `src/generated/nestjs-dto/` (p.ej. `CreateEntryDto`, `UpdateTenantDto`).
+   - Los DTOs autogenerados se commitean (ver `EntriesController` para el patrón canónico).
+   - No crear DTOs manuales para CRUD estándar.
 
-2. **DTOs manuales (`class-validator`/`class-transformer`)**
-   - Usar para endpoints orquestadores o lógica compleja no 1:1.
-   - Casos obligatorios:
+2. **DTOs manuales (`class-validator` / `class-transformer`)**
+   - Usar cuando el payload del endpoint **no mapea 1:1 a una tabla**: orquestación, agregación, validaciones que el generador no expresa, o contratos que deben ser más estrictos que lo que sale del schema.
+   - Casos típicos:
      - Webhooks de hardware (LPR).
      - Integraciones de pagos (Mercado Pago).
      - Reportes/estadísticas con filtros combinados.
      - Operaciones multi-mutación sobre varias tablas.
+     - Flujos de auth/recovery donde el payload mezcla campos de varias entidades o ninguna (p.ej. `{ token, password }`).
+     - Endpoints donde el contrato público debe ser un subset estricto del modelo de DB (no exponer columnas internas como `status`, `ipAddress`, etc.).
 
 Objetivo: DRY en CRUD estándar, control estricto de contratos en APIs críticas.
 
 Aplicación en este repo (estado actual):
 - CRUD de dominio debe importar desde `src/generated/nestjs-dto/`.
-- DTO manual permitido solo en contratos no-CRUD (por ejemplo `src/auth/dto`, `src/health/dto`, `src/utils/exceptions/dto`).
+- DTO manual permitido solo en contratos no-CRUD. Ejemplos en el repo:
+  - `src/auth/dto` (login, register, refresh, session — mezclan campos de `users` con campos que no existen en DB como `password`).
+  - `src/password-recovery/dto` (forgot/reset — el payload público es un subset estricto que oculta columnas internas de `password_reset_requests` como `status`/`ipAddress`, y `ResetPasswordDto` no mapea a ninguna tabla).
+  - `src/health/dto`, `src/utils/exceptions/dto`.
+
+Cuando hay un modelo en Prisma para auditar/persistir pero el payload del endpoint es distinto, el patrón es: **DTO manual para el contrato HTTP + Prisma client autogenerado para escribir en DB**. Ver `PasswordRecoveryService` como referencia (manual `ForgotPasswordDto` en el controller, `prisma.passwordResetRequest.create(...)` en el service).
 
 ## OAuth social (Google/GitHub)
 
@@ -65,6 +75,52 @@ Aplicación en este repo (estado actual):
 - Hardening operativo:
   - mantener `enable_manual_linking = false`;
   - revisar política de verificación de email/proveedor antes de prod.
+
+## Contrato de errores HTTP (codes estables)
+
+Toda respuesta de error sigue Problem Details (RFC 7807) extendido con un campo
+`code` estable. Los clientes hacen lookup en español por ese `code`; NO leen el
+campo `detail` para el usuario (queda en ingles, solo para logs).
+
+### Catalogo
+
+- Fuente unica: `src/utils/exceptions/error-codes.ts`.
+- Formato: `SCREAMING_SNAKE_CASE`, con prefijo por dominio (`AUTH_`, `DB_`, etc).
+- Reglas:
+  - Nunca renombrar un code ya publicado. Si cambia la semantica, agregar uno
+    nuevo y deprecar el viejo.
+  - Al agregar codes nuevos, actualizar tambien `CODE_MESSAGES` en los 3
+    frontends (`front-{web,desktop,mobile}/src/lib/api/translate.ts`).
+
+### Como emitirlos
+
+- Para errores propios: `throw new FormattedException(title, status, detail, instance, code)`.
+  El parametro `code` es `ErrorCode` (typesafe contra el catalogo).
+- Validation pipe ya inyecta automaticamente:
+  - `code = VALIDATION_FAILED` en el ProblemDetails externo.
+  - `code = <constraint name de class-validator>` (`isEmail`, `minLength`, etc.)
+    en cada `ValidationFieldErrorDto`. Hay tabla de prioridad en
+    `main.ts::CONSTRAINT_PRIORITY` para elegir un constraint relevante cuando
+    multiples fallan (ej. `isNotEmpty` antes que `maxLength`).
+- Errores Prisma se mapean automaticamente a `DB_*` en el filter
+  (`prismaCodeToErrorCode`).
+- Para `HttpException` plana de Nest (sin code), el filter aplica
+  `defaultCodeForStatus(status)` como red de seguridad. Aun asi, preferir
+  siempre `FormattedException` para tener control explicito.
+
+### Smoke
+
+```bash
+curl -X POST localhost:3000/auth/login -d '{}' -H "Content-Type: application/json"
+# -> { "code": "VALIDATION_FAILED", "validationsErrors": [{ "code": "isEmail", ... }] }
+```
+
+### Anti-patrones
+
+- No `throw new UnauthorizedException(...)` ni `BadRequestException(...)` cuando
+  quieras un code especifico: usar `FormattedException`.
+- No reutilizar un mismo code para casos semanticamente distintos.
+- No incluir el code dentro de `detail` o `title` (son campos independientes).
 
 ## 5) Reglas de seguridad multi-tenant
 
