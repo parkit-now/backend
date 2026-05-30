@@ -189,10 +189,10 @@ Todo cambio de agente debe ser compatible con ese smoke.
 
 ## 9) Workflow Git para agentes
 
-- Crear ramas desde `main`: `feat/*`, `fix/*`, `docs/*`, etc.
+- Crear ramas desde `develop`: `feat/*`, `fix/*`, `docs/*`, etc.
 - Commits con Conventional Commits.
-- PR siempre contra `main`.
-- `develop` se usa para validación integrada (ver `CONTRIBUTING.md`).
+- PR siempre contra `develop`.
+- `main` es producción: nunca commitear ni mergear directo a `main` (ver `CONTRIBUTING.md`).
 
 ## 10) Checklist de entrega del agente
 
