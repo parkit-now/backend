@@ -151,15 +151,17 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:3000"
+# The web app (front-web) — OAuth/email redirects land here, NOT the API (:3000).
+site_url = "http://localhost:5173"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
-# A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
+# A list of URLs (exact or glob) that auth providers may redirect to post-auth.
 additional_redirect_urls = [
-  "http://127.0.0.1:3000",
-  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5173/**",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5173/**",
   "parkit://auth/callback",
-  "http://localhost:5173/reset-password",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
@@ -281,9 +283,10 @@ max_frequency = "5s"
 # uri = "pg-functions://postgres/auth/before-user-created-hook"
 
 # This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-# [auth.hook.custom_access_token]
-# enabled = true
-# uri = "pg-functions://<database>/<schema>/<hook_name>"
+# Injects `app_metadata.role` from `public.users` into every JWT (email + OAuth).
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/custom_access_token_hook"
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]

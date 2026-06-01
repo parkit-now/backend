@@ -58,6 +58,9 @@ const USERS: SeedUser[] = [
     { email: 'operator@once.test', password: 'OperatorPass123!', role: 'operator', tenantIds: [TENANTS.once, TENANTS.belgrano] },
     { email: 'driver@once.test', password: 'DriverPass123!', role: 'driver' },
     { email: 'solo-once@once.test', password: 'Password123!', role: 'operator', tenantIds: [TENANTS.once] },
+    // Owner of the "pending" company in the onboarding seed (no lots yet;
+    // its tenants are materialized when the application is approved).
+    { email: 'owner-pending@once.test', password: 'OwnerPass123!', role: 'owner' },
 ];
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -76,7 +79,12 @@ async function main(): Promise<void> {
 
     for (const u of USERS) {
         const tenantIds = u.tenantIds ?? [];
-        const appMetadata = tenantIds.length > 0 ? { tenant_id: tenantIds[0] } : {};
+        // Mirror the app role into `app_metadata` so it is baked into the JWT
+        // (clients route by `app_metadata.role` without hitting /users/me).
+        const appMetadata = {
+            role: u.role,
+            ...(tenantIds.length > 0 ? { tenant_id: tenantIds[0] } : {}),
+        };
         let authUser = existingByEmail.get(u.email);
 
         if (!authUser) {
