@@ -4,11 +4,12 @@
 // where applicable, links them to the tenants seeded by `supabase/seed.sql`
 // via the `user_memberships` table. Idempotent — safe to run multiple times.
 //
-// A tenant is a parking lot. Membership rules mirror production:
-//   - admin / driver  → no membership, no `app_metadata.tenant_id`.
-//   - owner / operator → 1..N memberships (one per lot). The first entry of
-//                        `tenantIds` is the active one and goes into
-//                        `app_metadata.tenant_id`; the user can switch later.
+// A tenant is a parking lot (entity). Membership rules mirror production:
+//   - admin / driver  → no membership.
+//   - owner / operator → 1..N memberships (one per lot). The active entity is
+//                        NOT carried in the JWT; it is resolved per request from
+//                        `/tenants/:tenantId` + TenantMembershipGuard and chosen
+//                        client-side.
 //
 // Guardrails:
 //   - Refuses to run unless SUPABASE_URL points to localhost / 127.0.0.1.
@@ -58,9 +59,10 @@ const USERS: SeedUser[] = [
     { email: 'operator@once.test', password: 'OperatorPass123!', role: 'operator', tenantIds: [TENANTS.once, TENANTS.belgrano] },
     { email: 'driver@once.test', password: 'DriverPass123!', role: 'driver' },
     { email: 'solo-once@once.test', password: 'Password123!', role: 'operator', tenantIds: [TENANTS.once] },
-    // Owner of the "pending" company in the onboarding seed (no lots yet;
-    // its tenants are materialized when the application is approved).
-    { email: 'owner-pending@once.test', password: 'OwnerPass123!', role: 'owner' },
+    // Applicant of the "pending" onboarding application (no lots yet; its entity
+    // is materialized as a tenant + owner membership when the application is
+    // approved). Starts as driver and is promoted to owner on approval.
+    { email: 'owner-pending@once.test', password: 'OwnerPass123!', role: 'driver' },
 ];
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -80,11 +82,9 @@ async function main(): Promise<void> {
     for (const u of USERS) {
         const tenantIds = u.tenantIds ?? [];
         // Mirror the app role into `app_metadata` so it is baked into the JWT
-        // (clients route by `app_metadata.role` without hitting /users/me).
-        const appMetadata = {
-            role: u.role,
-            ...(tenantIds.length > 0 ? { tenant_id: tenantIds[0] } : {}),
-        };
+        // (clients route by `app_metadata.role` without hitting /users/me). The
+        // entity is NOT part of the JWT — only the role.
+        const appMetadata = { role: u.role };
         let authUser = existingByEmail.get(u.email);
 
         if (!authUser) {

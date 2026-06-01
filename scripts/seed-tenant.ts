@@ -38,12 +38,9 @@ const VEHICLES = {
   kangoo: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3',
 } as const;
 
-// Onboarding demo: one already-APPROVED company (owns Once+Belgrano) and one
-// PENDING company with an application under review (feeds the PARKIT Ops queue).
-const COMPANIES = {
-  active: 'cccccccc-cccc-cccc-cccc-ccccccccccc1',
-  pending: 'cccccccc-cccc-cccc-cccc-ccccccccccc2',
-} as const;
+// Onboarding demo: two already-APPROVED entities (Once + Belgrano, owned by
+// owner@once.test via memberships) carry legal data + payment methods, and one
+// PENDING application under review (feeds the PARKIT Ops queue).
 const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
 const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
 const ZONES = {
@@ -192,9 +189,8 @@ async function main(): Promise<void> {
  */
 async function seedOnboarding(): Promise<void> {
   const onboardingTables = [
-    'companies',
     'onboarding_applications',
-    'company_documents',
+    'application_documents',
     'payment_methods',
     'zones',
   ];
@@ -216,47 +212,50 @@ async function seedOnboarding(): Promise<void> {
     return;
   }
 
-  // --- APPROVED company: owns Once + Belgrano ---
-  await prisma.company.upsert({
-    where: { id: COMPANIES.active },
-    create: {
-      id: COMPANIES.active,
+  // --- APPROVED entities: Once + Belgrano (owned by owner@once.test) ---
+  // Membership is seeded by seed-auth; here we fill the relocated legal/contact
+  // data and the entity-level payment methods.
+  await prisma.tenant.update({
+    where: { id: TENANTS.once },
+    data: {
       legalName: 'Estacionamientos Centro SA',
       cuit: '30700000001',
       email: 'centro@parkit.test',
       phone: '+541140000000',
-      address: 'Av. Corrientes 1000, CABA',
+      address: 'Bartolomé Mitre 2500, CABA',
       status: 'active',
-      ownerUserId: owner.id,
     },
-    update: { status: 'active', ownerUserId: owner.id },
-  });
-
-  await prisma.tenant.update({
-    where: { id: TENANTS.once },
-    data: { companyId: COMPANIES.active, address: 'Bartolomé Mitre 2500, CABA' },
   });
   await prisma.tenant.update({
     where: { id: TENANTS.belgrano },
-    data: { companyId: COMPANIES.active, address: 'Av. Cabildo 2000, CABA' },
+    data: {
+      legalName: 'Estacionamientos Centro SA',
+      cuit: '30700000001',
+      email: 'centro@parkit.test',
+      phone: '+541140000000',
+      address: 'Av. Cabildo 2000, CABA',
+      status: 'active',
+    },
   });
 
-  for (const [type, name, isDefault] of [
-    ['mp_transfer', 'Bank transfer (Mercado Pago)', true],
-    ['cash', 'Cash', false],
-  ] as const) {
-    await prisma.paymentMethod.upsert({
-      where: { companyId_type: { companyId: COMPANIES.active, type } },
-      create: {
-        companyId: COMPANIES.active,
-        type,
-        name,
-        enabled: true,
-        isSystem: true,
-        isDefault,
-      },
-      update: { name, isSystem: true },
-    });
+  for (const tenantId of [TENANTS.once, TENANTS.belgrano]) {
+    for (const [type, name, isDefault] of [
+      ['mp_transfer', 'Bank transfer (Mercado Pago)', true],
+      ['cash', 'Cash', false],
+    ] as const) {
+      await prisma.paymentMethod.upsert({
+        where: { tenantId_type: { tenantId, type } },
+        create: {
+          tenantId,
+          type,
+          name,
+          enabled: true,
+          isSystem: true,
+          isDefault,
+        },
+        update: { name, isSystem: true },
+      });
+    }
   }
 
   await prisma.zone.upsert({
@@ -284,54 +283,35 @@ async function seedOnboarding(): Promise<void> {
     update: { carSpots: 25, motorcycleSpots: 8, bicycleSpots: 0 },
   });
 
-  // --- PENDING company: application under review (PARKIT Ops queue) ---
-  await prisma.company.upsert({
-    where: { id: COMPANIES.pending },
-    create: {
-      id: COMPANIES.pending,
-      legalName: 'Cocheras del Sur SRL',
-      cuit: '30700000002',
-      email: 'sur@parkit.test',
-      phone: '+541150000000',
-      address: 'Av. Rivadavia 5000, CABA',
-      status: 'pending',
-      ownerUserId: ownerPending.id,
-    },
-    update: { status: 'pending', ownerUserId: ownerPending.id },
-  });
-
+  // --- PENDING application: one entity under review (PARKIT Ops queue) ---
+  // Belongs directly to the applicant (owner-pending, a driver). On approval it
+  // materializes a tenant + owner membership and promotes the applicant.
   await prisma.onboardingApplication.upsert({
     where: { id: PENDING_APPLICATION },
     create: {
       id: PENDING_APPLICATION,
-      companyId: COMPANIES.pending,
+      applicantUserId: ownerPending.id,
       status: 'pending_review',
       submittedAt: new Date('2026-05-20T12:00:00.000Z'),
-      declaredBranches: [
-        {
-          name: 'Caballito branch',
-          address: 'Av. Rivadavia 5000, CABA',
-          carSpots: 30,
-          motorcycleSpots: 10,
-          bicycleSpots: 5,
-        },
-        {
-          name: 'Flores branch',
-          address: 'Av. Rivadavia 7000, CABA',
-          carSpots: 20,
-          motorcycleSpots: 5,
-          bicycleSpots: 0,
-        },
-      ],
+      declaredEntity: {
+        name: 'Caballito lot',
+        address: 'Av. Rivadavia 5000, CABA',
+        legalName: 'Cocheras del Sur SRL',
+        cuit: '30700000002',
+        email: 'sur@parkit.test',
+        phone: '+541150000000',
+        carSpots: 30,
+        motorcycleSpots: 10,
+        bicycleSpots: 5,
+      },
     },
-    update: { status: 'pending_review' },
+    update: { status: 'pending_review', applicantUserId: ownerPending.id },
   });
 
-  await prisma.companyDocument.upsert({
+  await prisma.applicationDocument.upsert({
     where: { id: PENDING_DOCUMENT },
     create: {
       id: PENDING_DOCUMENT,
-      companyId: COMPANIES.pending,
       applicationId: PENDING_APPLICATION,
       name: 'Articles of incorporation.pdf',
       storagePath: 'demo/cocheras-del-sur/estatuto.pdf',
@@ -341,7 +321,7 @@ async function seedOnboarding(): Promise<void> {
   });
 
   console.log(
-    '✓ Seeded onboarding: 1 active company (Once+Belgrano) and 1 pending application.',
+    '✓ Seeded onboarding: 2 active entities (Once+Belgrano) and 1 pending application.',
   );
 }
 
