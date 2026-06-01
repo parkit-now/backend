@@ -8,6 +8,10 @@ import { TenantsModule } from './tenants/tenants.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { EntriesModule } from './entries/entries.module';
 import { PasswordRecoveryModule } from './password-recovery/password-recovery.module';
+import { ZonesModule } from './zones/zones.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { ApplicationsModule } from './admin/applications/applications.module';
+import { CompaniesModule } from './companies/companies.module';
 
 @Module({
   imports: [
@@ -20,6 +24,10 @@ import { PasswordRecoveryModule } from './password-recovery/password-recovery.mo
     TenantsModule,
     VehiclesModule,
     EntriesModule,
+    ZonesModule,
+    OnboardingModule,
+    ApplicationsModule,
+    CompaniesModule,
   ],
 })
 export class AppModule {}
