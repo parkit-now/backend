@@ -1,21 +1,19 @@
 // Auth: roles and users for the web/desktop/mobile platform.
 // User.id is assigned by Supabase Auth — no @default here.
 //
-// Tenant (entity) association does NOT live here. It lives in `UserMembership`
-// (N:M, see memberships.prisma). A tenant equals a parking lot, so:
-//   - owner: 0..N memberships (one per parking lot they run; 0 until they
-//            register their first one).
-//   - operator: 0..N memberships (one per parking lot they work in).
-//   - driver / admin: always 0 memberships.
+// The GLOBAL role is platform-level only: `admin` (sees/manages everything) or
+// `user` (everyone else). It is NOT where "owner"/"operator" live — those are
+// per-entity and live on `UserMembership.role` (see memberships.prisma). So a
+// single user can be owner of one lot and operator of another. A `user` with no
+// memberships is just an end user (e.g. a mobile-app driver).
+//
 // The entity acted on per request is resolved from `/tenants/:tenantId` and
 // `TenantMembershipGuard`; it is NOT carried in the JWT. The JWT only carries
 // the global `role` (see custom_access_token_hook).
 
 enum UserRole {
-  admin    // platform-level, sees/manages every entity
-  owner    // parking-lot business owner, may run several lots
-  operator // booth operator, may work in several lots
-  driver   // mobile-app end user, no tenant
+  admin // platform-level, sees/manages every entity
+  user  // everyone else; entity-level role comes from UserMembership
 
   @@map("user_role")
 }

@@ -15,7 +15,7 @@ id: string;
   enum: UserRole,
 })
 @IsNotEmpty()
-@IsIn(["admin","owner","operator","driver"])
+@IsIn(["admin","user"])
 role: UserRole;
 @IsNotEmpty()
 @IsString()
