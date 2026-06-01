@@ -1,42 +1,31 @@
 import type {
-  Company,
-  CompanyDocument,
+  ApplicationDocument,
   OnboardingApplication,
 } from '@prisma/client';
-import { CompanyProfileDto } from './dto/company-profile.dto';
 import {
-  CompanyDocumentDto,
+  ApplicationDocumentDto,
   OnboardingApplicationDto,
 } from './dto/onboarding-response.dto';
 
-export function toCompanyProfileDto(company: Company): CompanyProfileDto {
-  return {
-    id: company.id,
-    legalName: company.legalName,
-    cuit: company.cuit,
-    email: company.email,
-    phone: company.phone,
-    address: company.address,
-    status: company.status,
-    createdAt: company.createdAt.toISOString(),
-  };
-}
-
-export function declaredBranchesOf(app: OnboardingApplication): unknown[] {
-  return Array.isArray(app.declaredBranches) ? app.declaredBranches : [];
+export function declaredEntityOf(
+  app: OnboardingApplication,
+): Record<string, unknown> {
+  const entity = app.declaredEntity;
+  return entity && typeof entity === 'object' && !Array.isArray(entity)
+    ? entity
+    : {};
 }
 
 export function toApplicationDto(
   app: OnboardingApplication,
   docsCount: number,
 ): OnboardingApplicationDto {
-  const branches = declaredBranchesOf(app);
   return {
     id: app.id,
     status: app.status,
-    declaredBranches: branches,
-    declaredBranchCount: branches.length,
+    declaredEntity: declaredEntityOf(app),
     docsCount,
+    tenantId: app.tenantId,
     submittedAt: app.submittedAt ? app.submittedAt.toISOString() : null,
     reviewedAt: app.reviewedAt ? app.reviewedAt.toISOString() : null,
     rejectionReason: app.rejectionReason,
@@ -44,7 +33,9 @@ export function toApplicationDto(
   };
 }
 
-export function toCompanyDocumentDto(doc: CompanyDocument): CompanyDocumentDto {
+export function toApplicationDocumentDto(
+  doc: ApplicationDocument,
+): ApplicationDocumentDto {
   return {
     id: doc.id,
     name: doc.name,

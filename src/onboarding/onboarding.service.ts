@@ -1,198 +1,98 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma, type OnboardingApplication, type User } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
-import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { PrismaService } from '../database/prisma.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
-import { CreateCompanyOnboardingDto } from './dto/create-company-onboarding.dto';
+import { CreateApplicationDto } from './dto/create-application.dto';
 import {
-  CompanyDocumentDto,
-  OnboardingStateDto,
+  ApplicationDocumentDto,
+  OnboardingApplicationDto,
 } from './dto/onboarding-response.dto';
 import { RegisterDocumentDto } from './dto/register-document.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
 import {
-  declaredBranchesOf,
+  declaredEntityOf,
+  toApplicationDocumentDto,
   toApplicationDto,
-  toCompanyDocumentDto,
-  toCompanyProfileDto,
 } from './onboarding.mappers';
 
-const EDITABLE_STATES = ['draft', 'rejected', 'pending_review'];
+const EDITABLE_STATES = ['draft', 'rejected'];
+
+type ApplicationWithDocCount = OnboardingApplication & {
+  _count: { documents: number };
+};
 
 @Injectable()
 export class OnboardingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly auth: SupabaseAuthService,
   ) {}
 
-  /** Step 1: create company + draft application. One company per owner. */
-  async createCompany(
+  /** Creates a draft application for the current user declaring one entity. */
+  async create(
     user: User,
-    dto: CreateCompanyOnboardingDto,
-  ): Promise<OnboardingStateDto> {
-    const existing = await this.prisma.company.findFirst({
-      where: { ownerUserId: user.id },
-    });
-    if (existing) {
-      throw new FormattedException(
-        'Conflict',
-        HttpStatus.CONFLICT,
-        'This owner already has a company',
-        '/onboarding/company',
-        ErrorCodes.COMPANY_ALREADY_EXISTS,
-      );
-    }
-
-    // A driver registering their first parking lot becomes an owner. The DB
-    // role flips inside the transaction (authorization source of truth); the
-    // JWT claim is mirrored right after (best-effort, see below).
-    const promoteToOwner = user.role === 'driver';
-
-    const { company, application } = await this.prisma.$transaction(
-      async (tx) => {
-        const company = await tx.company.create({
-          data: {
-            legalName: dto.legalName,
-            cuit: dto.cuit,
-            email: dto.email,
-            phone: dto.phone ?? null,
-            address: dto.address ?? null,
-            status: 'pending',
-            ownerUserId: user.id,
-          },
-        });
-        const application = await tx.onboardingApplication.create({
-          data: { companyId: company.id, status: 'draft' },
-        });
-        await tx.auditLog.create({
-          data: {
-            action: AuditActions.COMPANY_CREATED,
-            entityType: 'company',
-            entityId: company.id,
-            actorUserId: user.id,
-            companyId: company.id,
-          },
-        });
-        if (promoteToOwner) {
-          await tx.user.update({
-            where: { id: user.id },
-            data: { role: 'owner' },
-          });
-          await tx.auditLog.create({
-            data: {
-              action: AuditActions.OWNER_PROMOTED,
-              entityType: 'user',
-              entityId: user.id,
-              actorUserId: user.id,
-              companyId: company.id,
-            },
-          });
-        }
-        return { company, application };
-      },
-    );
-
-    if (promoteToOwner) {
-      // Mirror the role into the JWT (`app_metadata.role`) so the client routes
-      // as an owner after refreshing the session. Supabase Auth is not
-      // transactional with our DB: on failure the DB role still governs
-      // authorization, so we only audit a warning instead of failing the call.
-      try {
-        await this.auth.setUserRole(user.id, 'owner');
-      } catch (err) {
-        await this.audit.record({
-          action: AuditActions.OWNER_PROMOTED,
-          entityType: 'user',
-          entityId: user.id,
-          actorUserId: user.id,
-          companyId: company.id,
-          severity: 'warn',
-          metadata: {
-            appMetadataSync: 'failed',
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-      }
-    }
-
-    return {
-      company: toCompanyProfileDto(company),
-      application: toApplicationDto(application, 0),
-    };
-  }
-
-  /** Onboarding state of the authenticated owner (company + latest application). */
-  async getMe(user: User): Promise<OnboardingStateDto> {
-    const company = await this.prisma.company.findFirst({
-      where: { ownerUserId: user.id },
-      include: {
-        applications: { orderBy: { createdAt: 'desc' }, take: 1 },
-        _count: { select: { documents: true } },
+    dto: CreateApplicationDto,
+  ): Promise<OnboardingApplicationDto> {
+    const application = await this.prisma.onboardingApplication.create({
+      data: {
+        applicantUserId: user.id,
+        status: 'draft',
+        declaredEntity: this.toDeclaredEntity(dto),
       },
     });
-
-    if (!company) {
-      return { company: null, application: null };
-    }
-
-    const application = company.applications[0] ?? null;
-    return {
-      company: toCompanyProfileDto(company),
-      application: application
-        ? toApplicationDto(application, company._count.documents)
-        : null,
-    };
+    await this.audit.record({
+      action: AuditActions.APPLICATION_CREATED,
+      entityType: 'application',
+      entityId: application.id,
+      actorUserId: user.id,
+    });
+    return toApplicationDto(application, 0);
   }
 
-  /** Edits company data and/or declared branches (only draft/rejected). */
-  async updateApplication(
+  /** Lists the applications of the current user, newest first. */
+  async list(user: User): Promise<OnboardingApplicationDto[]> {
+    const apps = await this.prisma.onboardingApplication.findMany({
+      where: { applicantUserId: user.id },
+      include: { _count: { select: { documents: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return apps.map((app) => toApplicationDto(app, app._count.documents));
+  }
+
+  /** Returns a single application owned by the current user. */
+  async getOne(
+    user: User,
+    applicationId: string,
+  ): Promise<OnboardingApplicationDto> {
+    const application = await this.loadOwnedApplication(user, applicationId);
+    return toApplicationDto(application, application._count.documents);
+  }
+
+  /** Edits the declared entity (only draft/rejected). */
+  async update(
     user: User,
     applicationId: string,
     dto: UpdateApplicationDto,
-  ): Promise<OnboardingStateDto> {
+  ): Promise<OnboardingApplicationDto> {
     const application = await this.loadOwnedApplication(user, applicationId);
     this.assertEditable(application);
 
-    await this.prisma.$transaction(async (tx) => {
-      const companyData: Prisma.CompanyUpdateInput = {};
-      if (dto.legalName !== undefined) companyData.legalName = dto.legalName;
-      if (dto.cuit !== undefined) companyData.cuit = dto.cuit;
-      if (dto.email !== undefined) companyData.email = dto.email;
-      if (dto.phone !== undefined) companyData.phone = dto.phone;
-      if (dto.address !== undefined) companyData.address = dto.address;
-      if (Object.keys(companyData).length > 0) {
-        await tx.company.update({
-          where: { id: application.companyId },
-          data: companyData,
-        });
-      }
+    const merged = { ...declaredEntityOf(application), ...this.cleanDto(dto) };
 
-      if (dto.declaredBranches !== undefined) {
-        await tx.onboardingApplication.update({
-          where: { id: applicationId },
-          data: {
-            declaredBranches:
-              dto.declaredBranches as unknown as Prisma.InputJsonValue,
-          },
-        });
-      }
-
-      await tx.auditLog.create({
-        data: {
-          action: AuditActions.APPLICATION_UPDATED,
-          entityType: 'application',
-          entityId: applicationId,
-          actorUserId: user.id,
-          companyId: application.companyId,
-        },
-      });
+    const updated = await this.prisma.onboardingApplication.update({
+      where: { id: applicationId },
+      data: { declaredEntity: merged as Prisma.InputJsonValue },
+      include: { _count: { select: { documents: true } } },
     });
-
-    return this.getMe(user);
+    await this.audit.record({
+      action: AuditActions.APPLICATION_UPDATED,
+      entityType: 'application',
+      entityId: applicationId,
+      actorUserId: user.id,
+    });
+    return toApplicationDto(updated, updated._count.documents);
   }
 
   /** Registers metadata for an application document. */
@@ -200,82 +100,90 @@ export class OnboardingService {
     user: User,
     applicationId: string,
     dto: RegisterDocumentDto,
-  ): Promise<CompanyDocumentDto> {
+  ): Promise<ApplicationDocumentDto> {
     const application = await this.loadOwnedApplication(user, applicationId);
-    const doc = await this.prisma.companyDocument.create({
+    const doc = await this.prisma.applicationDocument.create({
       data: {
-        companyId: application.companyId,
         applicationId: application.id,
         name: dto.name,
         storagePath: dto.storagePath,
         mimeType: dto.mimeType ?? null,
       },
     });
-    return toCompanyDocumentDto(doc);
+    await this.audit.record({
+      action: AuditActions.APPLICATION_DOCUMENT_ADDED,
+      entityType: 'application',
+      entityId: application.id,
+      actorUserId: user.id,
+    });
+    return toApplicationDocumentDto(doc);
   }
 
   /** Submits the application for review: draft|rejected → pending_review. */
-  async submit(user: User, applicationId: string): Promise<OnboardingStateDto> {
+  async submit(
+    user: User,
+    applicationId: string,
+  ): Promise<OnboardingApplicationDto> {
     const application = await this.loadOwnedApplication(user, applicationId);
     this.assertEditable(application);
 
-    if (declaredBranchesOf(application).length === 0) {
-      throw new FormattedException(
-        'Bad Request',
-        HttpStatus.BAD_REQUEST,
-        'Declare at least one branch before submitting',
-        '/onboarding/application/submit',
-        ErrorCodes.ONBOARDING_NOT_SUBMITTABLE,
-      );
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.onboardingApplication.update({
-        where: { id: applicationId },
-        data: {
-          status: 'pending_review',
-          submittedAt: new Date(),
-          rejectionReason: null,
-        },
-      });
-      await tx.auditLog.create({
-        data: {
-          action: AuditActions.APPLICATION_SUBMITTED,
-          entityType: 'application',
-          entityId: applicationId,
-          actorUserId: user.id,
-          companyId: application.companyId,
-        },
-      });
+    const updated = await this.prisma.onboardingApplication.update({
+      where: { id: applicationId },
+      data: {
+        status: 'pending_review',
+        submittedAt: new Date(),
+        rejectionReason: null,
+      },
+      include: { _count: { select: { documents: true } } },
     });
+    await this.audit.record({
+      action: AuditActions.APPLICATION_SUBMITTED,
+      entityType: 'application',
+      entityId: applicationId,
+      actorUserId: user.id,
+    });
+    return toApplicationDto(updated, updated._count.documents);
+  }
 
-    return this.getMe(user);
+  private toDeclaredEntity(
+    dto: CreateApplicationDto | UpdateApplicationDto,
+  ): Prisma.InputJsonValue {
+    return this.cleanDto(dto) as Prisma.InputJsonValue;
+  }
+
+  /** Drops `undefined` keys so a partial patch does not overwrite with null. */
+  private cleanDto(
+    dto: CreateApplicationDto | UpdateApplicationDto,
+  ): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(dto).filter(([, v]) => v !== undefined),
+    );
   }
 
   private async loadOwnedApplication(
     user: User,
     applicationId: string,
-  ): Promise<OnboardingApplication & { company: { ownerUserId: string } }> {
+  ): Promise<ApplicationWithDocCount> {
     const application = await this.prisma.onboardingApplication.findUnique({
       where: { id: applicationId },
-      include: { company: true },
+      include: { _count: { select: { documents: true } } },
     });
     if (!application) {
       throw new FormattedException(
         'Not Found',
         HttpStatus.NOT_FOUND,
         `Application ${applicationId} not found`,
-        '/onboarding/application',
+        '/onboarding/applications',
         ErrorCodes.ONBOARDING_APPLICATION_NOT_FOUND,
       );
     }
-    if (user.role !== 'admin' && application.company.ownerUserId !== user.id) {
+    if (user.role !== 'admin' && application.applicantUserId !== user.id) {
       throw new FormattedException(
         'Forbidden',
         HttpStatus.FORBIDDEN,
-        'You are not the owner of this application',
-        '/onboarding/application',
-        ErrorCodes.COMPANY_NOT_OWNER,
+        'You are not the applicant of this application',
+        '/onboarding/applications',
+        ErrorCodes.ENTITY_NOT_OWNER,
       );
     }
     return application;
@@ -287,7 +195,7 @@ export class OnboardingService {
         'Conflict',
         HttpStatus.CONFLICT,
         `Application in state '${application.status}' can no longer be edited`,
-        '/onboarding/application',
+        '/onboarding/applications',
         ErrorCodes.ONBOARDING_INVALID_STATE,
       );
     }

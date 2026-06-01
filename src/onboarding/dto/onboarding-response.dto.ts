@@ -1,7 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 import type { ApplicationStatus } from '@prisma/client';
-import { CompanyProfileDto } from './company-profile.dto';
 
+/**
+ * Public projection of an `OnboardingApplication` for the applicant portal.
+ * An application declares ONE entity (parking lot) and cycles
+ * `draft` → `pending_review` → `approved`/`rejected`.
+ */
 export class OnboardingApplicationDto {
   @ApiProperty({
     description: 'Onboarding application id (UUID).',
@@ -19,24 +23,29 @@ export class OnboardingApplicationDto {
   status: ApplicationStatus;
 
   @ApiProperty({
-    type: 'array',
-    items: { type: 'object', additionalProperties: true },
+    type: 'object',
+    additionalProperties: true,
     description:
-      'Declared branches snapshot (before approval). Each entry carries `name`, optional `address`, and spot counts (`carSpots`/`motorcycleSpots`/`bicycleSpots`). On approval each becomes a real lot.',
+      'Declared entity snapshot: `name`, `address`, `legalName`, `cuit`, `email`, `phone` and spot counts. On approval it is materialized as a real parking lot (tenant).',
   })
-  declaredBranches: unknown[];
+  declaredEntity: Record<string, unknown>;
 
   @ApiProperty({
-    description: 'Number of declared branches in this application.',
-    example: 2,
-  })
-  declaredBranchCount: number;
-
-  @ApiProperty({
-    description: 'Number of document metadata records attached to the company.',
+    description:
+      'Number of document metadata records attached to the application.',
     example: 3,
   })
   docsCount: number;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    format: 'uuid',
+    description:
+      'Id of the entity (tenant) created on approval, or `null` until approved.',
+    example: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+  })
+  tenantId: string | null;
 
   @ApiProperty({
     type: String,
@@ -72,25 +81,10 @@ export class OnboardingApplicationDto {
   createdAt: string;
 }
 
-export class OnboardingStateDto {
-  @ApiProperty({
-    type: CompanyProfileDto,
-    nullable: true,
-    description:
-      'The company owned by the caller, or `null` when onboarding has not started.',
-  })
-  company: CompanyProfileDto | null;
-
-  @ApiProperty({
-    type: OnboardingApplicationDto,
-    nullable: true,
-    description:
-      'The latest onboarding application of the company, or `null` when none exists.',
-  })
-  application: OnboardingApplicationDto | null;
-}
-
-export class CompanyDocumentDto {
+/**
+ * Metadata of a document attached to an onboarding application.
+ */
+export class ApplicationDocumentDto {
   @ApiProperty({
     description: 'Document metadata record id (UUID).',
     format: 'uuid',
@@ -106,7 +100,7 @@ export class CompanyDocumentDto {
 
   @ApiProperty({
     description: 'Object key of the binary in Supabase Storage.',
-    example: 'companies/3f2504e0/docs/habilitacion.pdf',
+    example: 'applications/3f2504e0/docs/habilitacion.pdf',
   })
   storagePath: string;
 

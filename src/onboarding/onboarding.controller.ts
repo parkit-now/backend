@@ -32,12 +32,10 @@ import {
   ProblemDetailsDto,
   ValidationProblemDetailsDto,
 } from '../utils/exceptions/dto/problem-details.dto';
-import { CompanyProfileDto } from './dto/company-profile.dto';
-import { CreateCompanyOnboardingDto } from './dto/create-company-onboarding.dto';
+import { CreateApplicationDto } from './dto/create-application.dto';
 import {
-  CompanyDocumentDto,
+  ApplicationDocumentDto,
   OnboardingApplicationDto,
-  OnboardingStateDto,
 } from './dto/onboarding-response.dto';
 import { RegisterDocumentDto } from './dto/register-document.dto';
 import { UpdateApplicationDto } from './dto/update-application.dto';
@@ -47,61 +45,30 @@ import { OnboardingService } from './onboarding.service';
 @ApiExtraModels(
   ProblemDetailsDto,
   ValidationProblemDetailsDto,
-  OnboardingStateDto,
   OnboardingApplicationDto,
-  CompanyProfileDto,
-  CompanyDocumentDto,
+  ApplicationDocumentDto,
 )
-@Controller('onboarding')
+@Controller('onboarding/applications')
 @UseGuards(JwtAuthGuard, RolesGuard)
-// `driver` is allowed so a freshly registered user can start onboarding;
-// creating the company promotes them to `owner` (see OnboardingService).
-@Roles('owner', 'driver')
+// Any authenticated user can apply to register a parking lot. A `driver`
+// applicant is promoted to `owner` when the application is approved (admin).
+@Roles('owner', 'driver', 'operator', 'admin')
 @ApiBearerAuth('bearer')
 export class OnboardingController {
   constructor(private readonly onboarding: OnboardingService) {}
 
-  @Get('me')
-  @ApiOperation({
-    operationId: 'onboardingGetState',
-    summary: "Get the authenticated owner's onboarding state",
-    description: [
-      'Returns the company owned by the caller together with its latest onboarding application.',
-      '',
-      'This is the entry point of the owner-facing onboarding flow. A parking-lot owner registers a single Company (legal entity), declares one or more branches, attaches document metadata, and submits the application for PARKIT Ops review.',
-      '',
-      'Both `company` and `application` are `null` when the owner has not started onboarding yet (no company created). Use this to decide whether to render the create-company step or resume an existing application.',
-      '',
-      'An application cycles `draft` → `pending_review` → `approved`/`rejected`. Rejected applications can be edited and resubmitted.',
-    ].join('\n'),
-  })
-  @ApiOkResponse({ type: OnboardingStateDto })
-  @ApiUnauthorizedResponse({
-    description: 'Missing, malformed, or expired bearer token.',
-    type: ProblemDetailsDto,
-  })
-  @ApiForbiddenResponse({
-    description: 'The caller is authenticated but is not an `owner`.',
-    type: ProblemDetailsDto,
-  })
-  getMe(@CurrentUser() user: User): Promise<OnboardingStateDto> {
-    return this.onboarding.getMe(user);
-  }
-
-  @Post('company')
+  @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    operationId: 'onboardingCreateCompany',
-    summary: 'Create the company and open a draft application',
+    operationId: 'onboardingCreateApplication',
+    summary: 'Create a draft onboarding application',
     description: [
-      'Step 1 of onboarding. Creates the Company (legal entity: `legalName`, `cuit`, `email`, `phone`, `address`) with `status=pending`, and opens a matching OnboardingApplication with `status=draft`.',
+      'Creates a draft `OnboardingApplication` for the authenticated user declaring ONE entity (parking lot): `name`, `address`, `legalName`, `cuit`, `email`, `phone` and optional spot counts.',
       '',
-      '**One company per owner.** If the caller already owns a company, the request is rejected with a conflict — there is no second company to create.',
-      '',
-      'The returned state contains the freshly created company and its empty draft application (zero declared branches, zero documents). Subsequent steps add branches/documents via `PATCH /onboarding/application/:id` and `POST /onboarding/application/:id/documents`.',
+      'The application starts in `draft`. Subsequent steps attach documents and submit it for PARKIT Ops review.',
     ].join('\n'),
   })
-  @ApiCreatedResponse({ type: OnboardingStateDto })
+  @ApiCreatedResponse({ type: OnboardingApplicationDto })
   @ApiBadRequestResponse({
     description:
       'Invalid payload (validation: missing fields, malformed CUIT/email, etc.).',
@@ -111,46 +78,81 @@ export class OnboardingController {
     description: 'Missing, malformed, or expired bearer token.',
     type: ProblemDetailsDto,
   })
-  @ApiForbiddenResponse({
-    description: 'The caller is authenticated but is not an `owner`.',
-    type: ProblemDetailsDto,
-  })
-  @ApiConflictResponse({
-    description:
-      'The owner already has a company (`COMPANY_ALREADY_EXISTS`). Only one company per owner is allowed.',
-    type: ProblemDetailsDto,
-  })
-  createCompany(
+  create(
     @CurrentUser() user: User,
-    @Body() dto: CreateCompanyOnboardingDto,
-  ): Promise<OnboardingStateDto> {
-    return this.onboarding.createCompany(user, dto);
+    @Body() dto: CreateApplicationDto,
+  ): Promise<OnboardingApplicationDto> {
+    return this.onboarding.create(user, dto);
   }
 
-  @Patch('application/:id')
+  @Get()
+  @ApiOperation({
+    operationId: 'onboardingListApplications',
+    summary: 'List the applications of the authenticated user',
+    description:
+      'Returns every onboarding application created by the caller, newest first.',
+  })
+  @ApiOkResponse({ type: OnboardingApplicationDto, isArray: true })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, malformed, or expired bearer token.',
+    type: ProblemDetailsDto,
+  })
+  list(@CurrentUser() user: User): Promise<OnboardingApplicationDto[]> {
+    return this.onboarding.list(user);
+  }
+
+  @Get(':id')
   @ApiParam({
     name: 'id',
     description: 'The onboarding application id (UUID).',
     format: 'uuid',
-    example: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+  })
+  @ApiOperation({
+    operationId: 'onboardingGetApplication',
+    summary: 'Get one of the applications of the authenticated user',
+    description: 'Returns a single onboarding application owned by the caller.',
+  })
+  @ApiOkResponse({ type: OnboardingApplicationDto })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, malformed, or expired bearer token.',
+    type: ProblemDetailsDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'The caller is not the applicant (`ENTITY_NOT_OWNER`).',
+    type: ProblemDetailsDto,
+  })
+  @ApiNotFoundResponse({
+    description:
+      'No application exists for the given id (`ONBOARDING_APPLICATION_NOT_FOUND`).',
+    type: ProblemDetailsDto,
+  })
+  getOne(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<OnboardingApplicationDto> {
+    return this.onboarding.getOne(user, id);
+  }
+
+  @Patch(':id')
+  @ApiParam({
+    name: 'id',
+    description: 'The onboarding application id (UUID).',
+    format: 'uuid',
   })
   @ApiOperation({
     operationId: 'onboardingUpdateApplication',
-    summary: 'Edit a draft or rejected application',
+    summary: 'Edit the declared entity of a draft or rejected application',
     description: [
-      'Updates the company data and/or the declared branches of an application that is still editable.',
+      'Patches the declared-entity data of an application that is still editable.',
       '',
-      '**Editable states only:** `draft` and `rejected`. An application in `pending_review` or `approved` can no longer be edited and the request is rejected with a conflict. Editing a rejected application is how an owner fixes the issues raised by PARKIT Ops before resubmitting.',
+      '**Editable states only:** `draft` and `rejected`. An application in `pending_review` or `approved` can no longer be edited. Editing a rejected application is how an applicant fixes the issues raised by PARKIT Ops before resubmitting.',
       '',
-      'All fields are optional (partial update). Company fields (`legalName`, `cuit`, `email`, `phone`, `address`) patch the underlying company; `declaredBranches` fully replaces the declared branch list. Each branch carries a `name` and `address`. On approval these declared branches are materialized as real lots.',
-      '',
-      'Returns the updated onboarding state.',
+      'All fields are optional (partial update); the provided fields are merged into the declared entity.',
     ].join('\n'),
   })
-  @ApiOkResponse({ type: OnboardingStateDto })
+  @ApiOkResponse({ type: OnboardingApplicationDto })
   @ApiBadRequestResponse({
-    description:
-      'Invalid payload (validation: malformed CUIT/email, missing required branch fields, etc.).',
+    description: 'Invalid payload (validation failed).',
     type: ValidationProblemDetailsDto,
   })
   @ApiUnauthorizedResponse({
@@ -158,8 +160,7 @@ export class OnboardingController {
     type: ProblemDetailsDto,
   })
   @ApiForbiddenResponse({
-    description:
-      'The caller is not an `owner`, or does not own this application (`COMPANY_NOT_OWNER`).',
+    description: 'The caller is not the applicant (`ENTITY_NOT_OWNER`).',
     type: ProblemDetailsDto,
   })
   @ApiNotFoundResponse({
@@ -169,24 +170,23 @@ export class OnboardingController {
   })
   @ApiConflictResponse({
     description:
-      'The application is not in an editable state (`ONBOARDING_INVALID_STATE`); only `draft`/`rejected` applications can be edited.',
+      'The application is not in an editable state (`ONBOARDING_INVALID_STATE`).',
     type: ProblemDetailsDto,
   })
-  updateApplication(
+  update(
     @CurrentUser() user: User,
     @Param('id') id: string,
     @Body() dto: UpdateApplicationDto,
-  ): Promise<OnboardingStateDto> {
-    return this.onboarding.updateApplication(user, id, dto);
+  ): Promise<OnboardingApplicationDto> {
+    return this.onboarding.update(user, id, dto);
   }
 
-  @Post('application/:id/documents')
+  @Post(':id/documents')
   @HttpCode(HttpStatus.CREATED)
   @ApiParam({
     name: 'id',
     description: 'The onboarding application id (UUID).',
     format: 'uuid',
-    example: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
   })
   @ApiOperation({
     operationId: 'onboardingAddDocument',
@@ -194,12 +194,10 @@ export class OnboardingController {
     description: [
       'Registers the metadata of a supporting document attached to the application.',
       '',
-      '**The binary is uploaded out-of-band.** The client uploads the file directly to Supabase Storage; this endpoint only persists its metadata (`name`, `storagePath`, optional `mimeType`). The `storagePath` is the object key in storage.',
-      '',
-      'The document is linked to the application and its company. Returns the created document record.',
+      '**The binary is uploaded out-of-band.** The client uploads the file directly to Supabase Storage; this endpoint only persists its metadata (`name`, `storagePath`, optional `mimeType`).',
     ].join('\n'),
   })
-  @ApiCreatedResponse({ type: CompanyDocumentDto })
+  @ApiCreatedResponse({ type: ApplicationDocumentDto })
   @ApiBadRequestResponse({
     description: 'Invalid payload (validation: missing `name`/`storagePath`).',
     type: ValidationProblemDetailsDto,
@@ -209,8 +207,7 @@ export class OnboardingController {
     type: ProblemDetailsDto,
   })
   @ApiForbiddenResponse({
-    description:
-      'The caller is not an `owner`, or does not own this application (`COMPANY_NOT_OWNER`).',
+    description: 'The caller is not the applicant (`ENTITY_NOT_OWNER`).',
     type: ProblemDetailsDto,
   })
   @ApiNotFoundResponse({
@@ -222,16 +219,15 @@ export class OnboardingController {
     @CurrentUser() user: User,
     @Param('id') id: string,
     @Body() dto: RegisterDocumentDto,
-  ): Promise<CompanyDocumentDto> {
+  ): Promise<ApplicationDocumentDto> {
     return this.onboarding.addDocument(user, id, dto);
   }
 
-  @Post('application/:id/submit')
+  @Post(':id/submit')
   @ApiParam({
     name: 'id',
     description: 'The onboarding application id (UUID).',
     format: 'uuid',
-    example: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
   })
   @ApiOperation({
     operationId: 'onboardingSubmit',
@@ -239,24 +235,16 @@ export class OnboardingController {
     description: [
       'Transitions the application from `draft` or `rejected` to `pending_review` and stamps `submittedAt`, handing it over to PARKIT Ops for review.',
       '',
-      '**Preconditions:** the application must be in an editable state (`draft`/`rejected`) and declare at least one branch. Submitting an application with zero declared branches is rejected with a bad request (`ONBOARDING_NOT_SUBMITTABLE`); submitting one that is already in `pending_review`/`approved` is rejected with a conflict (`ONBOARDING_INVALID_STATE`).',
-      '',
-      'Resubmitting a previously rejected application clears its `rejectionReason`. Returns the updated onboarding state.',
+      'Resubmitting a previously rejected application clears its `rejectionReason`.',
     ].join('\n'),
   })
-  @ApiOkResponse({ type: OnboardingStateDto })
-  @ApiBadRequestResponse({
-    description:
-      'The application declares no branches and cannot be submitted (`ONBOARDING_NOT_SUBMITTABLE`).',
-    type: ProblemDetailsDto,
-  })
+  @ApiOkResponse({ type: OnboardingApplicationDto })
   @ApiUnauthorizedResponse({
     description: 'Missing, malformed, or expired bearer token.',
     type: ProblemDetailsDto,
   })
   @ApiForbiddenResponse({
-    description:
-      'The caller is not an `owner`, or does not own this application (`COMPANY_NOT_OWNER`).',
+    description: 'The caller is not the applicant (`ENTITY_NOT_OWNER`).',
     type: ProblemDetailsDto,
   })
   @ApiNotFoundResponse({
@@ -266,13 +254,13 @@ export class OnboardingController {
   })
   @ApiConflictResponse({
     description:
-      'The application is not in a submittable state (`ONBOARDING_INVALID_STATE`); only `draft`/`rejected` applications can be submitted.',
+      'The application is not in a submittable state (`ONBOARDING_INVALID_STATE`).',
     type: ProblemDetailsDto,
   })
   submit(
     @CurrentUser() user: User,
     @Param('id') id: string,
-  ): Promise<OnboardingStateDto> {
+  ): Promise<OnboardingApplicationDto> {
     return this.onboarding.submit(user, id);
   }
 }
