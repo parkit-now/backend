@@ -11,7 +11,7 @@ import { PasswordRecoveryModule } from './password-recovery/password-recovery.mo
 import { ZonesModule } from './zones/zones.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { ApplicationsModule } from './admin/applications/applications.module';
-import { CompaniesModule } from './companies/companies.module';
+import { EntitiesModule } from './entities/entities.module';
 
 @Module({
   imports: [
@@ -27,7 +27,7 @@ import { CompaniesModule } from './companies/companies.module';
     ZonesModule,
     OnboardingModule,
     ApplicationsModule,
-    CompaniesModule,
+    EntitiesModule,
   ],
 })
 export class AppModule {}

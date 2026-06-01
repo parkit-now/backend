@@ -3,7 +3,7 @@ import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import type { AuditSeverity } from '@prisma/client';
 
-export class CompanyAuditQueryDto {
+export class EntityAuditQueryDto {
   @ApiPropertyOptional({
     enum: ['info', 'warn', 'crit'],
     description:
