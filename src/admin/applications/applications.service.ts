@@ -1,7 +1,7 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
+import { MembershipRole } from '@prisma/client';
 import type { ApplicationStatus, User } from '@prisma/client';
-import { AuditActions, AuditService } from '../../audit/audit.service';
-import { SupabaseAuthService } from '../../auth/supabase-auth.service';
+import { AuditActions } from '../../audit/audit.service';
 import { PrismaService } from '../../database/prisma.service';
 import { declaredEntityOf } from '../../onboarding/onboarding.mappers';
 import { ErrorCodes } from '../../utils/exceptions/error-codes';
@@ -31,13 +31,7 @@ interface DeclaredEntity {
 
 @Injectable()
 export class ApplicationsService {
-  private readonly logger = new Logger(ApplicationsService.name);
-
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly audit: AuditService,
-    private readonly auth: SupabaseAuthService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async list(query: ListApplicationsQueryDto): Promise<ApplicationDto[]> {
     const nonDraft: ApplicationStatus[] = [
@@ -70,10 +64,10 @@ export class ApplicationsService {
 
   /**
    * Atomic approval: materializes the declared entity as a `Tenant` (+ initial
-   * zone + applicant membership + system payment methods), marks the
-   * application approved and promotes a `driver` applicant to `owner`. The DB
-   * role change is the authorization source of truth; the JWT role claim is
-   * mirrored OUTSIDE the transaction (best-effort).
+   * zone + applicant `owner` membership + system payment methods) and marks the
+   * application approved. The entity-level role (owner) lives on
+   * `UserMembership.role`; the applicant's GLOBAL role stays `user`, so there is
+   * no JWT claim to mirror.
    */
   async approve(admin: User, id: string): Promise<ApplicationDto> {
     const application = await this.loadApplication(id);
@@ -81,9 +75,8 @@ export class ApplicationsService {
 
     const entity = declaredEntityOf(application) as DeclaredEntity;
     const applicant = application.applicant;
-    const promoteToOwner = applicant.role === 'driver';
 
-    const { tenantId } = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
         data: {
           name: entity.name ?? 'Untitled',
@@ -111,9 +104,13 @@ export class ApplicationsService {
         });
       }
 
-      // The applicant gains access to the entity via UserMembership.
+      // The applicant becomes the owner of the new entity via UserMembership.
       await tx.userMembership.create({
-        data: { userId: applicant.id, tenantId: tenant.id },
+        data: {
+          userId: applicant.id,
+          tenantId: tenant.id,
+          role: MembershipRole.owner,
+        },
       });
 
       // System payment methods (non-deletable, can be disabled).
@@ -148,22 +145,6 @@ export class ApplicationsService {
         },
       });
 
-      if (promoteToOwner) {
-        await tx.user.update({
-          where: { id: applicant.id },
-          data: { role: 'owner' },
-        });
-        await tx.auditLog.create({
-          data: {
-            action: AuditActions.OWNER_PROMOTED,
-            entityType: 'user',
-            entityId: applicant.id,
-            actorUserId: admin.id,
-            tenantId: tenant.id,
-          },
-        });
-      }
-
       await tx.auditLog.create({
         data: {
           action: AuditActions.ENTITY_APPROVED,
@@ -173,33 +154,7 @@ export class ApplicationsService {
           tenantId: tenant.id,
         },
       });
-
-      return { tenantId: tenant.id };
     });
-
-    // Outside the transaction: Supabase Auth is not transactional with the DB.
-    if (promoteToOwner) {
-      try {
-        await this.auth.setUserRole(applicant.id, 'owner');
-      } catch (err) {
-        this.logger.warn(
-          `Approved entity ${tenantId} but failed to mirror owner role`,
-          err instanceof Error ? err.stack : String(err),
-        );
-        await this.audit.record({
-          action: AuditActions.OWNER_PROMOTED,
-          entityType: 'user',
-          entityId: applicant.id,
-          actorUserId: admin.id,
-          tenantId,
-          severity: 'warn',
-          metadata: {
-            appMetadataSync: 'failed',
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-      }
-    }
 
     return this.getById(id);
   }

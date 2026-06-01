@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { MembershipRole } from '@prisma/client';
 import type { User } from '@prisma/client';
-import { AuditService } from '../../audit/audit.service';
-import { SupabaseAuthService } from '../../auth/supabase-auth.service';
 import { PrismaService } from '../../database/prisma.service';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import { ApplicationsService } from './applications.service';
@@ -30,8 +29,6 @@ describe('ApplicationsService', () => {
     onboardingApplication: { findUnique: jest.fn(), findMany: jest.fn() },
     $transaction: jest.fn(),
   };
-  const mockAudit = { record: jest.fn() };
-  const mockAuth = { setUserRole: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -44,15 +41,13 @@ describe('ApplicationsService', () => {
       providers: [
         ApplicationsService,
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: AuditService, useValue: mockAudit },
-        { provide: SupabaseAuthService, useValue: mockAuth },
       ],
     }).compile();
 
     service = module.get<ApplicationsService>(ApplicationsService);
   });
 
-  function pendingApp(applicantRole = 'owner') {
+  function pendingApp(applicantRole = 'user') {
     return {
       id: 'app-1',
       status: 'pending_review',
@@ -93,9 +88,9 @@ describe('ApplicationsService', () => {
   }
 
   describe('approve', () => {
-    it('runs the full atomic approval for an owner applicant', async () => {
+    it('runs the full atomic approval and grants an owner membership', async () => {
       mockPrisma.onboardingApplication.findUnique
-        .mockResolvedValueOnce(pendingApp('owner')) // loadApplication
+        .mockResolvedValueOnce(pendingApp()) // loadApplication
         .mockResolvedValueOnce(approvedListPayload()); // getById
 
       const result = await service.approve(admin, 'app-1');
@@ -103,6 +98,13 @@ describe('ApplicationsService', () => {
       // One declared entity → one tenant + one membership.
       expect(tx.tenant.create).toHaveBeenCalledTimes(1);
       expect(tx.userMembership.create).toHaveBeenCalledTimes(1);
+      // The applicant becomes owner of the new entity.
+      const membershipArg = tx.userMembership.create.mock.calls[0][0] as {
+        data: { userId: string; tenantId: string; role: string };
+      };
+      expect(membershipArg.data.userId).toBe('u-applicant');
+      expect(membershipArg.data.tenantId).toBe('tenant-1');
+      expect(membershipArg.data.role).toBe(MembershipRole.owner);
       // Declared spots → one initial zone.
       expect(tx.zone.create).toHaveBeenCalledTimes(1);
       // System payment methods.
@@ -117,38 +119,9 @@ describe('ApplicationsService', () => {
       };
       expect(appUpdateArg.data.status).toBe('approved');
       expect(appUpdateArg.data.tenantId).toBe('tenant-1');
-      // An owner is not promoted again.
+      // The GLOBAL role never changes (no driver→owner promotion).
       expect(tx.user.update).not.toHaveBeenCalled();
-      expect(mockAuth.setUserRole).not.toHaveBeenCalled();
       expect(result.status).toBe('approved');
-    });
-
-    it('promotes a driver applicant to owner (DB role + JWT mirror)', async () => {
-      mockPrisma.onboardingApplication.findUnique
-        .mockResolvedValueOnce(pendingApp('driver'))
-        .mockResolvedValueOnce(approvedListPayload());
-
-      await service.approve(admin, 'app-1');
-
-      const roleArg = tx.user.update.mock.calls[0][0] as {
-        where: { id: string };
-        data: { role: string };
-      };
-      expect(roleArg.where.id).toBe('u-applicant');
-      expect(roleArg.data.role).toBe('owner');
-      expect(mockAuth.setUserRole).toHaveBeenCalledWith('u-applicant', 'owner');
-    });
-
-    it('does not fail the approval if mirroring the role fails (audits warn)', async () => {
-      mockPrisma.onboardingApplication.findUnique
-        .mockResolvedValueOnce(pendingApp('driver'))
-        .mockResolvedValueOnce(approvedListPayload());
-      mockAuth.setUserRole.mockRejectedValue(new Error('supabase down'));
-
-      expect(await service.approve(admin, 'app-1')).toBeDefined();
-      expect(mockAudit.record).toHaveBeenCalledWith(
-        expect.objectContaining({ severity: 'warn' }),
-      );
     });
 
     it('rejects approving an application that is not pending_review', async () => {

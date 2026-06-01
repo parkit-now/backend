@@ -109,7 +109,7 @@ describe('AuditService', () => {
         actor: {
           id: 'u-1',
           email: 'owner@once.test',
-          role: 'owner',
+          role: 'user',
           createdAt,
         },
       });
