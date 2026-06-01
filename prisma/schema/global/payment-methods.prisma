@@ -1,6 +1,6 @@
-// PaymentMethod — company-level payment methods.
+// PaymentMethod — entity-level (tenant) payment methods.
 //
-// On company approval, 'mp_transfer' and 'cash' are created automatically with
+// On entity approval, 'mp_transfer' and 'cash' are created automatically with
 // `isSystem=true` (not deletable; can be disabled via `enabled`).
 //
 // Backend-only: service-role, RLS without policies.
@@ -22,10 +22,10 @@ model PaymentMethod {
   isDefault Boolean           @default(false) @map("is_default")
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  companyId String  @map("company_id") @db.Uuid
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([companyId, type])
-  @@index([companyId])
+  @@unique([tenantId, type])
+  @@index([tenantId])
   @@map("payment_methods")
 }

@@ -2,7 +2,7 @@
 import {Prisma,AuditSeverity} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {UserEntity} from './user.entity'
-import {CompanyEntity} from './company.entity'
+import {TenantEntity} from './tenant.entity'
 
 
 export class AuditLogEntity {
@@ -22,6 +22,6 @@ metadata: Prisma.JsonValue ;
 createdAt: Date ;
 actorUserId: string  | null;
 actor?: UserEntity  | null;
-companyId: string  | null;
-company?: CompanyEntity  | null;
+tenantId: string  | null;
+tenant?: TenantEntity  | null;
 }

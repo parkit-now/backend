@@ -5,20 +5,14 @@ import {IsOptional,IsString} from 'class-validator'
 
 
 
-export class UpdateCompanyDto {
+export class UpdateApplicationDocumentDto {
   @IsOptional()
 @IsString()
-legalName?: string;
+name?: string;
 @IsOptional()
 @IsString()
-cuit?: string;
+storagePath?: string;
 @IsOptional()
 @IsString()
-email?: string;
-@IsOptional()
-@IsString()
-phone?: string;
-@IsOptional()
-@IsString()
-address?: string;
+mimeType?: string;
 }

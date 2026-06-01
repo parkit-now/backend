@@ -1,10 +1,9 @@
 
 import {ApiProperty} from '@nestjs/swagger'
-import {CompanyEntity} from './company.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 
 
-export class CompanyDocumentEntity {
+export class ApplicationDocumentEntity {
   id: string ;
 name: string ;
 storagePath: string ;
@@ -14,8 +13,6 @@ mimeType: string  | null;
   format: `date-time`,
 })
 createdAt: Date ;
-companyId: string ;
-company?: CompanyEntity ;
-applicationId: string  | null;
-application?: OnboardingApplicationEntity  | null;
+applicationId: string ;
+application?: OnboardingApplicationEntity ;
 }

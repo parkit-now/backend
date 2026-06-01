@@ -6,6 +6,10 @@ import {ApiProperty} from '@nestjs/swagger'
 export class TenantDto {
   id: string ;
 name: string ;
+legalName: string  | null;
+cuit: string  | null;
+email: string  | null;
+phone: string  | null;
 address: string  | null;
 @ApiProperty({
   enum: BranchStatus,

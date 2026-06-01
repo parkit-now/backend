@@ -26,10 +26,10 @@ model AuditLog {
   actorUserId String? @map("actor_user_id") @db.Uuid
   actor       User?   @relation(fields: [actorUserId], references: [id])
 
-  companyId String?  @map("company_id") @db.Uuid
-  company   Company? @relation(fields: [companyId], references: [id])
+  tenantId String? @map("tenant_id") @db.Uuid
+  tenant   Tenant? @relation(fields: [tenantId], references: [id])
 
-  @@index([companyId, createdAt])
+  @@index([tenantId, createdAt])
   @@index([action])
   @@map("audit_log")
 }

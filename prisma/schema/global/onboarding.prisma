@@ -1,8 +1,11 @@
-// Onboarding — a company's onboarding application and its documentation.
+// Onboarding — a user's request to register ONE parking lot (entity).
 //
-// A company can accumulate several applications (rejection -> resubmit). The
-// declared branches are stored in `declaredBranches` (jsonb) until, on
-// approval, they are materialized as rows in `tenants`.
+// There is no company grouping: an application belongs directly to the
+// applicant (`applicant_user_id`) and declares a single entity in
+// `declaredEntity` (jsonb: name, address, legalName, cuit, email, phone, spots).
+// On approval the entity is materialized as a row in `tenants` and linked back
+// via `tenant_id`. A user can submit several applications (one per lot, or
+// resubmit after rejection).
 //
 // Backend-only: service-role, RLS without policies.
 
@@ -16,42 +19,42 @@ enum ApplicationStatus {
 }
 
 model OnboardingApplication {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  status           ApplicationStatus @default(draft)
-  declaredBranches Json              @default("[]") @map("declared_branches")
-  submittedAt      DateTime?         @map("submitted_at") @db.Timestamptz(6)
-  reviewedAt       DateTime?         @map("reviewed_at") @db.Timestamptz(6)
-  rejectionReason  String?           @map("rejection_reason")
-  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status          ApplicationStatus @default(draft)
+  declaredEntity  Json              @default("{}") @map("declared_entity")
+  submittedAt     DateTime?         @map("submitted_at") @db.Timestamptz(6)
+  reviewedAt      DateTime?         @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason String?           @map("rejection_reason")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  companyId String  @map("company_id") @db.Uuid
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  applicantUserId String @map("applicant_user_id") @db.Uuid
+  applicant       User   @relation("ApplicantApplications", fields: [applicantUserId], references: [id], onDelete: Cascade)
 
   reviewedBy String? @map("reviewed_by") @db.Uuid
-  reviewer   User?   @relation(fields: [reviewedBy], references: [id])
+  reviewer   User?   @relation("ReviewedApplications", fields: [reviewedBy], references: [id])
 
-  documents CompanyDocument[]
+  // The entity created on approval (null until approved).
+  tenantId String? @map("tenant_id") @db.Uuid
+  tenant   Tenant? @relation(fields: [tenantId], references: [id])
 
-  @@index([companyId])
+  documents ApplicationDocument[]
+
+  @@index([applicantUserId])
   @@index([status])
   @@map("onboarding_applications")
 }
 
-model CompanyDocument {
+model ApplicationDocument {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
   storagePath String   @map("storage_path")
   mimeType    String?  @map("mime_type")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  companyId String  @map("company_id") @db.Uuid
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  applicationId String                @map("application_id") @db.Uuid
+  application   OnboardingApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
-  applicationId String?                @map("application_id") @db.Uuid
-  application   OnboardingApplication? @relation(fields: [applicationId], references: [id])
-
-  @@index([companyId])
   @@index([applicationId])
-  @@map("company_documents")
+  @@map("application_documents")
 }

@@ -9,7 +9,7 @@ export class OnboardingApplicationDto {
   enum: ApplicationStatus,
 })
 status: ApplicationStatus ;
-declaredBranches: Prisma.JsonValue ;
+declaredEntity: Prisma.JsonValue ;
 @ApiProperty({
   type: `string`,
   format: `date-time`,

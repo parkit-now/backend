@@ -2,7 +2,7 @@
 import {ApiProperty} from '@nestjs/swagger'
 
 
-export class CompanyDocumentDto {
+export class ApplicationDocumentDto {
   id: string ;
 name: string ;
 storagePath: string ;

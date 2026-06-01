@@ -1,9 +1,9 @@
 
 import {Prisma,ApplicationStatus} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
-import {CompanyEntity} from './company.entity'
 import {UserEntity} from './user.entity'
-import {CompanyDocumentEntity} from './company-document.entity'
+import {TenantEntity} from './tenant.entity'
+import {ApplicationDocumentEntity} from './application-document.entity'
 
 
 export class OnboardingApplicationEntity {
@@ -12,7 +12,7 @@ export class OnboardingApplicationEntity {
   enum: ApplicationStatus,
 })
 status: ApplicationStatus ;
-declaredBranches: Prisma.JsonValue ;
+declaredEntity: Prisma.JsonValue ;
 @ApiProperty({
   type: `string`,
   format: `date-time`,
@@ -34,9 +34,11 @@ createdAt: Date ;
   format: `date-time`,
 })
 updatedAt: Date ;
-companyId: string ;
-company?: CompanyEntity ;
+applicantUserId: string ;
+applicant?: UserEntity ;
 reviewedBy: string  | null;
 reviewer?: UserEntity  | null;
-documents?: CompanyDocumentEntity[] ;
+tenantId: string  | null;
+tenant?: TenantEntity  | null;
+documents?: ApplicationDocumentEntity[] ;
 }

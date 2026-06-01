@@ -1,7 +1,7 @@
 
 import {PaymentMethodType} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
-import {CompanyEntity} from './company.entity'
+import {TenantEntity} from './tenant.entity'
 
 
 export class PaymentMethodEntity {
@@ -19,6 +19,6 @@ isDefault: boolean ;
   format: `date-time`,
 })
 createdAt: Date ;
-companyId: string ;
-company?: CompanyEntity ;
+tenantId: string ;
+tenant?: TenantEntity ;
 }

@@ -5,7 +5,7 @@ import {IsNotEmpty,IsOptional,IsString} from 'class-validator'
 
 
 
-export class CreateCompanyDocumentDto {
+export class CreateApplicationDocumentDto {
   @IsNotEmpty()
 @IsString()
 name: string;

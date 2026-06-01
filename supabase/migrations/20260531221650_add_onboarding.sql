@@ -1,16 +1,19 @@
 -- Parking-lot onboarding / approval — GLOBAL layer.
 --
--- Models the legal entity (Company) that was missing since `cuit` was dropped
--- from `tenants` (see 20260505200000_drop_tenants_cuit.sql). A tenant is still a
--- single parking lot / branch; it now hangs off a parent Company.
+-- There is no company grouping: users are attached directly to entities
+-- (tenants) via `user_memberships`, and an onboarding application is a request
+-- to register ONE entity. Legal/contact data (legal_name, cuit, email, phone)
+-- lives on `tenants`.
 --
 -- Flow:
---   1. The owner (role=owner) creates a Company (status=pending) plus an
---      OnboardingApplication (status=draft) and declares branches/documents.
+--   1. A user creates an OnboardingApplication (status=draft) declaring a single
+--      entity in `declared_entity` (name, address, legal data, spots) and
+--      attaches documents.
 --   2. Submit -> the application moves to pending_review.
---   3. PARKIT Ops (role=admin) approves (company->active, the declared tenants
---      are created together with the owner's memberships and payment methods)
---      or rejects (with a reason, allowing resubmission).
+--   3. PARKIT Ops (role=admin) approves -> the entity is materialized as a row
+--      in `tenants`, together with the applicant's owner membership, an initial
+--      zone and the default payment methods; the applicant is promoted to owner
+--      if needed. Reject stores a reason and allows resubmission.
 --
 -- Every table in this file is backend-only (service-role): RLS enabled with no
 -- policies, just like `tenants` / `password_reset_requests`.
@@ -19,19 +22,13 @@
 -- Enums
 -- =========================================================================
 
-CREATE TYPE company_status AS ENUM (
-    'pending',    -- created, awaiting approval
-    'active',     -- approved, full access
-    'suspended'   -- suspended by Ops
-);
-
 CREATE TYPE branch_status AS ENUM (
     'active',
     'maintenance'
 );
 
 CREATE TYPE application_status AS ENUM (
-    'draft',          -- being edited by the owner
+    'draft',          -- being edited by the applicant
     'pending_review', -- submitted, awaiting Ops review
     'approved',
     'rejected'
@@ -50,57 +47,37 @@ CREATE TYPE audit_severity AS ENUM (
 );
 
 -- =========================================================================
--- companies (legal entity) — backend-only
+-- tenants: the entity itself now carries legal/contact data + status
 -- =========================================================================
-
-CREATE TABLE companies (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    legal_name    text NOT NULL,
-    cuit          text NOT NULL UNIQUE,
-    email         varchar(255) NOT NULL,
-    phone         text,
-    address       text,
-    status        company_status NOT NULL DEFAULT 'pending',
-    owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    created_at    timestamptz NOT NULL DEFAULT now(),
-    updated_at    timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE INDEX companies_owner_user_id_idx ON companies (owner_user_id);
-
-ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON companies FROM anon, authenticated;
--- Backend-only: only the service-role has access (same pattern as `tenants`).
-
--- =========================================================================
--- tenants: link each lot/branch to its Company + status/address
--- =========================================================================
--- `company_id` stays NULLABLE so legacy/demo tenants and the `make reset` smoke
--- keep working (existing seed tenants have no company).
---
 -- `nombre` was the only Spanish column left on `tenants`; rename it to `name`
 -- so the whole API speaks English (the front renders Spanish labels itself).
+-- `cuit` is NOT unique: several lots may belong to the same legal entity.
 
 ALTER TABLE tenants RENAME COLUMN nombre TO name;
-ALTER TABLE tenants ADD COLUMN company_id uuid REFERENCES companies(id) ON DELETE CASCADE;
+ALTER TABLE tenants ADD COLUMN legal_name text;
+ALTER TABLE tenants ADD COLUMN cuit text;
+ALTER TABLE tenants ADD COLUMN email varchar(255);
+ALTER TABLE tenants ADD COLUMN phone text;
 ALTER TABLE tenants ADD COLUMN address text;
 ALTER TABLE tenants ADD COLUMN status branch_status NOT NULL DEFAULT 'active';
 
-CREATE INDEX tenants_company_id_idx ON tenants (company_id);
+CREATE INDEX tenants_cuit_idx ON tenants (cuit);
 
 -- =========================================================================
--- onboarding_applications (onboarding request) — backend-only
+-- onboarding_applications (request to register one entity) — backend-only
 -- =========================================================================
--- A company can have several applications over time (rejection -> resubmit).
--- `declared_branches` holds the branches declared before approval:
--- [{ name, address, carSpots, motorcycleSpots, bicycleSpots }]. On approval
--- they are materialized as rows in `tenants`.
+-- A user can have several applications over time (one per lot, or
+-- rejection -> resubmit). `declared_entity` holds the entity declared before
+-- approval: { name, address, legalName, cuit, email, phone, carSpots,
+-- motorcycleSpots, bicycleSpots }. On approval it is materialized as a row in
+-- `tenants` and linked back via `tenant_id`.
 
 CREATE TABLE onboarding_applications (
     id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id        uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    applicant_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id         uuid REFERENCES tenants(id) ON DELETE SET NULL,
     status            application_status NOT NULL DEFAULT 'draft',
-    declared_branches jsonb NOT NULL DEFAULT '[]'::jsonb,
+    declared_entity   jsonb NOT NULL DEFAULT '{}'::jsonb,
     submitted_at      timestamptz,
     reviewed_at       timestamptz,
     reviewed_by       uuid REFERENCES users(id) ON DELETE SET NULL,
@@ -109,54 +86,52 @@ CREATE TABLE onboarding_applications (
     updated_at        timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX onboarding_applications_company_id_idx ON onboarding_applications (company_id);
+CREATE INDEX onboarding_applications_applicant_user_id_idx ON onboarding_applications (applicant_user_id);
 CREATE INDEX onboarding_applications_status_idx ON onboarding_applications (status);
 
 ALTER TABLE onboarding_applications ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON onboarding_applications FROM anon, authenticated;
 
 -- =========================================================================
--- company_documents (documentation) — backend-only
+-- application_documents (documentation) — backend-only
 -- =========================================================================
 -- Metadata only; the binary is uploaded to Supabase Storage from the client and
 -- only its `storage_path` is kept here. Feeds the front `docsCount` counter.
 
-CREATE TABLE company_documents (
+CREATE TABLE application_documents (
     id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id     uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    application_id uuid REFERENCES onboarding_applications(id) ON DELETE SET NULL,
+    application_id uuid NOT NULL REFERENCES onboarding_applications(id) ON DELETE CASCADE,
     name           text NOT NULL,
     storage_path   text NOT NULL,
     mime_type      text,
     created_at     timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX company_documents_company_id_idx ON company_documents (company_id);
-CREATE INDEX company_documents_application_id_idx ON company_documents (application_id);
+CREATE INDEX application_documents_application_id_idx ON application_documents (application_id);
 
-ALTER TABLE company_documents ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON company_documents FROM anon, authenticated;
+ALTER TABLE application_documents ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON application_documents FROM anon, authenticated;
 
 -- =========================================================================
--- payment_methods (company-level payment methods) — backend-only
+-- payment_methods (entity-level payment methods) — backend-only
 -- =========================================================================
--- On company approval, 'mp_transfer' and 'cash' are created automatically
+-- On entity approval, 'mp_transfer' and 'cash' are created automatically
 -- (enabled, is_system=true -> not deletable but can be disabled).
--- UNIQUE(company_id, type) prevents duplicating a system method per company.
+-- UNIQUE(tenant_id, type) prevents duplicating a system method per entity.
 
 CREATE TABLE payment_methods (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id uuid NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    tenant_id  uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     type       payment_method_type NOT NULL,
     name       text NOT NULL,
     enabled    boolean NOT NULL DEFAULT true,
     is_system  boolean NOT NULL DEFAULT false,
     is_default boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (company_id, type)
+    UNIQUE (tenant_id, type)
 );
 
-CREATE INDEX payment_methods_company_id_idx ON payment_methods (company_id);
+CREATE INDEX payment_methods_tenant_id_idx ON payment_methods (tenant_id);
 
 ALTER TABLE payment_methods ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON payment_methods FROM anon, authenticated;
@@ -165,13 +140,13 @@ REVOKE ALL ON payment_methods FROM anon, authenticated;
 -- audit_log (generic audit trail) — backend-only
 -- =========================================================================
 -- Records onboarding-flow events: application create/edit/submit, approval,
--- rejection, suspension and configuration changes. The subset exposed to the
--- front maps to the `AuditEvent` type.
+-- rejection, suspension and configuration changes. `tenant_id` is nullable
+-- because some events (e.g. an application still in draft) have no entity yet.
 
 CREATE TABLE audit_log (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
-    company_id    uuid REFERENCES companies(id) ON DELETE SET NULL,
+    tenant_id     uuid REFERENCES tenants(id) ON DELETE SET NULL,
     action        text NOT NULL,
     entity_type   text NOT NULL,
     entity_id     uuid,
@@ -180,7 +155,7 @@ CREATE TABLE audit_log (
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX audit_log_company_id_created_at_idx ON audit_log (company_id, created_at);
+CREATE INDEX audit_log_tenant_id_created_at_idx ON audit_log (tenant_id, created_at);
 CREATE INDEX audit_log_action_idx ON audit_log (action);
 
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;

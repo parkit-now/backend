@@ -1,17 +1,18 @@
 // Auth: roles and users for the web/desktop/mobile platform.
 // User.id is assigned by Supabase Auth — no @default here.
 //
-// Tenant association does NOT live here. It lives in `UserMembership`
+// Tenant (entity) association does NOT live here. It lives in `UserMembership`
 // (N:M, see memberships.prisma). A tenant equals a parking lot, so:
 //   - owner: 0..N memberships (one per parking lot they run; 0 until they
-//            create their first one).
+//            register their first one).
 //   - operator: 0..N memberships (one per parking lot they work in).
 //   - driver / admin: always 0 memberships.
-// The "active tenant" used by RLS / `prismaForTenant` is carried in the
-// JWT (`app_metadata.tenant_id`) and chosen at login / switch-tenant time.
+// The entity acted on per request is resolved from `/tenants/:tenantId` and
+// `TenantMembershipGuard`; it is NOT carried in the JWT. The JWT only carries
+// the global `role` (see custom_access_token_hook).
 
 enum UserRole {
-  admin    // platform-level, no tenant
+  admin    // platform-level, sees/manages every entity
   owner    // parking-lot business owner, may run several lots
   operator // booth operator, may work in several lots
   driver   // mobile-app end user, no tenant
@@ -27,9 +28,9 @@ model User {
 
   memberships UserMembership[]
 
-  // Onboarding / companies (back-relations).
-  ownedCompanies       Company[]
-  reviewedApplications OnboardingApplication[]
+  // Onboarding (back-relations).
+  applications         OnboardingApplication[] @relation("ApplicantApplications")
+  reviewedApplications OnboardingApplication[] @relation("ReviewedApplications")
   auditLogs            AuditLog[]
 
   @@map("users")
