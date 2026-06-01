@@ -37,6 +37,11 @@ export const ErrorCodes = {
   ENTITY_NOT_FOUND: 'ENTITY_NOT_FOUND',
   ENTITY_NOT_OWNER: 'ENTITY_NOT_OWNER',
   ENTITY_NOT_ACTIVE: 'ENTITY_NOT_ACTIVE',
+  // Caller authenticated but has no membership in the target tenant.
+  ENTITY_NO_ACCESS: 'ENTITY_NO_ACCESS',
+  // Caller is a member (e.g. operator) but lacks the required entity role
+  // (e.g. owner) for an owner-only action.
+  ENTITY_INSUFFICIENT_ROLE: 'ENTITY_INSUFFICIENT_ROLE',
 
   // Payment methods
   PAYMENT_METHOD_NOT_FOUND: 'PAYMENT_METHOD_NOT_FOUND',
