@@ -93,7 +93,7 @@ export class ApplicationsController {
     operationId: 'adminApplicationsGet',
     summary: 'Get a single onboarding application with full review detail',
     description: [
-      'Returns the full detail an Ops reviewer needs to make a decision: the summary fields plus the company contact data, the declared branches (name, address and per-vehicle spot counts), the uploaded documents and, when already reviewed, the rejection reason and review timestamp.',
+      'Returns the full detail an Ops reviewer needs to make a decision: the summary fields plus the declared entity data (name, address, legal data and per-vehicle spot counts), the uploaded documents and, when already reviewed, the rejection reason and review timestamp.',
       '',
       'This is the screen the reviewer opens before approving or rejecting an application.',
     ].join('\n'),
@@ -123,17 +123,17 @@ export class ApplicationsController {
   @Post(':id/approve')
   @ApiOperation({
     operationId: 'adminApplicationsApprove',
-    summary: 'Approve an onboarding application and provision the company',
+    summary: 'Approve an onboarding application and provision the entity',
     description: [
-      'Approves a submitted application and atomically provisions the tenant. In a single transaction it:',
+      'Approves a submitted application and atomically provisions the entity (tenant). In a single transaction it:',
       '',
-      '- flips the company to `active`;',
-      '- materializes each declared branch as a real lot (tenant), with an initial `General` zone carrying the declared car/motorcycle/bicycle spot counts;',
-      '- grants the owner a membership on every created lot;',
+      '- materializes the declared entity as a real parking lot (tenant), with an initial `General` zone carrying the declared car/motorcycle/bicycle spot counts;',
+      '- grants the applicant a membership on the created entity;',
       '- creates the system payment methods (`mp_transfer` as default, `cash`), which are non-deletable but can be disabled;',
-      '- marks the application `approved` and records the audit trail.',
+      '- marks the application `approved` (linking the created `tenantId`) and records the audit trail;',
+      '- promotes a `driver` applicant to `owner`.',
       '',
-      'After the transaction commits, the owner is given access by setting their active tenant in Supabase Auth (best-effort, outside the DB transaction).',
+      'After the transaction commits, the new `owner` role is mirrored into the JWT claim in Supabase Auth (best-effort, outside the DB transaction).',
       '',
       '**Only `pending_review` applications can be approved.** Returns the updated application summary.',
     ].join('\n'),

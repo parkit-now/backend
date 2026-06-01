@@ -1,7 +1,7 @@
 import type { ApplicationStatus, Prisma } from '@prisma/client';
 import {
-  declaredBranchesOf,
-  toCompanyDocumentDto,
+  declaredEntityOf,
+  toApplicationDocumentDto,
 } from '../../onboarding/onboarding.mappers';
 import { ApplicationDetailDto, ApplicationDto } from './dto/application.dto';
 import type { ApplicationStatusFilter } from './dto/list-applications-query.dto';
@@ -36,12 +36,12 @@ export function toInternalStatus(
 }
 
 export const APPLICATION_LIST_INCLUDE = {
-  company: { include: { owner: true } },
+  applicant: true,
   _count: { select: { documents: true } },
 } satisfies Prisma.OnboardingApplicationInclude;
 
 export const APPLICATION_DETAIL_INCLUDE = {
-  company: { include: { owner: true } },
+  applicant: true,
   documents: { orderBy: { createdAt: 'asc' } },
   _count: { select: { documents: true } },
 } satisfies Prisma.OnboardingApplicationInclude;
@@ -54,14 +54,23 @@ type ApplicationDetailPayload = Prisma.OnboardingApplicationGetPayload<{
   include: typeof APPLICATION_DETAIL_INCLUDE;
 }>;
 
+function declaredString(
+  entity: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = entity[key];
+  return typeof value === 'string' ? value : null;
+}
+
 export function toApplicationDto(app: ApplicationPayload): ApplicationDto {
+  const entity = declaredEntityOf(app);
   return {
     id: app.id,
-    legalName: app.company.legalName,
-    ownerEmail: app.company.owner.email,
-    email: app.company.email,
-    cuit: app.company.cuit,
-    branchCount: declaredBranchesOf(app).length,
+    name: declaredString(entity, 'name') ?? '',
+    legalName: declaredString(entity, 'legalName') ?? '',
+    applicantEmail: app.applicant.email,
+    email: declaredString(entity, 'email') ?? '',
+    cuit: declaredString(entity, 'cuit') ?? '',
     docsCount: app._count.documents,
     status: toExternalStatus(app.status),
     submittedAt: app.submittedAt ? app.submittedAt.toISOString() : null,
@@ -72,13 +81,15 @@ export function toApplicationDto(app: ApplicationPayload): ApplicationDto {
 export function toApplicationDetailDto(
   app: ApplicationDetailPayload,
 ): ApplicationDetailDto {
+  const entity = declaredEntityOf(app);
   return {
     ...toApplicationDto(app),
-    phone: app.company.phone,
-    address: app.company.address,
-    declaredBranches: declaredBranchesOf(app),
+    phone: declaredString(entity, 'phone'),
+    address: declaredString(entity, 'address'),
+    declaredEntity: entity,
+    tenantId: app.tenantId,
     rejectionReason: app.rejectionReason,
     reviewedAt: app.reviewedAt ? app.reviewedAt.toISOString() : null,
-    documents: app.documents.map(toCompanyDocumentDto),
+    documents: app.documents.map(toApplicationDocumentDto),
   };
 }

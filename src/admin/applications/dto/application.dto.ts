@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { CompanyDocumentDto } from '../../../onboarding/dto/onboarding-response.dto';
+import { ApplicationDocumentDto } from '../../../onboarding/dto/onboarding-response.dto';
 import type { ApplicationStatusFilter } from './list-applications-query.dto';
 
 /**
@@ -16,36 +16,34 @@ export class ApplicationDto {
   id: string;
 
   @ApiProperty({
-    description: 'Registered legal name of the applicant company.',
+    description: 'Declared display name of the parking lot.',
+    example: 'Estacionamiento del Centro',
+  })
+  name: string;
+
+  @ApiProperty({
+    description: 'Declared legal name of the entity.',
     example: 'Estacionamientos del Centro S.A.',
   })
   legalName: string;
 
   @ApiProperty({
-    description: 'Email of the company owner (no display name exists yet).',
-    example: 'owner@example.com',
+    description: 'Email of the applicant user (no display name exists yet).',
+    example: 'applicant@example.com',
   })
-  ownerEmail: string;
+  applicantEmail: string;
 
   @ApiProperty({
-    description: 'Company contact email declared in the application.',
-    example: 'contacto@estacionamientos.com',
+    description: 'Declared contact email of the entity.',
+    example: 'contacto@estacionamiento.com',
   })
   email: string;
 
   @ApiProperty({
-    description: 'Argentine tax id (CUIT) of the company.',
-    example: '30-71234567-9',
+    description: 'Declared Argentine tax id (CUIT).',
+    example: '30712345679',
   })
   cuit: string;
-
-  @ApiProperty({
-    type: 'integer',
-    minimum: 0,
-    description: 'Number of branches declared in the application.',
-    example: 2,
-  })
-  branchCount: number;
 
   @ApiProperty({
     type: 'integer',
@@ -68,7 +66,7 @@ export class ApplicationDto {
     nullable: true,
     format: 'date-time',
     description:
-      'When the owner submitted the application for review (ISO-8601 UTC). `null` while still a draft.',
+      'When the applicant submitted the application for review (ISO-8601 UTC). `null` while still a draft.',
     example: '2026-05-20T14:30:00.000Z',
   })
   submittedAt: string | null;
@@ -83,14 +81,13 @@ export class ApplicationDto {
 
 /**
  * Full review detail for a single application: the summary fields plus the
- * company contact data, declared branches, uploaded documents and review
- * outcome. This is what the Ops reviewer opens before deciding.
+ * declared entity data, uploaded documents and review outcome.
  */
 export class ApplicationDetailDto extends ApplicationDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'Company contact phone number. `null` when not provided.',
+    description: 'Declared contact phone number. `null` when not provided.',
     example: '+54 11 5555-5555',
   })
   phone: string | null;
@@ -98,25 +95,35 @@ export class ApplicationDetailDto extends ApplicationDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'Company postal address. `null` when not provided.',
+    description: 'Declared postal address. `null` when not provided.',
     example: 'Av. Corrientes 1234, CABA',
   })
   address: string | null;
 
   @ApiProperty({
-    type: 'array',
-    items: { type: 'object', additionalProperties: true },
+    type: 'object',
+    additionalProperties: true,
     description:
-      'Declared branches snapshot captured at submission time. Each entry carries a name, optional address and per-vehicle spot counts; these are materialized as real lots on approval.',
+      'Declared entity snapshot captured at submission time (name, address, legal data and per-vehicle spot counts). Materialized as a real parking lot on approval.',
   })
-  declaredBranches: unknown[];
+  declaredEntity: Record<string, unknown>;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    format: 'uuid',
+    description:
+      'Id of the entity (tenant) created on approval, or `null` until approved.',
+    example: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+  })
+  tenantId: string | null;
 
   @ApiProperty({
     type: String,
     nullable: true,
     description:
       'Reviewer-provided reason set when the application was rejected. `null` unless `status` is `rejected`.',
-    example: 'Missing proof of property ownership for branch #2.',
+    example: 'Missing proof of property ownership.',
   })
   rejectionReason: string | null;
 
@@ -131,8 +138,8 @@ export class ApplicationDetailDto extends ApplicationDto {
   reviewedAt: string | null;
 
   @ApiProperty({
-    type: [CompanyDocumentDto],
+    type: [ApplicationDocumentDto],
     description: 'Supporting documents uploaded by the applicant.',
   })
-  documents: CompanyDocumentDto[];
+  documents: ApplicationDocumentDto[];
 }

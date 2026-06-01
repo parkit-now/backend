@@ -3,7 +3,7 @@ import type { ApplicationStatus, User } from '@prisma/client';
 import { AuditActions, AuditService } from '../../audit/audit.service';
 import { SupabaseAuthService } from '../../auth/supabase-auth.service';
 import { PrismaService } from '../../database/prisma.service';
-import { declaredBranchesOf } from '../../onboarding/onboarding.mappers';
+import { declaredEntityOf } from '../../onboarding/onboarding.mappers';
 import { ErrorCodes } from '../../utils/exceptions/error-codes';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -17,9 +17,13 @@ import { ApplicationDetailDto, ApplicationDto } from './dto/application.dto';
 import { ListApplicationsQueryDto } from './dto/list-applications-query.dto';
 import { RejectApplicationDto } from './dto/reject-application.dto';
 
-interface DeclaredBranch {
-  name: string;
+interface DeclaredEntity {
+  name?: string;
   address?: string;
+  legalName?: string;
+  cuit?: string;
+  email?: string;
+  phone?: string;
   carSpots?: number;
   motorcycleSpots?: number;
   bicycleSpots?: number;
@@ -65,126 +69,134 @@ export class ApplicationsService {
   }
 
   /**
-   * Atomic approval: activates the company, materializes the declared
-   * branches as tenants (+ initial zone + owner membership), creates the
-   * system payment methods and marks the application as approved. Writing
-   * `app_metadata.tenant_id` (Supabase Auth) happens OUTSIDE the transaction.
+   * Atomic approval: materializes the declared entity as a `Tenant` (+ initial
+   * zone + applicant membership + system payment methods), marks the
+   * application approved and promotes a `driver` applicant to `owner`. The DB
+   * role change is the authorization source of truth; the JWT role claim is
+   * mirrored OUTSIDE the transaction (best-effort).
    */
   async approve(admin: User, id: string): Promise<ApplicationDto> {
     const application = await this.loadApplication(id);
     this.assertPendingReview(application.status);
 
-    const branches = declaredBranchesOf(application) as DeclaredBranch[];
+    const entity = declaredEntityOf(application) as DeclaredEntity;
+    const applicant = application.applicant;
+    const promoteToOwner = applicant.role === 'driver';
 
-    const { ownerUserId, companyId, createdTenantIds } =
-      await this.prisma.$transaction(async (tx) => {
-        const company = await tx.company.update({
-          where: { id: application.companyId },
-          data: { status: 'active' },
-        });
-
-        const createdTenantIds: string[] = [];
-        for (const branch of branches) {
-          const tenant = await tx.tenant.create({
-            data: {
-              name: branch.name,
-              address: branch.address ?? null,
-              status: 'active',
-              companyId: company.id,
-            },
-          });
-          createdTenantIds.push(tenant.id);
-
-          const carSpots = branch.carSpots ?? 0;
-          const motorcycleSpots = branch.motorcycleSpots ?? 0;
-          const bicycleSpots = branch.bicycleSpots ?? 0;
-          if (carSpots + motorcycleSpots + bicycleSpots > 0) {
-            // Materializes the declared counts as an initial zone. Accessed via
-            // the base client (admin provisioning), with an explicit tenantId.
-            await tx.zone.create({
-              data: {
-                tenantId: tenant.id,
-                name: 'General',
-                carSpots,
-                motorcycleSpots,
-                bicycleSpots,
-              },
-            });
-          }
-
-          // Reuses UserMembership to grant the owner access to their branch.
-          await tx.userMembership.create({
-            data: { userId: company.ownerUserId, tenantId: tenant.id },
-          });
-        }
-
-        // System payment methods (non-deletable, can be disabled).
-        await tx.paymentMethod.createMany({
-          data: [
-            {
-              companyId: company.id,
-              type: 'mp_transfer',
-              name: 'Transfer (Mercado Pago)',
-              enabled: true,
-              isSystem: true,
-              isDefault: true,
-            },
-            {
-              companyId: company.id,
-              type: 'cash',
-              name: 'Cash',
-              enabled: true,
-              isSystem: true,
-              isDefault: false,
-            },
-          ],
-        });
-
-        await tx.onboardingApplication.update({
-          where: { id },
-          data: {
-            status: 'approved',
-            reviewedAt: new Date(),
-            reviewedBy: admin.id,
-          },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            action: AuditActions.COMPANY_APPROVED,
-            entityType: 'company',
-            entityId: company.id,
-            actorUserId: admin.id,
-            companyId: company.id,
-            metadata: { tenantsCreated: createdTenantIds },
-          },
-        });
-
-        return {
-          ownerUserId: company.ownerUserId,
-          companyId: company.id,
-          createdTenantIds,
-        };
+    const { tenantId } = await this.prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          name: entity.name ?? 'Untitled',
+          address: entity.address ?? null,
+          legalName: entity.legalName ?? null,
+          cuit: entity.cuit ?? null,
+          email: entity.email ?? null,
+          phone: entity.phone ?? null,
+          status: 'active',
+        },
       });
 
+      const carSpots = entity.carSpots ?? 0;
+      const motorcycleSpots = entity.motorcycleSpots ?? 0;
+      const bicycleSpots = entity.bicycleSpots ?? 0;
+      if (carSpots + motorcycleSpots + bicycleSpots > 0) {
+        await tx.zone.create({
+          data: {
+            tenantId: tenant.id,
+            name: 'General',
+            carSpots,
+            motorcycleSpots,
+            bicycleSpots,
+          },
+        });
+      }
+
+      // The applicant gains access to the entity via UserMembership.
+      await tx.userMembership.create({
+        data: { userId: applicant.id, tenantId: tenant.id },
+      });
+
+      // System payment methods (non-deletable, can be disabled).
+      await tx.paymentMethod.createMany({
+        data: [
+          {
+            tenantId: tenant.id,
+            type: 'mp_transfer',
+            name: 'Transfer (Mercado Pago)',
+            enabled: true,
+            isSystem: true,
+            isDefault: true,
+          },
+          {
+            tenantId: tenant.id,
+            type: 'cash',
+            name: 'Cash',
+            enabled: true,
+            isSystem: true,
+            isDefault: false,
+          },
+        ],
+      });
+
+      await tx.onboardingApplication.update({
+        where: { id },
+        data: {
+          status: 'approved',
+          reviewedAt: new Date(),
+          reviewedBy: admin.id,
+          tenantId: tenant.id,
+        },
+      });
+
+      if (promoteToOwner) {
+        await tx.user.update({
+          where: { id: applicant.id },
+          data: { role: 'owner' },
+        });
+        await tx.auditLog.create({
+          data: {
+            action: AuditActions.OWNER_PROMOTED,
+            entityType: 'user',
+            entityId: applicant.id,
+            actorUserId: admin.id,
+            tenantId: tenant.id,
+          },
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          action: AuditActions.ENTITY_APPROVED,
+          entityType: 'tenant',
+          entityId: tenant.id,
+          actorUserId: admin.id,
+          tenantId: tenant.id,
+        },
+      });
+
+      return { tenantId: tenant.id };
+    });
+
     // Outside the transaction: Supabase Auth is not transactional with the DB.
-    const firstTenantId = createdTenantIds[0];
-    if (firstTenantId) {
+    if (promoteToOwner) {
       try {
-        await this.auth.setActiveTenant(ownerUserId, firstTenantId);
+        await this.auth.setUserRole(applicant.id, 'owner');
       } catch (err) {
         this.logger.warn(
-          `Approved company ${companyId} but failed to set active tenant`,
+          `Approved entity ${tenantId} but failed to mirror owner role`,
           err instanceof Error ? err.stack : String(err),
         );
         await this.audit.record({
-          action: AuditActions.APPLICATION_ACTIVE_TENANT_FAILED,
-          entityType: 'company',
-          entityId: companyId,
+          action: AuditActions.OWNER_PROMOTED,
+          entityType: 'user',
+          entityId: applicant.id,
           actorUserId: admin.id,
-          companyId,
+          tenantId,
           severity: 'warn',
-          metadata: { error: err instanceof Error ? err.message : String(err) },
+          metadata: {
+            appMetadataSync: 'failed',
+            error: err instanceof Error ? err.message : String(err),
+          },
         });
       }
     }
@@ -212,11 +224,10 @@ export class ApplicationsService {
       });
       await tx.auditLog.create({
         data: {
-          action: AuditActions.APPLICATION_REJECTED,
+          action: AuditActions.ENTITY_REJECTED,
           entityType: 'application',
           entityId: id,
           actorUserId: admin.id,
-          companyId: application.companyId,
           metadata: { reason: dto.reason },
         },
       });
@@ -239,7 +250,7 @@ export class ApplicationsService {
   private async loadApplication(id: string) {
     const app = await this.prisma.onboardingApplication.findUnique({
       where: { id },
-      include: { company: true },
+      include: { applicant: true },
     });
     if (!app) {
       throw this.notFound(id);

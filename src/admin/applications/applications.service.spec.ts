@@ -16,14 +16,13 @@ const admin: User = {
 describe('ApplicationsService', () => {
   let service: ApplicationsService;
 
-  let tenantSeq = 0;
   const tx = {
-    company: { update: jest.fn() },
     tenant: { create: jest.fn() },
     zone: { create: jest.fn() },
     userMembership: { create: jest.fn() },
     paymentMethod: { createMany: jest.fn() },
     onboardingApplication: { update: jest.fn() },
+    user: { update: jest.fn() },
     auditLog: { create: jest.fn() },
   };
 
@@ -32,18 +31,14 @@ describe('ApplicationsService', () => {
     $transaction: jest.fn(),
   };
   const mockAudit = { record: jest.fn() };
-  const mockAuth = { setActiveTenant: jest.fn() };
+  const mockAuth = { setUserRole: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    tenantSeq = 0;
     mockPrisma.$transaction.mockImplementation(
       (cb: (t: typeof tx) => unknown) => cb(tx),
     );
-    tx.company.update.mockResolvedValue({ id: 'c-1', ownerUserId: 'u-owner' });
-    tx.tenant.create.mockImplementation(() => ({
-      id: `tenant-${++tenantSeq}`,
-    }));
+    tx.tenant.create.mockResolvedValue({ id: 'tenant-1' });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -57,13 +52,25 @@ describe('ApplicationsService', () => {
     service = module.get<ApplicationsService>(ApplicationsService);
   });
 
-  function pendingApp() {
+  function pendingApp(applicantRole = 'owner') {
     return {
       id: 'app-1',
-      companyId: 'c-1',
       status: 'pending_review',
-      declaredBranches: [{ name: 'Centro', carSpots: 10 }, { name: 'Norte' }],
-      company: { id: 'c-1', ownerUserId: 'u-owner' },
+      tenantId: null,
+      declaredEntity: {
+        name: 'Centro',
+        address: 'Av 1',
+        legalName: 'ACME',
+        cuit: '30123456789',
+        email: 'acme@x.com',
+        phone: '+541100000000',
+        carSpots: 10,
+      },
+      applicant: {
+        id: 'u-applicant',
+        role: applicantRole,
+        email: 'applicant@once.test',
+      },
     };
   }
 
@@ -71,62 +78,72 @@ describe('ApplicationsService', () => {
     return {
       id: 'app-1',
       status: 'approved',
-      declaredBranches: [{ name: 'Centro' }, { name: 'Norte' }],
-      submittedAt: new Date('2026-05-01T00:00:00.000Z'),
-      createdAt: new Date('2026-05-01T00:00:00.000Z'),
-      company: {
+      tenantId: 'tenant-1',
+      declaredEntity: {
+        name: 'Centro',
         legalName: 'ACME',
         email: 'acme@x.com',
         cuit: '30123456789',
-        owner: { email: 'owner@once.test' },
       },
+      submittedAt: new Date('2026-05-01T00:00:00.000Z'),
+      createdAt: new Date('2026-05-01T00:00:00.000Z'),
+      applicant: { email: 'applicant@once.test' },
       _count: { documents: 2 },
     };
   }
 
   describe('approve', () => {
-    it('runs the full atomic approval and sets the active tenant', async () => {
+    it('runs the full atomic approval for an owner applicant', async () => {
       mockPrisma.onboardingApplication.findUnique
-        .mockResolvedValueOnce(pendingApp()) // loadApplication
+        .mockResolvedValueOnce(pendingApp('owner')) // loadApplication
         .mockResolvedValueOnce(approvedListPayload()); // getById
 
       const result = await service.approve(admin, 'app-1');
 
-      expect(tx.company.update).toHaveBeenCalledWith({
-        where: { id: 'c-1' },
-        data: { status: 'active' },
-      });
-      // 2 declared branches → 2 tenants + 2 memberships
-      expect(tx.tenant.create).toHaveBeenCalledTimes(2);
-      expect(tx.userMembership.create).toHaveBeenCalledTimes(2);
-      // Only the first branch brings spots → 1 initial zone
+      // One declared entity → one tenant + one membership.
+      expect(tx.tenant.create).toHaveBeenCalledTimes(1);
+      expect(tx.userMembership.create).toHaveBeenCalledTimes(1);
+      // Declared spots → one initial zone.
       expect(tx.zone.create).toHaveBeenCalledTimes(1);
-      // System payment methods
+      // System payment methods.
       expect(tx.paymentMethod.createMany).toHaveBeenCalledTimes(1);
       const pmArg = tx.paymentMethod.createMany.mock.calls[0][0] as {
         data: unknown[];
       };
       expect(pmArg.data).toHaveLength(2);
-      // Application approved
-      expect(tx.onboardingApplication.update).toHaveBeenCalled();
+      // Application approved + linked to the created tenant.
       const appUpdateArg = tx.onboardingApplication.update.mock.calls[0][0] as {
-        data: { status: string };
+        data: { status: string; tenantId: string };
       };
       expect(appUpdateArg.data.status).toBe('approved');
-      expect(tx.auditLog.create).toHaveBeenCalled();
-      // Outside the tx: app_metadata.tenant_id = first tenant
-      expect(mockAuth.setActiveTenant).toHaveBeenCalledWith(
-        'u-owner',
-        'tenant-1',
-      );
+      expect(appUpdateArg.data.tenantId).toBe('tenant-1');
+      // An owner is not promoted again.
+      expect(tx.user.update).not.toHaveBeenCalled();
+      expect(mockAuth.setUserRole).not.toHaveBeenCalled();
       expect(result.status).toBe('approved');
     });
 
-    it('does not fail the approval if setting the active tenant fails (audits warn)', async () => {
+    it('promotes a driver applicant to owner (DB role + JWT mirror)', async () => {
       mockPrisma.onboardingApplication.findUnique
-        .mockResolvedValueOnce(pendingApp())
+        .mockResolvedValueOnce(pendingApp('driver'))
         .mockResolvedValueOnce(approvedListPayload());
-      mockAuth.setActiveTenant.mockRejectedValue(new Error('supabase down'));
+
+      await service.approve(admin, 'app-1');
+
+      const roleArg = tx.user.update.mock.calls[0][0] as {
+        where: { id: string };
+        data: { role: string };
+      };
+      expect(roleArg.where.id).toBe('u-applicant');
+      expect(roleArg.data.role).toBe('owner');
+      expect(mockAuth.setUserRole).toHaveBeenCalledWith('u-applicant', 'owner');
+    });
+
+    it('does not fail the approval if mirroring the role fails (audits warn)', async () => {
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp('driver'))
+        .mockResolvedValueOnce(approvedListPayload());
+      mockAuth.setUserRole.mockRejectedValue(new Error('supabase down'));
 
       expect(await service.approve(admin, 'app-1')).toBeDefined();
       expect(mockAudit.record).toHaveBeenCalledWith(
