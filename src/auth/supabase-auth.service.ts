@@ -63,7 +63,9 @@ export class SupabaseAuthService implements OnModuleInit {
         // (`app_metadata.role`). Clients read it straight from the session and
         // route by role without an extra `/users/me` round-trip. The DB
         // (`public.users.role`) stays the authorization source of truth;
-        // app_metadata only mirrors it for the token.
+        // app_metadata only mirrors it for the token. On every token mint the
+        // `custom_access_token_hook` re-reads the DB role into the claim, so no
+        // manual claim sync is needed here.
         app_metadata: { role: input.role },
       });
 
@@ -172,6 +174,21 @@ export class SupabaseAuthService implements OnModuleInit {
         ErrorCodes.AUTH_INVALID_CREDENTIALS,
       );
     }
+
+    const authUserId = data.session.user.id;
+    const user = await this.users.findByIdOrNull(authUserId);
+    if (!user) {
+      throw new FormattedException(
+        'Unauthorized',
+        HttpStatus.UNAUTHORIZED,
+        'User not provisioned',
+        '/auth/login',
+        ErrorCodes.AUTH_USER_NOT_PROVISIONED,
+      );
+    }
+
+    // No manual claim sync: the `custom_access_token_hook` injects the current
+    // DB role into `app_metadata.role` on every mint (covers OAuth too).
     return this.toSessionDto(data.session);
   }
 

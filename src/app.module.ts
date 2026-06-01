@@ -12,6 +12,7 @@ import { ZonesModule } from './zones/zones.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { ApplicationsModule } from './admin/applications/applications.module';
 import { EntitiesModule } from './entities/entities.module';
+import { RatesModule } from './rates/rates.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { EntitiesModule } from './entities/entities.module';
     OnboardingModule,
     ApplicationsModule,
     EntitiesModule,
+    RatesModule,
   ],
 })
 export class AppModule {}
