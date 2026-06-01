@@ -16,13 +16,10 @@ import type { SessionDto } from './dto/session.dto';
  *
  * Two clients live here:
  *   - `admin` — built with `SUPABASE_SERVICE_ROLE_KEY`. Required to create
- *     users administratively and to write `app_metadata.tenant_id` later
- *     (the anon `signUp` flow can NOT write app_metadata, and our RLS
- *     reads tenant_id from there). Register itself does NOT set tenant_id;
- *     it is populated when the user gets a parking-lot membership (owner
- *     creates a lot, operator accepts an invitation). When a user holds
- *     several memberships, `tenant_id` carries the active one for the
- *     session — it changes via switch-tenant.
+ *     users administratively and to mirror the global `app_metadata.role`
+ *     into the JWT (the anon `signUp` flow can NOT write app_metadata). The
+ *     active entity (tenant) is NOT carried in the token: it is resolved per
+ *     request from `/tenants/:tenantId` + `TenantMembershipGuard`.
  *   - `anon` — built with `SUPABASE_ANON_KEY`. Used for password sign-in
  *     and refresh-token rotation. Stateless: `persistSession: false`.
  *
@@ -137,23 +134,6 @@ export class SupabaseAuthService implements OnModuleInit {
         '/auth/logout',
         'Failed to sign out',
         ErrorCodes.AUTH_LOGOUT_FAILED,
-      );
-    }
-  }
-
-  /**
-   * Sets the active tenant for a user by writing `app_metadata.tenant_id`
-   * (merged, not replaced). Required so RLS / `prismaForTenant` resolve the
-   * tenant on the next token. Called when an owner is approved and gets their
-   * first lot. NOT transactional with our DB — callers handle failure.
-   */
-  async setActiveTenant(userId: string, tenantId: string): Promise<void> {
-    const { error } = await this.admin.auth.admin.updateUserById(userId, {
-      app_metadata: { tenant_id: tenantId },
-    });
-    if (error) {
-      throw new Error(
-        `Failed to set active tenant for user ${userId}: ${error.message}`,
       );
     }
   }

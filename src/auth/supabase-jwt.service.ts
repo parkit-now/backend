@@ -30,7 +30,7 @@ export interface SupabaseJwtPayload extends JWTPayload {
   email?: string;
   role?: string;
   app_metadata?: {
-    tenant_id?: string;
+    role?: string;
     [key: string]: unknown;
   };
   user_metadata?: Record<string, unknown>;
