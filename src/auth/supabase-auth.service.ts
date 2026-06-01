@@ -62,6 +62,7 @@ export class SupabaseAuthService implements OnModuleInit {
         email: input.email,
         password: input.password,
         email_confirm: true,
+        app_metadata: { role: input.role },
       });
 
     if (createErr || !created.user) {
@@ -152,7 +153,72 @@ export class SupabaseAuthService implements OnModuleInit {
         ErrorCodes.AUTH_INVALID_CREDENTIALS,
       );
     }
-    return this.toSessionDto(data.session);
+
+    const authUserId = data.session.user.id;
+    const user = await this.users.findByIdOrNull(authUserId);
+    if (!user) {
+      throw new FormattedException(
+        'Unauthorized',
+        HttpStatus.UNAUTHORIZED,
+        'User not provisioned',
+        '/auth/login',
+        ErrorCodes.AUTH_USER_NOT_PROVISIONED,
+      );
+    }
+
+    let session = data.session;
+    const claimsUpdated = await this.syncRoleClaim({
+      authUserId,
+      role: user.role,
+      currentAppMetadata: data.session.user.app_metadata,
+    });
+
+    if (claimsUpdated && session.refresh_token) {
+      const refreshed = await this.anon.auth.refreshSession({
+        refresh_token: session.refresh_token,
+      });
+      if (!refreshed.error && refreshed.data.session) {
+        session = refreshed.data.session;
+      }
+    }
+
+    return this.toSessionDto(session);
+  }
+
+  private async syncRoleClaim(input: {
+    authUserId: string;
+    role: UserRole;
+    currentAppMetadata?: Record<string, unknown>;
+  }): Promise<boolean> {
+    const currentRole =
+      typeof input.currentAppMetadata?.role === 'string'
+        ? input.currentAppMetadata.role
+        : undefined;
+
+    if (currentRole === input.role) {
+      return false;
+    }
+
+    const nextAppMetadata = {
+      ...(input.currentAppMetadata ?? {}),
+      role: input.role,
+    };
+
+    const { error } = await this.admin.auth.admin.updateUserById(
+      input.authUserId,
+      {
+        app_metadata: nextAppMetadata,
+      },
+    );
+
+    if (error) {
+      this.logger.warn(
+        `Failed to sync app_metadata.role for user ${input.authUserId}: ${error.message}`,
+      );
+      return false;
+    }
+
+    return true;
   }
 
   private toSessionDto(session: Session): SessionDto {

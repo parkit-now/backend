@@ -1,6 +1,8 @@
 import { HttpStatus } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { TenantContextService } from '../database/tenant-context.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { RatesService } from './rates.service';
 
@@ -20,6 +22,28 @@ describe('RatesService', () => {
     getTenantClient: jest.fn().mockReturnValue(mockTenant),
   };
 
+  const mockTenantContext = {
+    getTenantIdOrThrow: jest.fn().mockReturnValue('tenant-1'),
+  };
+
+  const makeRate = (
+    overrides: Partial<Prisma.RateGetPayload<Record<string, never>>> = {},
+  ): Prisma.RateGetPayload<Record<string, never>> => ({
+    id: 'r-1',
+    tenantId: 'tenant-1',
+    name: 'DIA AUTO',
+    hourPriceArs: new Prisma.Decimal(1000),
+    stayPriceArs: new Prisma.Decimal(2000),
+    fractionPriceArs: new Prisma.Decimal(300),
+    isActive: true,
+    version: 1,
+    syncSeq: 1,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    deletedAt: null,
+    ...overrides,
+  });
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -27,6 +51,10 @@ describe('RatesService', () => {
         {
           provide: PrismaService,
           useValue: mockPrisma,
+        },
+        {
+          provide: TenantContextService,
+          useValue: mockTenantContext,
         },
       ],
     }).compile();
@@ -41,7 +69,7 @@ describe('RatesService', () => {
 
   describe('listRates', () => {
     it('should call tenant-scoped prisma client', async () => {
-      const rows = [{ id: 'r-1', name: 'DIA AUTO' }];
+      const rows = [makeRate()];
       mockTenant.rate.findMany.mockResolvedValue(rows);
 
       const result = await service.listRates({});
@@ -55,8 +83,8 @@ describe('RatesService', () => {
   describe('pullChanges', () => {
     it('should return maxSeq from last item when rows exist', async () => {
       mockTenant.rate.findMany.mockResolvedValue([
-        { id: 'r-1', syncSeq: 10 },
-        { id: 'r-2', syncSeq: 11 },
+        makeRate({ id: 'r-1', syncSeq: 10 }),
+        makeRate({ id: 'r-2', syncSeq: 11 }),
       ]);
 
       const result = await service.pullChanges({ afterSeq: 5, limit: 50 });
@@ -78,6 +106,24 @@ describe('RatesService', () => {
       await expect(promise).rejects.toMatchObject({
         status: HttpStatus.CONFLICT,
       });
+    });
+
+    it('should include tenantId in updateMany where clause', async () => {
+      mockTenant.rate.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.rate.findUniqueOrThrow.mockResolvedValue({ id: 'rate-id' });
+
+      await service.updateRate('rate-id', 2, { name: 'nuevo' });
+
+      expect(mockTenant.rate.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId: 'tenant-1',
+            id: 'rate-id',
+            version: 2,
+            deletedAt: null,
+          },
+        }),
+      );
     });
   });
 });

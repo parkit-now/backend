@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
+import { TenantContextService } from '../database/tenant-context.service';
 import { CreateRateDto } from './dto/create-rate.dto';
 import { ListRatesQueryDto } from './dto/list-rates-query.dto';
 import { RateChangesQueryDto } from './dto/rate-changes-query.dto';
@@ -15,7 +16,10 @@ type RateChangesResponse = {
 
 @Injectable()
 export class RatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tenantContext: TenantContextService,
+  ) {}
 
   async createRate(data: CreateRateDto) {
     const tenantPrisma = this.prisma.getTenantClient();
@@ -26,7 +30,8 @@ export class RatesService {
         hourPriceArs: data.hourPriceArs,
         stayPriceArs: data.stayPriceArs,
         fractionPriceArs: data.fractionPriceArs,
-      },
+        // tenantId is injected by prismaForTenant(...)
+      } as Prisma.RateUncheckedCreateInput,
     });
   }
 
@@ -60,7 +65,8 @@ export class RatesService {
       take: query.limit,
     });
 
-    const maxSeq = items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
+    const maxSeq =
+      items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
     return { items, maxSeq };
   }
 
@@ -70,6 +76,7 @@ export class RatesService {
     data: UpdateRateDto,
   ) {
     const tenantPrisma = this.prisma.getTenantClient();
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
 
     const updateData: Prisma.RateUpdateManyMutationInput = {
       version: { increment: 1 },
@@ -86,6 +93,7 @@ export class RatesService {
 
     const result = await tenantPrisma.rate.updateMany({
       where: {
+        tenantId,
         id: rateId,
         version: expectedVersion,
         deletedAt: null,
@@ -110,9 +118,11 @@ export class RatesService {
 
   async deactivateRate(rateId: string, expectedVersion: number) {
     const tenantPrisma = this.prisma.getTenantClient();
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
 
     const result = await tenantPrisma.rate.updateMany({
       where: {
+        tenantId,
         id: rateId,
         version: expectedVersion,
         deletedAt: null,
