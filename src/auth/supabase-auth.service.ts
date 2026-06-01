@@ -62,6 +62,12 @@ export class SupabaseAuthService implements OnModuleInit {
         email: input.email,
         password: input.password,
         email_confirm: true,
+        // Mirror the app role into `app_metadata` so it is baked into the JWT
+        // (`app_metadata.role`). Clients read it straight from the session and
+        // route by role without an extra `/users/me` round-trip. The DB
+        // (`public.users.role`) stays the authorization source of truth;
+        // app_metadata only mirrors it for the token.
+        app_metadata: { role: input.role },
       });
 
     if (createErr || !created.user) {
@@ -131,6 +137,40 @@ export class SupabaseAuthService implements OnModuleInit {
         '/auth/logout',
         'Failed to sign out',
         ErrorCodes.AUTH_LOGOUT_FAILED,
+      );
+    }
+  }
+
+  /**
+   * Sets the active tenant for a user by writing `app_metadata.tenant_id`
+   * (merged, not replaced). Required so RLS / `prismaForTenant` resolve the
+   * tenant on the next token. Called when an owner is approved and gets their
+   * first lot. NOT transactional with our DB — callers handle failure.
+   */
+  async setActiveTenant(userId: string, tenantId: string): Promise<void> {
+    const { error } = await this.admin.auth.admin.updateUserById(userId, {
+      app_metadata: { tenant_id: tenantId },
+    });
+    if (error) {
+      throw new Error(
+        `Failed to set active tenant for user ${userId}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Mirrors a role change into `app_metadata.role` (merged, not replaced) so the
+   * next token carries it. The DB (`public.users.role`) stays the authorization
+   * source of truth — this only keeps the JWT claim clients route by in sync.
+   * NOT transactional with our DB — callers handle failure.
+   */
+  async setUserRole(userId: string, role: UserRole): Promise<void> {
+    const { error } = await this.admin.auth.admin.updateUserById(userId, {
+      app_metadata: { role },
+    });
+    if (error) {
+      throw new Error(
+        `Failed to set role for user ${userId}: ${error.message}`,
       );
     }
   }
