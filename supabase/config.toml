@@ -118,6 +118,14 @@ file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
 
+# Onboarding application documents (habilitación, escritura, etc.). Private
+# bucket: access is gated by the RLS policies in
+# `migrations/*_add_application_documents_bucket.sql`.
+[storage.buckets.application-documents]
+public = false
+file_size_limit = "50MiB"
+allowed_mime_types = ["application/pdf", "image/png", "image/jpeg"]
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true
