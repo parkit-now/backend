@@ -18,10 +18,9 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { MembershipRole } from '@prisma/client';
+import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
 import { CreateRateDto } from './dto/create-rate.dto';
@@ -35,7 +34,7 @@ import { RatesService } from './rates.service';
 
 @ApiTags('Rates')
 @Controller('tenants/:tenantId/rates')
-@UseGuards(JwtAuthGuard, TenantMembershipGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, TenantMembershipGuard)
 @UseInterceptors(TenantInterceptor)
 @ApiBearerAuth('bearer')
 export class RatesController {
@@ -64,7 +63,7 @@ export class RatesController {
   }
 
   @Post()
-  @Roles(UserRole.owner, UserRole.admin)
+  @EntityRole(MembershipRole.owner)
   @ApiOperation({ summary: 'Create a new rate in the active tenant' })
   @ApiOkResponse({ type: RateDto })
   @ApiParam({
@@ -76,7 +75,7 @@ export class RatesController {
   }
 
   @Patch(':rateId')
-  @Roles(UserRole.owner, UserRole.admin)
+  @EntityRole(MembershipRole.owner)
   @ApiOperation({
     summary: 'Update a rate using optimistic locking (expectedVersion)',
   })
@@ -94,7 +93,7 @@ export class RatesController {
   }
 
   @Delete(':rateId')
-  @Roles(UserRole.owner, UserRole.admin)
+  @EntityRole(MembershipRole.owner)
   @ApiOperation({
     summary: 'Soft delete a rate using optimistic locking (expectedVersion)',
   })

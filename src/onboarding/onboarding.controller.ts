@@ -25,9 +25,7 @@ import {
 } from '@nestjs/swagger';
 import type { User } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import {
   ProblemDetailsDto,
   ValidationProblemDetailsDto,
@@ -49,10 +47,10 @@ import { OnboardingService } from './onboarding.service';
   ApplicationDocumentDto,
 )
 @Controller('onboarding/applications')
-@UseGuards(JwtAuthGuard, RolesGuard)
-// Any authenticated user can apply to register a parking lot. A `driver`
-// applicant is promoted to `owner` when the application is approved (admin).
-@Roles('owner', 'driver', 'operator', 'admin')
+@UseGuards(JwtAuthGuard)
+// Any authenticated user can apply to register a parking lot (entity). On
+// approval the applicant is granted an `owner` membership on the new entity;
+// the global role stays `user`.
 @ApiBearerAuth('bearer')
 export class OnboardingController {
   constructor(private readonly onboarding: OnboardingService) {}

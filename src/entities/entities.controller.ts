@@ -20,12 +20,12 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { MembershipRole } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { AuditEventDto } from '../audit/dto/audit-event.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
 import {
@@ -51,7 +51,7 @@ import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
 )
 // Entity-scoped: routes depend on the tenant (parking lot / entity).
 @Controller('tenants/:tenantId')
-@UseGuards(JwtAuthGuard, TenantMembershipGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, TenantMembershipGuard)
 @UseInterceptors(TenantInterceptor)
 @ApiBearerAuth('bearer')
 @ApiParam({
@@ -91,7 +91,7 @@ export class EntitiesController {
   }
 
   @Patch()
-  @Roles('owner', 'admin')
+  @EntityRole(MembershipRole.owner)
   @ApiOperation({
     operationId: 'entitiesUpdateProfile',
     summary: 'Update the entity profile',
@@ -136,7 +136,7 @@ export class EntitiesController {
   }
 
   @Patch('payment-methods/:id')
-  @Roles('owner', 'admin')
+  @EntityRole(MembershipRole.owner)
   @ApiParam({
     name: 'id',
     format: 'uuid',

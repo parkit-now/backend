@@ -7,7 +7,7 @@ import { OnboardingService } from './onboarding.service';
 
 const driver: User = {
   id: 'u-driver',
-  role: 'driver',
+  role: 'user',
   email: 'driver@once.test',
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };

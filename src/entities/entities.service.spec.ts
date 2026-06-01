@@ -7,7 +7,7 @@ import { EntitiesService } from './entities.service';
 
 const owner: User = {
   id: 'u-owner',
-  role: 'owner',
+  role: 'user',
   email: 'owner@once.test',
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };
