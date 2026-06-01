@@ -284,8 +284,8 @@ async function seedOnboarding(): Promise<void> {
   });
 
   // --- PENDING application: one entity under review (PARKIT Ops queue) ---
-  // Belongs directly to the applicant (owner-pending, a driver). On approval it
-  // materializes a tenant + owner membership and promotes the applicant.
+  // Belongs to the applicant (owner-pending, a plain user). On approval it
+  // materializes a tenant + grants the applicant an owner membership.
   await prisma.onboardingApplication.upsert({
     where: { id: PENDING_APPLICATION },
     create: {
