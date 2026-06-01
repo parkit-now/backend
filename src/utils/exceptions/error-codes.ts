@@ -1,20 +1,18 @@
 /**
- * Catalogo de codigos estables de error de la API Parkit.
+ * Catalog of stable Parkit API error codes.
  *
- * Cada codigo identifica un caso de error de forma unica e independiente
- * del wording del campo `detail`. Los clientes (web/desktop/mobile)
- * mantienen un diccionario `codigo -> mensaje en idioma del usuario` y
- * lookupean por este valor.
+ * Each code identifies an error case uniquely and independently of the wording
+ * of the `detail` field. Clients (web/desktop/mobile) keep a dictionary
+ * `code -> message in the user's language` and look up by this value.
  *
- * Reglas:
+ * Rules:
  *  - SCREAMING_SNAKE_CASE.
- *  - Prefijo por dominio cuando ayuda a desambiguar (AUTH_, DB_).
- *  - NUNCA renombrar un codigo ya publicado. Si cambia la semantica,
- *    agregar uno nuevo y deprecar el viejo.
- *  - Para errores de validacion field-level se usa el nombre del
- *    constraint de class-validator (camelCase) como codigo: `isEmail`,
- *    `minLength`, etc. — sigue siendo estable porque proviene de la
- *    libreria.
+ *  - Domain prefix when it helps disambiguate (AUTH_, DB_).
+ *  - NEVER rename an already-published code. If the semantics change, add a new
+ *    one and deprecate the old.
+ *  - For field-level validation errors the class-validator constraint name
+ *    (camelCase) is used as the code: `isEmail`, `minLength`, etc. — it stays
+ *    stable because it comes from the library.
  */
 export const ErrorCodes = {
   // Auth
@@ -29,6 +27,28 @@ export const ErrorCodes = {
   AUTH_LOGOUT_FAILED: 'AUTH_LOGOUT_FAILED',
   AUTH_RESET_TOKEN_INVALID: 'AUTH_RESET_TOKEN_INVALID',
   AUTH_RESET_PASSWORD_FAILED: 'AUTH_RESET_PASSWORD_FAILED',
+
+  // Onboarding (parking-lot applications)
+  ONBOARDING_INVALID_STATE: 'ONBOARDING_INVALID_STATE',
+  ONBOARDING_APPLICATION_NOT_FOUND: 'ONBOARDING_APPLICATION_NOT_FOUND',
+  ONBOARDING_NOT_SUBMITTABLE: 'ONBOARDING_NOT_SUBMITTABLE',
+
+  // Company
+  COMPANY_ALREADY_EXISTS: 'COMPANY_ALREADY_EXISTS',
+  COMPANY_NOT_FOUND: 'COMPANY_NOT_FOUND',
+  COMPANY_NOT_OWNER: 'COMPANY_NOT_OWNER',
+  COMPANY_NOT_ACTIVE: 'COMPANY_NOT_ACTIVE',
+  COMPANY_SUSPENDED: 'COMPANY_SUSPENDED',
+
+  // Branch
+  BRANCH_NOT_FOUND: 'BRANCH_NOT_FOUND',
+
+  // Payment methods
+  PAYMENT_METHOD_NOT_FOUND: 'PAYMENT_METHOD_NOT_FOUND',
+  PAYMENT_METHOD_SYSTEM_LOCKED: 'PAYMENT_METHOD_SYSTEM_LOCKED',
+
+  // Zones
+  ZONE_NOT_FOUND: 'ZONE_NOT_FOUND',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
@@ -57,8 +77,8 @@ export const ErrorCodes = {
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
 
 /**
- * Codigo por defecto para errores HTTP genericos cuando ningun productor
- * indico uno mas especifico. Sirve como red de seguridad en el filter.
+ * Default code for generic HTTP errors when no producer set a more specific
+ * one. Acts as a safety net in the filter.
  */
 export function defaultCodeForStatus(status: number): ErrorCode {
   switch (status) {
