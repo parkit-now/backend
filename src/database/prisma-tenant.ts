@@ -32,7 +32,7 @@ import { PrismaClient } from '@prisma/client';
  * tenant-scoped business models to the list as they appear.
  */
 
-const TENANT_MODELS: readonly string[] = ['entry'];
+const TENANT_MODELS: readonly string[] = ['entry', 'zone', 'rate'];
 
 const READ_OPS = new Set([
   'findMany',
@@ -78,13 +78,13 @@ export function prismaForTenant(prisma: PrismaClient, tenantId: string) {
             };
 
             if (Array.isArray(createArgs.data)) {
-              // Inyectar tenantId en cada fila si no está
+              // Inject tenantId into every row if missing
               createArgs.data = createArgs.data.map((row) => {
                 assertTenantMatch(row, tenantId, model, operation);
                 return { ...row, tenantId };
               });
             } else if (createArgs.data) {
-              // Inyectar tenantId en la fila
+              // Inject tenantId into the row
               assertTenantMatch(createArgs.data, tenantId, model, operation);
               createArgs.data = { ...createArgs.data, tenantId };
             }

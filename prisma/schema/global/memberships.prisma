@@ -1,22 +1,28 @@
-// UserMembership — N:M between User and Tenant.
+// UserMembership — N:M between User and Tenant (entity), carrying the
+// per-entity role.
 //
-// A row means: this user is associated with this tenant (= parking lot). The
-// role is global on `User` (see auth.prisma); membership only carries the
-// link.
+// A row means: this user is linked to this entity with a role:
+//   - owner    → full management of the entity (profile, rates, payment
+//                methods, zones, personal).
+//   - operator → operational only (register entries/exits, view rates/data).
 //
-// Cardinality invariants (enforced in application code, not by the DB):
-//   - role=owner    → 0..N memberships (one per lot they run).
-//   - role=operator → 0..N memberships (one per lot they work in).
-//   - role=driver / role=admin → always 0 memberships.
-//
-// The "active" tenant for a session is carried in the JWT
-// (`app_metadata.tenant_id`) and matched against this table on login /
-// switch-tenant flows.
+// The GLOBAL role (User.role, see auth.prisma) is only admin|user; `admin`
+// bypasses membership checks entirely. The entity-level role lives HERE, not in
+// the JWT: it is read per request by `TenantMembershipGuard` and checked by the
+// centralized `PermissionsService`. The desktop may cache it for offline authz.
+
+enum MembershipRole {
+  owner
+  operator
+
+  @@map("membership_role")
+}
 
 model UserMembership {
-  userId    String   @map("user_id") @db.Uuid
-  tenantId  String   @map("tenant_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  userId    String         @map("user_id") @db.Uuid
+  tenantId  String         @map("tenant_id") @db.Uuid
+  role      MembershipRole
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

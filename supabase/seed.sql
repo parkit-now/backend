@@ -18,7 +18,7 @@
 DO $seed$
 BEGIN
     IF to_regclass('public.tenants') IS NOT NULL THEN
-        INSERT INTO tenants (id, nombre) VALUES
+        INSERT INTO tenants (id, name) VALUES
             ('11111111-1111-1111-1111-111111111111', 'Estacionamiento Once'),
             ('22222222-2222-2222-2222-222222222222', 'Estacionamiento Belgrano')
         ON CONFLICT (id) DO NOTHING;

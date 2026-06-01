@@ -1,6 +1,6 @@
 
 import {Type} from 'class-transformer'
-import {IsNotEmpty,IsString} from 'class-validator'
+import {IsNotEmpty,IsOptional,IsString} from 'class-validator'
 
 
 
@@ -8,5 +8,20 @@ import {IsNotEmpty,IsString} from 'class-validator'
 export class CreateTenantDto {
   @IsNotEmpty()
 @IsString()
-nombre: string;
+name: string;
+@IsOptional()
+@IsString()
+legalName?: string;
+@IsOptional()
+@IsString()
+cuit?: string;
+@IsOptional()
+@IsString()
+email?: string;
+@IsOptional()
+@IsString()
+phone?: string;
+@IsOptional()
+@IsString()
+address?: string;
 }

@@ -4,7 +4,7 @@ import {
   HttpStatus,
   Injectable,
 } from '@nestjs/common';
-import type { User } from '@prisma/client';
+import type { User, UserMembership } from '@prisma/client';
 import { Request } from 'express';
 import { UsersService } from '../../users/users.service';
 import { ErrorCodes } from '../../utils/exceptions/error-codes';
@@ -24,6 +24,12 @@ import { SupabaseJwtService } from '../supabase-jwt.service';
  */
 export interface AuthenticatedRequest extends Request {
   user: User;
+  /**
+   * The caller's membership in the route's `:tenantId`, attached by
+   * `TenantMembershipGuard`. `null` for admins (who bypass membership) or
+   * when no tenant-scoped guard ran.
+   */
+  membership?: UserMembership | null;
 }
 
 @Injectable()

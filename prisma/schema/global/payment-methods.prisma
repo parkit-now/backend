@@ -1,0 +1,31 @@
+// PaymentMethod — entity-level (tenant) payment methods.
+//
+// On entity approval, 'mp_transfer' and 'cash' are created automatically with
+// `isSystem=true` (not deletable; can be disabled via `enabled`).
+//
+// Backend-only: service-role, RLS without policies.
+
+enum PaymentMethodType {
+  mp_transfer
+  cash
+  other
+
+  @@map("payment_method_type")
+}
+
+model PaymentMethod {
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type      PaymentMethodType
+  name      String
+  enabled   Boolean           @default(true)
+  isSystem  Boolean           @default(false) @map("is_system")
+  isDefault Boolean           @default(false) @map("is_default")
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, type])
+  @@index([tenantId])
+  @@map("payment_methods")
+}

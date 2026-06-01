@@ -1,13 +1,27 @@
 
-import {Prisma} from '@prisma/client'
+import {Prisma,BranchStatus} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {UserMembershipEntity} from './user-membership.entity'
 import {EntryEntity} from './entry.entity'
+import {ZoneEntity} from './zone.entity'
+import {RateEntity} from './rate.entity'
+import {PaymentMethodEntity} from './payment-method.entity'
+import {AuditLogEntity} from './audit-log.entity'
+import {OnboardingApplicationEntity} from './onboarding-application.entity'
 
 
 export class TenantEntity {
   id: string ;
-nombre: string ;
+name: string ;
+legalName: string  | null;
+cuit: string  | null;
+email: string  | null;
+phone: string  | null;
+address: string  | null;
+@ApiProperty({
+  enum: BranchStatus,
+})
+status: BranchStatus ;
 settings: Prisma.JsonValue ;
 @ApiProperty({
   type: `string`,
@@ -16,4 +30,9 @@ settings: Prisma.JsonValue ;
 createdAt: Date ;
 memberships?: UserMembershipEntity[] ;
 entries?: EntryEntity[] ;
+zones?: ZoneEntity[] ;
+rates?: RateEntity[] ;
+paymentMethods?: PaymentMethodEntity[] ;
+auditLogs?: AuditLogEntity[] ;
+applications?: OnboardingApplicationEntity[] ;
 }

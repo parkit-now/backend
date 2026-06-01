@@ -1,23 +1,46 @@
-// Tenant — one row per parking lot.
+// Tenant — one row per parking lot (the "entity" users are attached to).
 //
-// "Tenant" is kept as the multi-tenancy primitive (used by RLS, the JWT
-// `app_metadata.tenant_id`, and `prismaForTenant`), but the business meaning
-// is 1:1 with a parking lot:
+// "Tenant" is the multi-tenancy primitive (used by RLS, the `/tenants/:id`
+// routes and `prismaForTenant`) and is also the business entity: there is no
+// company grouping above it. Access is direct user↔entity via UserMembership:
 //   - an owner can hold several tenants (one per lot they run);
 //   - an operator can be linked to several tenants (one per lot they work in).
+//
+// Legal/contact fields (legalName, cuit, email, phone) live here now; they used
+// to live on the removed `Company`. `cuit` is not unique: several lots may share
+// the same legal entity.
 //
 // Backend-only: writes/reads happen via the service-role connection. RLS is
 // enabled but no policies are declared, so no anon/authenticated role can
 // touch this table.
 
 model Tenant {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nombre    String
-  settings  Json     @default("{}")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  legalName String?      @map("legal_name")
+  cuit      String?
+  email     String?      @db.VarChar(255)
+  phone     String?
+  address   String?
+  status    BranchStatus @default(active)
+  settings  Json         @default("{}")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  memberships UserMembership[]
-  entries     Entry[]
+  memberships    UserMembership[]
+  entries        Entry[]
+  zones          Zone[]
+  rates          Rate[]
+  paymentMethods PaymentMethod[]
+  auditLogs      AuditLog[]
+  applications   OnboardingApplication[]
 
+  @@index([cuit])
   @@map("tenants")
+}
+
+enum BranchStatus {
+  active
+  maintenance
+
+  @@map("branch_status")
 }

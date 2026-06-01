@@ -38,6 +38,16 @@ const VEHICLES = {
   kangoo: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3',
 } as const;
 
+// Onboarding demo: two already-APPROVED entities (Once + Belgrano, owned by
+// owner@once.test via memberships) carry legal data + payment methods, and one
+// PENDING application under review (feeds the PARKIT Ops queue).
+const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
+const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
+const ZONES = {
+  once: 'ffffffff-ffff-ffff-ffff-fffffffffff1',
+  belgrano: 'ffffffff-ffff-ffff-ffff-fffffffffff2',
+} as const;
+
 type SeedEntry = {
   id: string;
   tenantId: string;
@@ -167,6 +177,151 @@ async function main(): Promise<void> {
 
   console.log(
     `✓ Seeded ${ENTRIES.length} tenant-local entries across 2 tenants.`,
+  );
+
+  await seedOnboarding();
+}
+
+/**
+ * Onboarding-flow seed (idempotent). Requires `seed-auth` to have run first
+ * (needs the users owner@once.test and owner-pending@once.test).
+ * Runs as part of `make seed-all` (seed-global -> seed-auth -> seed-tenant).
+ */
+async function seedOnboarding(): Promise<void> {
+  const onboardingTables = [
+    'onboarding_applications',
+    'application_documents',
+    'payment_methods',
+    'zones',
+  ];
+  for (const table of onboardingTables) {
+    if (!(await tableExists(table))) {
+      console.warn(`⚠ Skipping onboarding seed: missing table "${table}".`);
+      return;
+    }
+  }
+
+  const owner = await prisma.user.findFirst({
+    where: { email: 'owner@once.test' },
+  });
+  const ownerPending = await prisma.user.findFirst({
+    where: { email: 'owner-pending@once.test' },
+  });
+  if (!owner || !ownerPending) {
+    console.warn('⚠ Skipping onboarding seed: run `make seed-auth` first.');
+    return;
+  }
+
+  // --- APPROVED entities: Once + Belgrano (owned by owner@once.test) ---
+  // Membership is seeded by seed-auth; here we fill the relocated legal/contact
+  // data and the entity-level payment methods.
+  await prisma.tenant.update({
+    where: { id: TENANTS.once },
+    data: {
+      legalName: 'Estacionamientos Centro SA',
+      cuit: '30700000001',
+      email: 'centro@parkit.test',
+      phone: '+541140000000',
+      address: 'Bartolomé Mitre 2500, CABA',
+      status: 'active',
+    },
+  });
+  await prisma.tenant.update({
+    where: { id: TENANTS.belgrano },
+    data: {
+      legalName: 'Estacionamientos Centro SA',
+      cuit: '30700000001',
+      email: 'centro@parkit.test',
+      phone: '+541140000000',
+      address: 'Av. Cabildo 2000, CABA',
+      status: 'active',
+    },
+  });
+
+  for (const tenantId of [TENANTS.once, TENANTS.belgrano]) {
+    for (const [type, name, isDefault] of [
+      ['mp_transfer', 'Bank transfer (Mercado Pago)', true],
+      ['cash', 'Cash', false],
+    ] as const) {
+      await prisma.paymentMethod.upsert({
+        where: { tenantId_type: { tenantId, type } },
+        create: {
+          tenantId,
+          type,
+          name,
+          enabled: true,
+          isSystem: true,
+          isDefault,
+        },
+        update: { name, isSystem: true },
+      });
+    }
+  }
+
+  await prisma.zone.upsert({
+    where: { id: ZONES.once },
+    create: {
+      id: ZONES.once,
+      tenantId: TENANTS.once,
+      name: 'Ground floor',
+      carSpots: 40,
+      motorcycleSpots: 10,
+      bicycleSpots: 5,
+    },
+    update: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
+  });
+  await prisma.zone.upsert({
+    where: { id: ZONES.belgrano },
+    create: {
+      id: ZONES.belgrano,
+      tenantId: TENANTS.belgrano,
+      name: 'Basement',
+      carSpots: 25,
+      motorcycleSpots: 8,
+      bicycleSpots: 0,
+    },
+    update: { carSpots: 25, motorcycleSpots: 8, bicycleSpots: 0 },
+  });
+
+  // --- PENDING application: one entity under review (PARKIT Ops queue) ---
+  // Belongs to the applicant (owner-pending, a plain user). On approval it
+  // materializes a tenant + grants the applicant an owner membership.
+  await prisma.onboardingApplication.upsert({
+    where: { id: PENDING_APPLICATION },
+    create: {
+      id: PENDING_APPLICATION,
+      applicantUserId: ownerPending.id,
+      status: 'pending_review',
+      submittedAt: new Date('2026-05-20T12:00:00.000Z'),
+      declaredEntity: {
+        name: 'Caballito lot',
+        address: 'Av. Rivadavia 5000, CABA',
+        legalName: 'Cocheras del Sur SRL',
+        cuit: '30700000002',
+        email: 'sur@parkit.test',
+        phone: '+541150000000',
+        carSpots: 30,
+        motorcycleSpots: 10,
+        bicycleSpots: 5,
+      },
+    },
+    update: { status: 'pending_review', applicantUserId: ownerPending.id },
+  });
+
+  await prisma.applicationDocument.upsert({
+    where: { id: PENDING_DOCUMENT },
+    create: {
+      id: PENDING_DOCUMENT,
+      applicationId: PENDING_APPLICATION,
+      name: 'Articles of incorporation.pdf',
+      storagePath: 'demo/cocheras-del-sur/estatuto.pdf',
+      mimeType: 'application/pdf',
+    },
+    update: {},
+  });
+
+  console.log(
+    '✓ Seeded onboarding: 2 active entities (Once+Belgrano) and 1 pending application.',
   );
 }
 

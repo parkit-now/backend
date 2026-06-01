@@ -12,7 +12,7 @@ export class UpdateUserDto {
   enum: UserRole,
 })
 @IsOptional()
-@IsIn(["admin","owner","operator","driver"])
+@IsIn(["admin","user"])
 role?: UserRole;
 @IsOptional()
 @IsString()

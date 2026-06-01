@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { User, UserRole } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { AuthError, createClient, type Session } from '@supabase/supabase-js';
 import { UsersService } from '../users/users.service';
 import { ErrorCode, ErrorCodes } from '../utils/exceptions/error-codes';
@@ -16,13 +16,10 @@ import type { SessionDto } from './dto/session.dto';
  *
  * Two clients live here:
  *   - `admin` — built with `SUPABASE_SERVICE_ROLE_KEY`. Required to create
- *     users administratively and to write `app_metadata.tenant_id` later
- *     (the anon `signUp` flow can NOT write app_metadata, and our RLS
- *     reads tenant_id from there). Register itself does NOT set tenant_id;
- *     it is populated when the user gets a parking-lot membership (owner
- *     creates a lot, operator accepts an invitation). When a user holds
- *     several memberships, `tenant_id` carries the active one for the
- *     session — it changes via switch-tenant.
+ *     users administratively and to mirror the global `app_metadata.role`
+ *     into the JWT (the anon `signUp` flow can NOT write app_metadata). The
+ *     active entity (tenant) is NOT carried in the token: it is resolved per
+ *     request from `/tenants/:tenantId` + `TenantMembershipGuard`.
  *   - `anon` — built with `SUPABASE_ANON_KEY`. Used for password sign-in
  *     and refresh-token rotation. Stateless: `persistSession: false`.
  *
@@ -55,13 +52,18 @@ export class SupabaseAuthService implements OnModuleInit {
   async register(input: {
     email: string;
     password: string;
-    role: UserRole;
   }): Promise<{ user: User; session: SessionDto }> {
     const { data: created, error: createErr } =
       await this.admin.auth.admin.createUser({
         email: input.email,
         password: input.password,
         email_confirm: true,
+        // Every self-registered user gets the GLOBAL role `user`. Mirror it
+        // into `app_metadata.role` so it is baked into the JWT — clients read
+        // it straight from the session. The DB (`public.users.role`) stays the
+        // authorization source of truth; on every token mint the
+        // `custom_access_token_hook` re-reads the DB role into the claim.
+        app_metadata: { role: 'user' },
       });
 
     if (createErr || !created.user) {
@@ -80,7 +82,7 @@ export class SupabaseAuthService implements OnModuleInit {
       user = await this.users.create({
         id: authUserId,
         email: input.email,
-        role: input.role,
+        role: 'user',
       });
     } catch (err) {
       // Rollback: leave no orphan rows in auth.users when the public.users
@@ -152,6 +154,21 @@ export class SupabaseAuthService implements OnModuleInit {
         ErrorCodes.AUTH_INVALID_CREDENTIALS,
       );
     }
+
+    const authUserId = data.session.user.id;
+    const user = await this.users.findByIdOrNull(authUserId);
+    if (!user) {
+      throw new FormattedException(
+        'Unauthorized',
+        HttpStatus.UNAUTHORIZED,
+        'User not provisioned',
+        '/auth/login',
+        ErrorCodes.AUTH_USER_NOT_PROVISIONED,
+      );
+    }
+
+    // No manual claim sync: the `custom_access_token_hook` injects the current
+    // DB role into `app_metadata.role` on every mint (covers OAuth too).
     return this.toSessionDto(data.session);
   }
 

@@ -24,6 +24,9 @@
     "db:push": "bash -c 'set -a; . ./.env; set +a; supabase db push --db-url \"$DIRECT_URL\"'",
     "studio": "prisma studio"
   },
+  "prisma": {
+    "schema": "prisma/schema"
+  },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.0",
