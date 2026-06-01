@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { User, UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { MeResponseDto } from '../auth/dto/me-response.dto';
 import { UserDto } from '../generated/nestjs-dto/user.dto';
 
 @Injectable()
@@ -41,6 +42,28 @@ export class UsersService {
 
   delete(id: string): Promise<User> {
     return this.prisma.user.delete({ where: { id } });
+  }
+
+  /**
+   * Identity + entity memberships for `GET /auth/me`. Memberships are read from
+   * the global `user_memberships` table (plain client). Admins return an empty
+   * `memberships` array — they bypass membership checks.
+   */
+  async getMe(user: User): Promise<MeResponseDto> {
+    const memberships = await this.prisma.userMembership.findMany({
+      where: { userId: user.id },
+      include: { tenant: { select: { id: true, name: true } } },
+    });
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      memberships: memberships.map((m) => ({
+        tenantId: m.tenantId,
+        tenantName: m.tenant.name,
+        role: m.role,
+      })),
+    };
   }
 
   toResponse(user: User): UserDto {

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
@@ -20,12 +21,15 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
+import type { User } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import {
   ProblemDetailsDto,
   ValidationProblemDetailsDto,
 } from '../utils/exceptions/dto/problem-details.dto';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
+import { MeResponseDto } from './dto/me-response.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthSessionResponseDto, SessionDto } from './dto/session.dto';
@@ -38,6 +42,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
   ValidationProblemDetailsDto,
   AuthSessionResponseDto,
   SessionDto,
+  MeResponseDto,
 )
 @Controller('auth')
 export class AuthController {
@@ -54,9 +59,9 @@ export class AuthController {
     description: [
       'Creates a Supabase Auth user, the matching row in `public.users`, then signs the user in and returns the tokens.',
       '',
-      '**Self-registrable roles:** `owner`, `operator`, `driver`. The `admin` role is rejected — platform admins are provisioned out-of-band.',
+      '**No role is accepted.** Every self-registered user gets the GLOBAL role `user`. Platform admins are provisioned out-of-band.',
       '',
-      '**No tenant is attached at register.** A tenant equals a parking lot, and the new user has zero memberships. Owners create lots in a dedicated flow (one or many); operators are linked to lots via invitations; drivers and admins never have a tenant.',
+      '**No tenant is attached at register.** A tenant equals a parking lot, and the new user has zero memberships. Applicants gain an `owner` membership when their onboarding application is approved; operators are linked to lots via invitations.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: AuthSessionResponseDto })
@@ -71,6 +76,27 @@ export class AuthController {
   async register(@Body() body: RegisterDto): Promise<AuthSessionResponseDto> {
     const { user, session } = await this.auth.register(body);
     return { user: this.users.toResponse(user), session };
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    operationId: 'authMe',
+    summary: 'Current user identity and entity memberships',
+    description: [
+      'Returns the authenticated caller: id, email, GLOBAL role (`admin | user`) and the list of entities (tenants) they belong to, each with the per-entity role (`owner | operator`).',
+      '',
+      'This is how clients discover which lots a `user` can act on and whether they manage (`owner`) or only operate (`operator`) — the entity role is NOT carried in the JWT. Admins return an empty `memberships` array (they bypass membership).',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: MeResponseDto })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, malformed, or expired bearer token.',
+    type: ProblemDetailsDto,
+  })
+  me(@CurrentUser() user: User): Promise<MeResponseDto> {
+    return this.users.getMe(user);
   }
 
   @Post('login')

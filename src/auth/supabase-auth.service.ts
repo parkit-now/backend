@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { User, UserRole } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { AuthError, createClient, type Session } from '@supabase/supabase-js';
 import { UsersService } from '../users/users.service';
 import { ErrorCode, ErrorCodes } from '../utils/exceptions/error-codes';
@@ -52,21 +52,18 @@ export class SupabaseAuthService implements OnModuleInit {
   async register(input: {
     email: string;
     password: string;
-    role: UserRole;
   }): Promise<{ user: User; session: SessionDto }> {
     const { data: created, error: createErr } =
       await this.admin.auth.admin.createUser({
         email: input.email,
         password: input.password,
         email_confirm: true,
-        // Mirror the app role into `app_metadata` so it is baked into the JWT
-        // (`app_metadata.role`). Clients read it straight from the session and
-        // route by role without an extra `/users/me` round-trip. The DB
-        // (`public.users.role`) stays the authorization source of truth;
-        // app_metadata only mirrors it for the token. On every token mint the
-        // `custom_access_token_hook` re-reads the DB role into the claim, so no
-        // manual claim sync is needed here.
-        app_metadata: { role: input.role },
+        // Every self-registered user gets the GLOBAL role `user`. Mirror it
+        // into `app_metadata.role` so it is baked into the JWT — clients read
+        // it straight from the session. The DB (`public.users.role`) stays the
+        // authorization source of truth; on every token mint the
+        // `custom_access_token_hook` re-reads the DB role into the claim.
+        app_metadata: { role: 'user' },
       });
 
     if (createErr || !created.user) {
@@ -85,7 +82,7 @@ export class SupabaseAuthService implements OnModuleInit {
       user = await this.users.create({
         id: authUserId,
         email: input.email,
-        role: input.role,
+        role: 'user',
       });
     } catch (err) {
       // Rollback: leave no orphan rows in auth.users when the public.users
@@ -136,23 +133,6 @@ export class SupabaseAuthService implements OnModuleInit {
         '/auth/logout',
         'Failed to sign out',
         ErrorCodes.AUTH_LOGOUT_FAILED,
-      );
-    }
-  }
-
-  /**
-   * Mirrors a role change into `app_metadata.role` (merged, not replaced) so the
-   * next token carries it. The DB (`public.users.role`) stays the authorization
-   * source of truth — this only keeps the JWT claim clients route by in sync.
-   * NOT transactional with our DB — callers handle failure.
-   */
-  async setUserRole(userId: string, role: UserRole): Promise<void> {
-    const { error } = await this.admin.auth.admin.updateUserById(userId, {
-      app_metadata: { role },
-    });
-    if (error) {
-      throw new Error(
-        `Failed to set role for user ${userId}: ${error.message}`,
       );
     }
   }
