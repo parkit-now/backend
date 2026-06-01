@@ -96,7 +96,7 @@ make up
 
 - Verificar en Supabase que `enable_manual_linking = false` (evita linking manual inseguro).
 - Revisar política de verificación de email/proveedor en Dashboard antes de habilitar signup abierto en prod.
-- Mantener rol inicial de auto-provisioning en `driver` (mínimo privilegio).
+- Mantener rol inicial de auto-provisioning en `user` (rol global de mínimo privilegio; el rol por entidad vive en `user_memberships`).
 
 ## 5) Seeds
 

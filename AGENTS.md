@@ -31,6 +31,23 @@ Antes de cambiar código, revisar siempre:
   - Capa DB (RLS + policies SQL)
 - Migraciones SQL son append-only en prod (no editar archivos ya mergeados a `main`).
 
+### Modelo de roles y permisos (scoped roles)
+
+- **Rol global** (`users.role`, enum `user_role`): `admin | user`. `admin` ve y modifica
+  todo (bypass de membership); `user` es cualquier otra persona. No existe agrupador de
+  compañía: la relación es directa usuario↔entidad (`tenants`).
+- **Rol por entidad** (`user_memberships.role`, enum `membership_role`): `owner | operator`.
+  Acá vive si alguien es dueño u operador de un estacionamiento concreto. Un mismo `user`
+  puede ser `owner` de una entidad y `operator` de otra.
+- **Permisos centralizados** en `PermissionsService` (`src/auth/permissions.service.ts`):
+  `isAdmin`, `canViewEntity`, `canOperateEntity`, `canManageEntity`. Único lugar con las
+  reglas. Matriz: `admin`→todo; `owner`→administra su entidad (perfil, tasas, métodos de
+  pago, zonas); `operator`→opera y ve, sin modificar config/tasas.
+- **El JWT solo lleva `app_metadata.role`** (`admin|user`). La entidad activa NO va en el
+  token: se resuelve por `/tenants/:tenantId` + `TenantMembershipGuard` (que además adjunta
+  el membership y enforce `@EntityRole(...)`). Esto mantiene el modo offline del desktop:
+  cambiar de entidad no re-emite token; el cliente cachea memberships (`GET /auth/me`).
+
 ## 4) Regla estricta de DTOs
 
 ### REGLA DE ARQUITECTURA: Estrategia Híbrida de DTOs (auto-generados vs. manuales)
@@ -68,7 +85,7 @@ Cuando hay un modelo en Prisma para auditar/persistir pero el payload del endpoi
 
 - No crear endpoints OAuth en NestJS para este alcance.
 - OAuth se inicia en cliente (web/desktop) con `supabase-js`; backend solo valida JWT bearer.
-- Para evitar `User not provisioned`, mantener aplicada la migración SQL de provisioning automático (`auth.users` -> `public.users` con rol `driver`).
+- Para evitar `User not provisioned`, mantener aplicada la migración SQL de provisioning automático (`auth.users` -> `public.users` con rol global `user`).
 - Config local: `supabase/config.toml` + variables `SUPABASE_AUTH_EXTERNAL_*` en `.env`.
 - Config cloud: replicar providers/redirects en Supabase Dashboard.
 - `make env-check` debe advertir (no bloquear) cuando falten variables OAuth locales.
