@@ -9,7 +9,7 @@ export class AuditEventDto {
   @ApiProperty()
   id: string;
 
-  @ApiProperty({ description: 'Recorded action, e.g. "company.approved"' })
+  @ApiProperty({ description: 'Recorded action, e.g. "entity.approved"' })
   action: string;
 
   @ApiProperty({

@@ -8,17 +8,15 @@ import { AuditEventDto } from './dto/audit-event.dto';
  * Format: `<entity>.<verb>`.
  */
 export const AuditActions = {
-  COMPANY_CREATED: 'company.created',
-  OWNER_PROMOTED: 'user.promoted_to_owner',
-  COMPANY_PROFILE_UPDATED: 'company.profile_updated',
-  COMPANY_APPROVED: 'company.approved',
-  COMPANY_SUSPENDED: 'company.suspended',
-  APPLICATION_SUBMITTED: 'application.submitted',
+  APPLICATION_CREATED: 'application.created',
   APPLICATION_UPDATED: 'application.updated',
+  APPLICATION_SUBMITTED: 'application.submitted',
+  APPLICATION_DOCUMENT_ADDED: 'application.document_added',
   APPLICATION_REJECTED: 'application.rejected',
-  APPLICATION_ACTIVE_TENANT_FAILED: 'application.active_tenant_failed',
-  BRANCH_CREATED: 'branch.created',
-  BRANCH_UPDATED: 'branch.updated',
+  OWNER_PROMOTED: 'user.promoted_to_owner',
+  ENTITY_APPROVED: 'entity.approved',
+  ENTITY_REJECTED: 'entity.rejected',
+  ENTITY_PROFILE_UPDATED: 'entity.profile_updated',
   PAYMENT_METHOD_TOGGLED: 'payment_method.toggled',
 } as const;
 
@@ -27,7 +25,7 @@ export interface RecordAuditInput {
   entityType: string;
   entityId?: string | null;
   actorUserId?: string | null;
-  companyId?: string | null;
+  tenantId?: string | null;
   severity?: AuditSeverity;
   metadata?: Prisma.InputJsonValue;
 }
@@ -55,20 +53,20 @@ export class AuditService {
         entityType: input.entityType,
         entityId: input.entityId ?? null,
         actorUserId: input.actorUserId ?? null,
-        companyId: input.companyId ?? null,
+        tenantId: input.tenantId ?? null,
         severity: input.severity ?? 'info',
         metadata: input.metadata ?? {},
       },
     });
   }
 
-  async listForCompany(
-    companyId: string,
+  async listForTenant(
+    tenantId: string,
     opts?: { limit?: number; severity?: AuditSeverity },
   ): Promise<AuditEventDto[]> {
     const rows = await this.prisma.auditLog.findMany({
       where: {
-        companyId,
+        tenantId,
         ...(opts?.severity ? { severity: opts.severity } : {}),
       },
       orderBy: { createdAt: 'desc' },

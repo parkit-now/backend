@@ -31,24 +31,65 @@ describe('AuditService', () => {
   describe('record', () => {
     it('writes an audit row with defaults applied', async () => {
       await service.record({
-        action: AuditActions.COMPANY_APPROVED,
-        entityType: 'company',
-        entityId: 'c-1',
+        action: AuditActions.ENTITY_APPROVED,
+        entityType: 'tenant',
+        entityId: 't-1',
         actorUserId: 'u-1',
-        companyId: 'c-1',
+        tenantId: 't-1',
       });
 
       expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
         data: {
-          action: 'company.approved',
-          entityType: 'company',
-          entityId: 'c-1',
+          action: 'entity.approved',
+          entityType: 'tenant',
+          entityId: 't-1',
           actorUserId: 'u-1',
-          companyId: 'c-1',
+          tenantId: 't-1',
           severity: 'info',
           metadata: {},
         },
       });
+    });
+
+    it('allows a null tenantId (e.g. application created before approval)', async () => {
+      await service.record({
+        action: AuditActions.APPLICATION_CREATED,
+        entityType: 'application',
+        entityId: 'app-1',
+        actorUserId: 'u-1',
+      });
+
+      const arg = mockPrisma.auditLog.create.mock.calls[0][0] as {
+        data: { tenantId: string | null };
+      };
+      expect(arg.data.tenantId).toBeNull();
+    });
+  });
+
+  describe('listForTenant', () => {
+    it('filters by tenantId and maps rows to events', async () => {
+      mockPrisma.auditLog.findMany.mockResolvedValue([
+        {
+          id: 'a-1',
+          action: 'entity.approved',
+          entityType: 'tenant',
+          entityId: 't-1',
+          severity: 'info',
+          metadata: {},
+          createdAt: new Date('2026-05-01T10:00:00.000Z'),
+          actorUserId: 'u-1',
+          tenantId: 't-1',
+          actor: { email: 'owner@once.test' },
+        },
+      ]);
+
+      const events = await service.listForTenant('t-1');
+
+      const whereArg = mockPrisma.auditLog.findMany.mock.calls[0][0] as {
+        where: { tenantId: string };
+      };
+      expect(whereArg.where.tenantId).toBe('t-1');
+      expect(events[0].actorName).toBe('owner@once.test');
     });
   });
 
@@ -64,7 +105,7 @@ describe('AuditService', () => {
         metadata: {},
         createdAt,
         actorUserId: 'u-1',
-        companyId: 'c-1',
+        tenantId: 't-1',
         actor: {
           id: 'u-1',
           email: 'owner@once.test',
@@ -87,14 +128,14 @@ describe('AuditService', () => {
     it('uses null actorName when there is no actor', () => {
       const event = AuditService.toEvent({
         id: 'a-2',
-        action: 'company.created',
-        entityType: 'company',
-        entityId: 'c-1',
+        action: 'entity.approved',
+        entityType: 'tenant',
+        entityId: 't-1',
         severity: 'info',
         metadata: {},
         createdAt: new Date('2026-05-01T10:00:00.000Z'),
         actorUserId: null,
-        companyId: 'c-1',
+        tenantId: 't-1',
         actor: null,
       });
 
