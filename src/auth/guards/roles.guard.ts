@@ -1,14 +1,21 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
+  HttpStatus,
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { ErrorCodes } from '../../utils/exceptions/error-codes';
+import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import type { AuthenticatedRequest } from './jwt-auth.guard';
 
+/**
+ * Guard for the GLOBAL role (`User.role`: `admin | user`). Entity-level
+ * authorization (`owner | operator`) is handled by `TenantMembershipGuard` +
+ * `@EntityRole`, not here.
+ */
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
@@ -20,9 +27,16 @@ export class RolesGuard implements CanActivate {
 
     if (!requiredRoles || requiredRoles.length === 0) return true;
 
-    const { user } = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const { user } = request;
     if (!user || !requiredRoles.includes(user.role)) {
-      throw new ForbiddenException('Insufficient permissions');
+      throw new FormattedException(
+        'Forbidden',
+        HttpStatus.FORBIDDEN,
+        'Insufficient permissions',
+        request.url,
+        ErrorCodes.FORBIDDEN,
+      );
     }
     return true;
   }
