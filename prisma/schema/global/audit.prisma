@@ -1,0 +1,35 @@
+// AuditLog — generic audit trail for the onboarding/configuration flow.
+//
+// Records: application create/edit/submit, approval, rejection, suspension and
+// configuration changes. The subset exposed to the front maps to the
+// `AuditEvent` type (actorName, action, severity, ts).
+//
+// Backend-only: service-role, RLS without policies.
+
+enum AuditSeverity {
+  info
+  warn
+  crit
+
+  @@map("audit_severity")
+}
+
+model AuditLog {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  action     String
+  entityType String        @map("entity_type")
+  entityId   String?       @map("entity_id") @db.Uuid
+  severity   AuditSeverity @default(info)
+  metadata   Json          @default("{}")
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actorUserId String? @map("actor_user_id") @db.Uuid
+  actor       User?   @relation(fields: [actorUserId], references: [id])
+
+  companyId String?  @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, createdAt])
+  @@index([action])
+  @@map("audit_log")
+}

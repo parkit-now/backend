@@ -8,5 +8,8 @@ import {IsOptional,IsString} from 'class-validator'
 export class UpdateTenantDto {
   @IsOptional()
 @IsString()
-nombre?: string;
+name?: string;
+@IsOptional()
+@IsString()
+address?: string;
 }

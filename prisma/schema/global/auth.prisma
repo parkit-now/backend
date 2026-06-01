@@ -27,5 +27,10 @@ model User {
 
   memberships UserMembership[]
 
+  // Onboarding / companies (back-relations).
+  ownedCompanies       Company[]
+  reviewedApplications OnboardingApplication[]
+  auditLogs            AuditLog[]
+
   @@map("users")
 }

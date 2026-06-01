@@ -1,11 +1,16 @@
 
-import {Prisma} from '@prisma/client'
+import {Prisma,BranchStatus} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 
 
 export class TenantDto {
   id: string ;
-nombre: string ;
+name: string ;
+address: string  | null;
+@ApiProperty({
+  enum: BranchStatus,
+})
+status: BranchStatus ;
 settings: Prisma.JsonValue ;
 @ApiProperty({
   type: `string`,

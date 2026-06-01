@@ -11,13 +11,29 @@
 // touch this table.
 
 model Tenant {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  nombre    String
-  settings  Json     @default("{}")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  address   String?
+  status    BranchStatus @default(active)
+  settings  Json         @default("{}")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Each tenant (parking lot / branch) belongs to a Company.
+  // Nullable to keep legacy/demo tenants without a company working.
+  companyId String?  @map("company_id") @db.Uuid
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   memberships UserMembership[]
   entries     Entry[]
+  zones       Zone[]
 
+  @@index([companyId])
   @@map("tenants")
+}
+
+enum BranchStatus {
+  active
+  maintenance
+
+  @@map("branch_status")
 }
