@@ -18,6 +18,16 @@ export const AuditActions = {
   ENTITY_REJECTED: 'entity.rejected',
   ENTITY_PROFILE_UPDATED: 'entity.profile_updated',
   PAYMENT_METHOD_TOGGLED: 'payment_method.toggled',
+  // Admin · parkings
+  PARKING_CREATED: 'parking.created',
+  PARKING_UPDATED: 'parking.updated',
+  PARKING_DELETED: 'parking.deleted',
+  // Admin · users
+  USER_ROLE_UPDATED: 'user.role_updated',
+  USER_DELETED: 'user.deleted',
+  MEMBERSHIP_CREATED: 'membership.created',
+  MEMBERSHIP_UPDATED: 'membership.updated',
+  MEMBERSHIP_DELETED: 'membership.deleted',
 } as const;
 
 export interface RecordAuditInput {

@@ -11,6 +11,8 @@ import { PasswordRecoveryModule } from './password-recovery/password-recovery.mo
 import { ZonesModule } from './zones/zones.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { ApplicationsModule } from './admin/applications/applications.module';
+import { ParkingsModule } from './admin/parkings/parkings.module';
+import { AdminUsersModule } from './admin/users/admin-users.module';
 import { EntitiesModule } from './entities/entities.module';
 import { RatesModule } from './rates/rates.module';
 
@@ -28,6 +30,8 @@ import { RatesModule } from './rates/rates.module';
     ZonesModule,
     OnboardingModule,
     ApplicationsModule,
+    ParkingsModule,
+    AdminUsersModule,
     EntitiesModule,
     RatesModule,
   ],

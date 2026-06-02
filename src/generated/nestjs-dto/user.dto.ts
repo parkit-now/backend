@@ -10,6 +10,7 @@ export class UserDto {
 })
 role: UserRole ;
 email: string ;
+name: string  | null;
 @ApiProperty({
   type: `string`,
   format: `date-time`,

@@ -37,6 +37,15 @@ export const ErrorCodes = {
   // Storage (Supabase object storage)
   STORAGE_SIGNED_URL_FAILED: 'STORAGE_SIGNED_URL_FAILED',
 
+  // Admin · parkings (tenants managed from the Ops panel)
+  PARKING_NOT_FOUND: 'PARKING_NOT_FOUND',
+
+  // Admin · users
+  USER_NOT_FOUND: 'USER_NOT_FOUND',
+  USER_DELETE_FAILED: 'USER_DELETE_FAILED',
+  MEMBERSHIP_ALREADY_EXISTS: 'MEMBERSHIP_ALREADY_EXISTS',
+  MEMBERSHIP_NOT_FOUND: 'MEMBERSHIP_NOT_FOUND',
+
   // Entity (tenant)
   ENTITY_NOT_FOUND: 'ENTITY_NOT_FOUND',
   ENTITY_NOT_OWNER: 'ENTITY_NOT_OWNER',
