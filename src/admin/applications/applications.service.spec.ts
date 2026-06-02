@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { MembershipRole } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { StorageService } from '../../storage/storage.service';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import { ApplicationsService } from './applications.service';
 
@@ -27,7 +28,12 @@ describe('ApplicationsService', () => {
 
   const mockPrisma = {
     onboardingApplication: { findUnique: jest.fn(), findMany: jest.fn() },
+    applicationDocument: { findFirst: jest.fn() },
     $transaction: jest.fn(),
+  };
+
+  const mockStorage = {
+    createSignedUrl: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -41,6 +47,7 @@ describe('ApplicationsService', () => {
       providers: [
         ApplicationsService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: StorageService, useValue: mockStorage },
       ],
     }).compile();
 
@@ -155,6 +162,63 @@ describe('ApplicationsService', () => {
       expect(rejectArg.data.status).toBe('rejected');
       expect(rejectArg.data.rejectionReason).toBe('Invalid CUIT');
       expect(tx.auditLog.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('getDocumentSignedUrl', () => {
+    const document = {
+      id: 'doc-1',
+      applicationId: 'app-1',
+      name: 'habilitacion.pdf',
+      storagePath: 'applications/u-applicant/app-1/habilitacion.pdf',
+      mimeType: 'application/pdf',
+    };
+
+    it('mints an inline signed URL by default', async () => {
+      mockPrisma.applicationDocument.findFirst.mockResolvedValueOnce(document);
+      mockStorage.createSignedUrl.mockResolvedValueOnce(
+        'https://signed/inline',
+      );
+
+      const result = await service.getDocumentSignedUrl('app-1', 'doc-1');
+
+      expect(mockPrisma.applicationDocument.findFirst).toHaveBeenCalledWith({
+        where: { id: 'doc-1', applicationId: 'app-1' },
+      });
+      // No download option → inline disposition.
+      expect(mockStorage.createSignedUrl).toHaveBeenCalledWith(
+        'application-documents',
+        document.storagePath,
+        300,
+        undefined,
+      );
+      expect(result).toEqual({ url: 'https://signed/inline', expiresIn: 300 });
+    });
+
+    it('forces a download named after the file when disposition=attachment', async () => {
+      mockPrisma.applicationDocument.findFirst.mockResolvedValueOnce(document);
+      mockStorage.createSignedUrl.mockResolvedValueOnce(
+        'https://signed/download',
+      );
+
+      await service.getDocumentSignedUrl('app-1', 'doc-1', 'attachment');
+
+      expect(mockStorage.createSignedUrl).toHaveBeenCalledWith(
+        'application-documents',
+        document.storagePath,
+        300,
+        { download: 'habilitacion.pdf' },
+      );
+    });
+
+    it('throws when the document does not belong to the application', async () => {
+      mockPrisma.applicationDocument.findFirst.mockResolvedValueOnce(null);
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        service.getDocumentSignedUrl('app-1', 'missing'),
+      ).rejects.toBeInstanceOf(FormattedException);
+      expect(mockStorage.createSignedUrl).not.toHaveBeenCalled();
     });
   });
 });

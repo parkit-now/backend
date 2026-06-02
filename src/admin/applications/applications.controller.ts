@@ -33,6 +33,8 @@ import {
 } from '../../utils/exceptions/dto/problem-details.dto';
 import { ApplicationsService } from './applications.service';
 import { ApplicationDetailDto, ApplicationDto } from './dto/application.dto';
+import { DocumentSignedUrlDto } from './dto/document-signed-url.dto';
+import { DocumentSignedUrlQueryDto } from './dto/document-signed-url-query.dto';
 import { ListApplicationsQueryDto } from './dto/list-applications-query.dto';
 import { RejectApplicationDto } from './dto/reject-application.dto';
 
@@ -42,6 +44,7 @@ import { RejectApplicationDto } from './dto/reject-application.dto';
   ValidationProblemDetailsDto,
   ApplicationDto,
   ApplicationDetailDto,
+  DocumentSignedUrlDto,
 )
 @Controller('admin/applications')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -118,6 +121,65 @@ export class ApplicationsController {
   })
   detail(@Param('id') id: string): Promise<ApplicationDetailDto> {
     return this.applications.getDetail(id);
+  }
+
+  @Get(':id/documents/:documentId/signed-url')
+  @ApiOperation({
+    operationId: 'adminApplicationsDocumentSignedUrl',
+    summary: 'Mint a signed URL to preview or download an application document',
+    description: [
+      'Returns a short-lived signed URL (5 minutes) pointing at the document binary in Supabase Storage, so the reviewer can preview it inline or download it.',
+      '',
+      'Documents live in a private bucket whose RLS only authorizes the owning applicant; this endpoint mints the URL server-side with the service role, which bypasses RLS.',
+      '',
+      '**`disposition`.** `inline` (default) lets the browser render the file (preview); `attachment` forces a download named after the original file.',
+    ].join('\n'),
+  })
+  @ApiParam({
+    name: 'id',
+    format: 'uuid',
+    description: 'Onboarding application id (uuid).',
+  })
+  @ApiParam({
+    name: 'documentId',
+    format: 'uuid',
+    description: 'Application document id (uuid).',
+  })
+  @ApiQuery({
+    name: 'disposition',
+    required: false,
+    enum: ['inline', 'attachment'],
+    description:
+      'Content disposition of the signed URL. Defaults to `inline` (preview).',
+  })
+  @ApiOkResponse({ type: DocumentSignedUrlDto })
+  @ApiBadRequestResponse({
+    description: 'Invalid `disposition` query value.',
+    type: ValidationProblemDetailsDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing, malformed, or expired bearer token.',
+    type: ProblemDetailsDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Authenticated caller does not hold the `admin` role.',
+    type: ProblemDetailsDto,
+  })
+  @ApiNotFoundResponse({
+    description:
+      'No document with the given id exists for the given application.',
+    type: ProblemDetailsDto,
+  })
+  documentSignedUrl(
+    @Param('id') id: string,
+    @Param('documentId') documentId: string,
+    @Query() query: DocumentSignedUrlQueryDto,
+  ): Promise<DocumentSignedUrlDto> {
+    return this.applications.getDocumentSignedUrl(
+      id,
+      documentId,
+      query.disposition,
+    );
   }
 
   @Post(':id/approve')
