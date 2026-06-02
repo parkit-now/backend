@@ -35,6 +35,7 @@ import {
 import { EntitiesService } from './entities.service';
 import { EntityAuditQueryDto } from './dto/entity-audit-query.dto';
 import {
+  EntityCapacityDto,
   EntityProfileDto,
   PaymentMethodSummaryDto,
 } from './dto/entity-profile.dto';
@@ -46,6 +47,7 @@ import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
   ProblemDetailsDto,
   ValidationProblemDetailsDto,
   EntityProfileDto,
+  EntityCapacityDto,
   PaymentMethodSummaryDto,
   AuditEventDto,
 )
@@ -96,9 +98,9 @@ export class EntitiesController {
     operationId: 'entitiesUpdateProfile',
     summary: 'Update the entity profile',
     description: [
-      'Edits the editable fields of the entity profile (`name`, `legalName`, `cuit`, `email`, `phone`, `address`).',
+      'Edits the editable fields of the entity profile (`name`, `legalName`, `cuit`, `email`, `phone`, `address`, `status`) and its per-vehicle-type spot `capacity`.',
       '',
-      'Every change is written to the audit trail. Requires the caller to be an `owner` of the entity (platform admins bypass the role check).',
+      'Use `status: maintenance` to take the lot offline. `capacity` is merged: only the supplied vehicle types change. Every change is written to the audit trail. Requires the caller to be an `owner` of the entity (platform admins bypass the role check).',
     ].join('\n'),
   })
   @ApiOkResponse({ type: EntityProfileDto })

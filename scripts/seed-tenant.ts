@@ -43,10 +43,6 @@ const VEHICLES = {
 // PENDING application under review (feeds the PARKIT Ops queue).
 const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
 const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
-const ZONES = {
-  once: 'ffffffff-ffff-ffff-ffff-fffffffffff1',
-  belgrano: 'ffffffff-ffff-ffff-ffff-fffffffffff2',
-} as const;
 
 type SeedEntry = {
   id: string;
@@ -192,7 +188,6 @@ async function seedOnboarding(): Promise<void> {
     'onboarding_applications',
     'application_documents',
     'payment_methods',
-    'zones',
   ];
   for (const table of onboardingTables) {
     if (!(await tableExists(table))) {
@@ -215,6 +210,8 @@ async function seedOnboarding(): Promise<void> {
   // --- APPROVED entities: Once + Belgrano (owned by owner@example.com) ---
   // Membership is seeded by seed-auth; here we fill the relocated legal/contact
   // data and the entity-level payment methods.
+  // Per-type spot capacity now lives in `tenant.settings.capacity` (the `zones`
+  // table was removed). It feeds the owner dashboard occupancy and config.
   await prisma.tenant.update({
     where: { id: TENANTS.once },
     data: {
@@ -224,6 +221,9 @@ async function seedOnboarding(): Promise<void> {
       phone: '+541140000000',
       address: 'Bartolomé Mitre 2500, CABA',
       status: 'active',
+      settings: {
+        capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
+      },
     },
   });
   await prisma.tenant.update({
@@ -235,6 +235,9 @@ async function seedOnboarding(): Promise<void> {
       phone: '+541140000000',
       address: 'Av. Cabildo 2000, CABA',
       status: 'active',
+      settings: {
+        capacity: { carSpots: 25, motorcycleSpots: 8, bicycleSpots: 0 },
+      },
     },
   });
 
@@ -257,31 +260,6 @@ async function seedOnboarding(): Promise<void> {
       });
     }
   }
-
-  await prisma.zone.upsert({
-    where: { id: ZONES.once },
-    create: {
-      id: ZONES.once,
-      tenantId: TENANTS.once,
-      name: 'Ground floor',
-      carSpots: 40,
-      motorcycleSpots: 10,
-      bicycleSpots: 5,
-    },
-    update: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
-  });
-  await prisma.zone.upsert({
-    where: { id: ZONES.belgrano },
-    create: {
-      id: ZONES.belgrano,
-      tenantId: TENANTS.belgrano,
-      name: 'Basement',
-      carSpots: 25,
-      motorcycleSpots: 8,
-      bicycleSpots: 0,
-    },
-    update: { carSpots: 25, motorcycleSpots: 8, bicycleSpots: 0 },
-  });
 
   // --- PENDING application: one entity under review (PARKIT Ops queue) ---
   // Belongs to the applicant (owner-pending, a plain user). On approval it

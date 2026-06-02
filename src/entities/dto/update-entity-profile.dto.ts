@@ -1,5 +1,55 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsEmail,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import type { BranchStatus } from '@prisma/client';
+
+/** Editable per-vehicle-type spot capacity of the lot (stored in settings). */
+export class UpdateEntityCapacityDto {
+  @ApiPropertyOptional({
+    type: 'integer',
+    minimum: 0,
+    description: 'Number of car spots.',
+    example: 80,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  carSpots?: number;
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    minimum: 0,
+    description: 'Number of motorcycle spots.',
+    example: 20,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  motorcycleSpots?: number;
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    minimum: 0,
+    description: 'Number of bicycle spots.',
+    example: 10,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  bicycleSpots?: number;
+}
 
 /** Editable fields of an entity (tenant) profile. */
 export class UpdateEntityProfileDto {
@@ -51,4 +101,24 @@ export class UpdateEntityProfileDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiPropertyOptional({
+    enum: ['active', 'maintenance'],
+    description:
+      'New operational status. Use `maintenance` to take the lot offline.',
+    example: 'active',
+  })
+  @IsOptional()
+  @IsIn(['active', 'maintenance'])
+  status?: BranchStatus;
+
+  @ApiPropertyOptional({
+    type: UpdateEntityCapacityDto,
+    description:
+      'New per-vehicle-type spot capacity. Only the provided types are updated; the rest keep their current value.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateEntityCapacityDto)
+  capacity?: UpdateEntityCapacityDto;
 }

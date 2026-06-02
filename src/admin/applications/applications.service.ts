@@ -122,6 +122,13 @@ export class ApplicationsService {
     const applicant = application.applicant;
 
     await this.prisma.$transaction(async (tx) => {
+      // Declared per-type spot capacity is materialized into `tenant.settings`
+      // (the `zones` table was removed); it feeds the owner dashboard and config.
+      const capacity = {
+        carSpots: entity.carSpots ?? 0,
+        motorcycleSpots: entity.motorcycleSpots ?? 0,
+        bicycleSpots: entity.bicycleSpots ?? 0,
+      };
       const tenant = await tx.tenant.create({
         data: {
           name: entity.name ?? 'Untitled',
@@ -131,23 +138,9 @@ export class ApplicationsService {
           email: entity.email ?? null,
           phone: entity.phone ?? null,
           status: 'active',
+          settings: { capacity },
         },
       });
-
-      const carSpots = entity.carSpots ?? 0;
-      const motorcycleSpots = entity.motorcycleSpots ?? 0;
-      const bicycleSpots = entity.bicycleSpots ?? 0;
-      if (carSpots + motorcycleSpots + bicycleSpots > 0) {
-        await tx.zone.create({
-          data: {
-            tenantId: tenant.id,
-            name: 'General',
-            carSpots,
-            motorcycleSpots,
-            bicycleSpots,
-          },
-        });
-      }
 
       // The applicant becomes the owner of the new entity via UserMembership.
       await tx.userMembership.create({

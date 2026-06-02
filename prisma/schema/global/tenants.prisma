@@ -28,7 +28,6 @@ model Tenant {
 
   memberships    UserMembership[]
   entries        Entry[]
-  zones          Zone[]
   rates          Rate[]
   paymentMethods PaymentMethod[]
   auditLogs      AuditLog[]

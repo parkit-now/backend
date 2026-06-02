@@ -103,7 +103,7 @@ export class ParkingsService {
   async remove(admin: User, id: string): Promise<void> {
     const tenant = await this.ensureExists(id);
 
-    // FK cascades drop the dependent rows (memberships, zones, rates, entries,
+    // FK cascades drop the dependent rows (memberships, rates, entries,
     // payment methods); audit_log.tenant_id is ON DELETE SET NULL, so the audit
     // entry must NOT reference the tenant being removed — keep it as metadata.
     await this.prisma.tenant.delete({ where: { id } });

@@ -181,7 +181,7 @@ export class ParkingsController {
     operationId: 'adminParkingsDelete',
     summary: 'Delete a parking lot',
     description:
-      'Permanently deletes the parking lot. Dependent data (memberships, zones, rates, entries and payment methods) is removed by cascade.',
+      'Permanently deletes the parking lot. Dependent data (memberships, rates, entries and payment methods) is removed by cascade.',
   })
   @ApiParam({
     name: 'id',

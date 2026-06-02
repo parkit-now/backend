@@ -107,6 +107,37 @@ describe('EntitiesService', () => {
       expect(updateArg.data.name).toBe('New Name');
       expect(mockAudit.record).toHaveBeenCalled();
     });
+
+    it('merges capacity into settings and sets status', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({
+          settings: {
+            capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
+          },
+        }),
+      );
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, {
+        status: 'maintenance',
+        capacity: { carSpots: 50 },
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: {
+          status: string;
+          settings: { capacity: Record<string, number> };
+        };
+      };
+      expect(updateArg.data.status).toBe('maintenance');
+      // Only carSpots changes; the other types keep their previous values.
+      expect(updateArg.data.settings.capacity).toEqual({
+        carSpots: 50,
+        motorcycleSpots: 10,
+        bicycleSpots: 5,
+      });
+    });
   });
 
   describe('togglePaymentMethod', () => {

@@ -3,6 +3,7 @@ import {
   EntityProfileDto,
   PaymentMethodSummaryDto,
 } from './dto/entity-profile.dto';
+import { readCapacity } from './entity-settings';
 
 export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
   return {
@@ -28,6 +29,7 @@ export function toEntityProfileDto(
     phone: tenant.phone,
     address: tenant.address,
     status: tenant.status,
+    capacity: readCapacity(tenant.settings),
     paymentMethods: paymentMethods.map(toPaymentMethodDto),
     createdAt: tenant.createdAt.toISOString(),
   };

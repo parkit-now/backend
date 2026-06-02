@@ -3,7 +3,7 @@
 //
 // A row means: this user is linked to this entity with a role:
 //   - owner    → full management of the entity (profile, rates, payment
-//                methods, zones, personal).
+//                methods, capacity, personal).
 //   - operator → operational only (register entries/exits, view rates/data).
 //
 // The GLOBAL role (User.role, see auth.prisma) is only admin|user; `admin`

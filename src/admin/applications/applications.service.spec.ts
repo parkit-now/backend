@@ -18,7 +18,6 @@ describe('ApplicationsService', () => {
 
   const tx = {
     tenant: { create: jest.fn() },
-    zone: { create: jest.fn() },
     userMembership: { create: jest.fn() },
     paymentMethod: { createMany: jest.fn() },
     onboardingApplication: { update: jest.fn() },
@@ -112,8 +111,11 @@ describe('ApplicationsService', () => {
       expect(membershipArg.data.userId).toBe('u-applicant');
       expect(membershipArg.data.tenantId).toBe('tenant-1');
       expect(membershipArg.data.role).toBe(MembershipRole.owner);
-      // Declared spots → one initial zone.
-      expect(tx.zone.create).toHaveBeenCalledTimes(1);
+      // Declared spots → capacity stored in tenant settings.
+      const tenantArg = tx.tenant.create.mock.calls[0][0] as {
+        data: { settings: { capacity: { carSpots: number } } };
+      };
+      expect(tenantArg.data.settings.capacity.carSpots).toBe(10);
       // System payment methods.
       expect(tx.paymentMethod.createMany).toHaveBeenCalledTimes(1);
       const pmArg = tx.paymentMethod.createMany.mock.calls[0][0] as {
