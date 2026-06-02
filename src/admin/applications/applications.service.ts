@@ -4,6 +4,10 @@ import type { ApplicationStatus, User } from '@prisma/client';
 import { AuditActions } from '../../audit/audit.service';
 import { PrismaService } from '../../database/prisma.service';
 import { declaredEntityOf } from '../../onboarding/onboarding.mappers';
+import {
+  APPLICATION_DOCUMENTS_BUCKET,
+  StorageService,
+} from '../../storage/storage.service';
 import { ErrorCodes } from '../../utils/exceptions/error-codes';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -14,8 +18,13 @@ import {
   toInternalStatus,
 } from './applications.mappers';
 import { ApplicationDetailDto, ApplicationDto } from './dto/application.dto';
+import { DocumentSignedUrlDto } from './dto/document-signed-url.dto';
+import type { DocumentDisposition } from './dto/document-signed-url-query.dto';
 import { ListApplicationsQueryDto } from './dto/list-applications-query.dto';
 import { RejectApplicationDto } from './dto/reject-application.dto';
+
+/** Validity window of a document signed URL, in seconds (5 minutes). */
+const DOCUMENT_SIGNED_URL_TTL = 300;
 
 interface DeclaredEntity {
   name?: string;
@@ -31,7 +40,10 @@ interface DeclaredEntity {
 
 @Injectable()
 export class ApplicationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async list(query: ListApplicationsQueryDto): Promise<ApplicationDto[]> {
     const nonDraft: ApplicationStatus[] = [
@@ -60,6 +72,39 @@ export class ApplicationsService {
       throw this.notFound(id);
     }
     return toApplicationDetailDto(app);
+  }
+
+  /**
+   * Mints a short-lived signed URL so an Ops reviewer can preview or download a
+   * document the applicant uploaded to the private storage bucket. The
+   * service-role storage client bypasses the per-owner bucket RLS.
+   */
+  async getDocumentSignedUrl(
+    applicationId: string,
+    documentId: string,
+    disposition: DocumentDisposition = 'inline',
+  ): Promise<DocumentSignedUrlDto> {
+    const document = await this.prisma.applicationDocument.findFirst({
+      where: { id: documentId, applicationId },
+    });
+    if (!document) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        `Document ${documentId} not found for application ${applicationId}`,
+        '/admin/applications',
+        ErrorCodes.ONBOARDING_DOCUMENT_NOT_FOUND,
+      );
+    }
+
+    const url = await this.storage.createSignedUrl(
+      APPLICATION_DOCUMENTS_BUCKET,
+      document.storagePath,
+      DOCUMENT_SIGNED_URL_TTL,
+      disposition === 'attachment' ? { download: document.name } : undefined,
+    );
+
+    return { url, expiresIn: DOCUMENT_SIGNED_URL_TTL };
   }
 
   /**
