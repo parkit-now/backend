@@ -13,6 +13,7 @@ import {
 import { TogglePaymentMethodDto } from './dto/toggle-payment-method.dto';
 import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
 import { toEntityProfileDto, toPaymentMethodDto } from './entities.mappers';
+import { readCapacity, withCapacity } from './entity-settings';
 
 /**
  * Manages the entity (tenant) profile, its payment methods and audit trail.
@@ -43,7 +44,7 @@ export class EntitiesService {
     user: User,
     dto: UpdateEntityProfileDto,
   ): Promise<EntityProfileDto> {
-    await this.loadTenant(tenantId);
+    const tenant = await this.loadTenant(tenantId);
 
     const data: Prisma.TenantUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -52,6 +53,19 @@ export class EntitiesService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.address !== undefined) data.address = dto.address;
+    if (dto.status !== undefined) data.status = dto.status;
+
+    // Capacity lives in `settings.capacity`; merge so only the supplied
+    // vehicle types change and the rest keep their current value.
+    if (dto.capacity !== undefined) {
+      const current = readCapacity(tenant.settings);
+      data.settings = withCapacity(tenant.settings, {
+        carSpots: dto.capacity.carSpots ?? current.carSpots,
+        motorcycleSpots:
+          dto.capacity.motorcycleSpots ?? current.motorcycleSpots,
+        bicycleSpots: dto.capacity.bicycleSpots ?? current.bicycleSpots,
+      });
+    }
 
     await this.prisma.tenant.update({ where: { id: tenantId }, data });
     await this.audit.record({

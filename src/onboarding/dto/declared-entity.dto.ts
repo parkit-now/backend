@@ -12,8 +12,8 @@ import {
 
 /**
  * The single entity declared in an onboarding application. On approval it is
- * materialized as a row in `tenants` (+ an initial `General` zone from the
- * declared spot counts). This is the JSON shape persisted in
+ * materialized as a row in `tenants` (the declared spot counts are stored in
+ * the tenant settings capacity). This is the JSON shape persisted in
  * `OnboardingApplication.declaredEntity`.
  */
 export class DeclaredEntityDto {
@@ -64,7 +64,7 @@ export class DeclaredEntityDto {
   @ApiPropertyOptional({
     type: 'integer',
     minimum: 0,
-    description: 'Declared car spots (materialized into the initial zone).',
+    description: 'Declared car spots (stored in the tenant settings capacity).',
     example: 80,
   })
   @IsOptional()
@@ -77,7 +77,7 @@ export class DeclaredEntityDto {
     type: 'integer',
     minimum: 0,
     description:
-      'Declared motorcycle spots (materialized into the initial zone).',
+      'Declared motorcycle spots (stored in the tenant settings capacity).',
     example: 20,
   })
   @IsOptional()
@@ -89,7 +89,8 @@ export class DeclaredEntityDto {
   @ApiPropertyOptional({
     type: 'integer',
     minimum: 0,
-    description: 'Declared bicycle spots (materialized into the initial zone).',
+    description:
+      'Declared bicycle spots (stored in the tenant settings capacity).',
     example: 10,
   })
   @IsOptional()

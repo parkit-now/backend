@@ -2,6 +2,38 @@ import { ApiProperty } from '@nestjs/swagger';
 import type { BranchStatus, PaymentMethodType } from '@prisma/client';
 
 /**
+ * Per-vehicle-type spot capacity of an entity (parking lot). Stored in
+ * `tenant.settings.capacity` (the `zones` table was removed). Feeds the owner
+ * dashboard occupancy and the lot configuration screen. Defaults to `0` for any
+ * type the lot has not configured yet.
+ */
+export class EntityCapacityDto {
+  @ApiProperty({
+    type: 'integer',
+    minimum: 0,
+    description: 'Number of car spots.',
+    example: 80,
+  })
+  carSpots: number;
+
+  @ApiProperty({
+    type: 'integer',
+    minimum: 0,
+    description: 'Number of motorcycle spots.',
+    example: 20,
+  })
+  motorcycleSpots: number;
+
+  @ApiProperty({
+    type: 'integer',
+    minimum: 0,
+    description: 'Number of bicycle spots.',
+    example: 10,
+  })
+  bicycleSpots: number;
+}
+
+/**
  * Summary of a tenant payment method exposed to the entity portal.
  */
 export class PaymentMethodSummaryDto {
@@ -111,6 +143,13 @@ export class EntityProfileDto {
     example: 'active',
   })
   status: BranchStatus;
+
+  @ApiProperty({
+    type: EntityCapacityDto,
+    description:
+      'Per-vehicle-type spot capacity of the lot. Defaults to zeros when not configured.',
+  })
+  capacity: EntityCapacityDto;
 
   @ApiProperty({
     type: [PaymentMethodSummaryDto],

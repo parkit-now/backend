@@ -189,7 +189,7 @@ export class ApplicationsController {
     description: [
       'Approves a submitted application and atomically provisions the entity (tenant). In a single transaction it:',
       '',
-      '- materializes the declared entity as a real parking lot (tenant), with an initial `General` zone carrying the declared car/motorcycle/bicycle spot counts;',
+      '- materializes the declared entity as a real parking lot (tenant), storing the declared car/motorcycle/bicycle spot counts in its settings capacity;',
       '- grants the applicant an `owner` membership on the created entity;',
       '- creates the system payment methods (`mp_transfer` as default, `cash`), which are non-deletable but can be disabled;',
       '- marks the application `approved` (linking the created `tenantId`) and records the audit trail.',
