@@ -1,7 +1,7 @@
 
 import {UserRole} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsIn,IsNotEmpty,IsString} from 'class-validator'
+import {IsIn,IsNotEmpty,IsOptional,IsString} from 'class-validator'
 import {ApiProperty,getSchemaPath} from '@nestjs/swagger'
 
 
@@ -20,4 +20,7 @@ role: UserRole;
 @IsNotEmpty()
 @IsString()
 email: string;
+@IsOptional()
+@IsString()
+name?: string;
 }

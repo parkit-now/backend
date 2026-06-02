@@ -17,4 +17,7 @@ role?: UserRole;
 @IsOptional()
 @IsString()
 email?: string;
+@IsOptional()
+@IsString()
+name?: string;
 }

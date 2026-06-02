@@ -39,7 +39,7 @@ const VEHICLES = {
 } as const;
 
 // Onboarding demo: two already-APPROVED entities (Once + Belgrano, owned by
-// owner@once.test via memberships) carry legal data + payment methods, and one
+// owner@example.com via memberships) carry legal data + payment methods, and one
 // PENDING application under review (feeds the PARKIT Ops queue).
 const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
 const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
 
 /**
  * Onboarding-flow seed (idempotent). Requires `seed-auth` to have run first
- * (needs the users owner@once.test and owner-pending@once.test).
+ * (needs the users owner@example.com and owner-pending@example.com).
  * Runs as part of `make seed-all` (seed-global -> seed-auth -> seed-tenant).
  */
 async function seedOnboarding(): Promise<void> {
@@ -202,17 +202,17 @@ async function seedOnboarding(): Promise<void> {
   }
 
   const owner = await prisma.user.findFirst({
-    where: { email: 'owner@once.test' },
+    where: { email: 'owner@example.com' },
   });
   const ownerPending = await prisma.user.findFirst({
-    where: { email: 'owner-pending@once.test' },
+    where: { email: 'owner-pending@example.com' },
   });
   if (!owner || !ownerPending) {
     console.warn('⚠ Skipping onboarding seed: run `make seed-auth` first.');
     return;
   }
 
-  // --- APPROVED entities: Once + Belgrano (owned by owner@once.test) ---
+  // --- APPROVED entities: Once + Belgrano (owned by owner@example.com) ---
   // Membership is seeded by seed-auth; here we fill the relocated legal/contact
   // data and the entity-level payment methods.
   await prisma.tenant.update({

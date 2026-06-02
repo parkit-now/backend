@@ -62,11 +62,16 @@ type SeedUser = {
   memberships?: SeedMembership[];
 };
 
+// Demo credentials are intentionally trivial and uniform for local dev: every
+// account uses the password below and a `<role>@example.com` email. NEVER reuse
+// this anywhere but a local stack (the guardrails above enforce localhost).
+const DEMO_PASSWORD = '12345678';
+
 const USERS: SeedUser[] = [
-  { email: 'admin@once.test', password: 'AdminPass123!', role: 'admin' },
+  { email: 'admin@example.com', password: DEMO_PASSWORD, role: 'admin' },
   {
-    email: 'owner@once.test',
-    password: 'OwnerPass123!',
+    email: 'owner@example.com',
+    password: DEMO_PASSWORD,
     role: 'user',
     memberships: [
       { tenantId: TENANTS.once, role: 'owner' },
@@ -74,8 +79,8 @@ const USERS: SeedUser[] = [
     ],
   },
   {
-    email: 'operator@once.test',
-    password: 'OperatorPass123!',
+    email: 'operator@example.com',
+    password: DEMO_PASSWORD,
     role: 'user',
     memberships: [
       { tenantId: TENANTS.once, role: 'operator' },
@@ -83,16 +88,16 @@ const USERS: SeedUser[] = [
     ],
   },
   {
-    email: 'solo-once@once.test',
-    password: 'Password123!',
+    email: 'solo-once@example.com',
+    password: DEMO_PASSWORD,
     role: 'user',
     memberships: [{ tenantId: TENANTS.once, role: 'operator' }],
   },
-  { email: 'driver@once.test', password: 'DriverPass123!', role: 'user' },
+  { email: 'driver@example.com', password: DEMO_PASSWORD, role: 'user' },
   // Applicant of the "pending" onboarding application (no lots yet; its entity
   // is materialized as a tenant + owner membership when the application is
   // approved). Stays a plain `user`; the owner role comes from the membership.
-  { email: 'owner-pending@once.test', password: 'OwnerPass123!', role: 'user' },
+  { email: 'owner-pending@example.com', password: DEMO_PASSWORD, role: 'user' },
 ];
 
 const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -168,7 +173,7 @@ async function main(): Promise<void> {
   console.log(
     `\n✓ Seeded ${USERS.length} users across ${Object.keys(TENANTS).length} tenants.`,
   );
-  console.log('  All passwords match the table above; treat as throwaway.');
+  console.log(`  All accounts share the password "${DEMO_PASSWORD}" (local dev only).`);
 }
 
 main()

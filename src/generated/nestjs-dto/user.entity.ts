@@ -13,6 +13,7 @@ export class UserEntity {
 })
 role: UserRole ;
 email: string ;
+name: string  | null;
 @ApiProperty({
   type: `string`,
   format: `date-time`,

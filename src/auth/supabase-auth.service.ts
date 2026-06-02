@@ -137,6 +137,26 @@ export class SupabaseAuthService implements OnModuleInit {
     }
   }
 
+  /**
+   * Permanently deletes a Supabase Auth identity (admin/service-role action).
+   *
+   * The `public.users` row is removed by the `ON DELETE CASCADE` FK to
+   * `auth.users`, and from there the user's memberships cascade too — so this
+   * is the single source of a "complete" user deletion. Used by the admin
+   * panel; never expose it through an unauthenticated route.
+   */
+  async deleteUser(id: string): Promise<void> {
+    const { error } = await this.admin.auth.admin.deleteUser(id);
+    if (error) {
+      throw this.toHttp(
+        error,
+        '/admin/users',
+        `Failed to delete auth user ${id}`,
+        ErrorCodes.USER_DELETE_FAILED,
+      );
+    }
+  }
+
   private async signInWithPassword(
     email: string,
     password: string,
