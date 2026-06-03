@@ -6,11 +6,23 @@ import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { CreateRateDto } from './dto/create-rate.dto';
 import { ListRatesQueryDto } from './dto/list-rates-query.dto';
+import { RateDto } from './dto/rate.dto';
 import { RateChangesQueryDto } from './dto/rate-changes-query.dto';
 import { UpdateRateDto } from './dto/update-rate.dto';
 
+type PrismaRate = Prisma.RateGetPayload<Record<string, never>>;
+
+function toDto(rate: PrismaRate): RateDto {
+  return {
+    ...rate,
+    hourPriceArs: Number(rate.hourPriceArs),
+    stayPriceArs: Number(rate.stayPriceArs),
+    fractionPriceArs: Number(rate.fractionPriceArs),
+  };
+}
+
 type RateChangesResponse = {
-  items: Prisma.RateGetPayload<Record<string, never>>[];
+  items: RateDto[];
   maxSeq: number;
 };
 
@@ -21,9 +33,9 @@ export class RatesService {
     private readonly tenantContext: TenantContextService,
   ) {}
 
-  async createRate(data: CreateRateDto) {
+  async createRate(data: CreateRateDto): Promise<RateDto> {
     const tenantPrisma = this.prisma.getTenantClient();
-    return tenantPrisma.rate.create({
+    const rate = await tenantPrisma.rate.create({
       data: {
         id: data.id,
         name: data.name,
@@ -33,9 +45,10 @@ export class RatesService {
         // tenantId is injected by prismaForTenant(...)
       } as Prisma.RateUncheckedCreateInput,
     });
+    return toDto(rate);
   }
 
-  async listRates(query: ListRatesQueryDto) {
+  async listRates(query: ListRatesQueryDto): Promise<RateDto[]> {
     const tenantPrisma = this.prisma.getTenantClient();
     const where: Prisma.RateWhereInput = {};
 
@@ -46,10 +59,11 @@ export class RatesService {
       where.deletedAt = null;
     }
 
-    return tenantPrisma.rate.findMany({
+    const rates = await tenantPrisma.rate.findMany({
       where,
       orderBy: [{ name: 'asc' }],
     });
+    return rates.map(toDto);
   }
 
   async pullChanges(query: RateChangesQueryDto): Promise<RateChangesResponse> {
@@ -67,7 +81,7 @@ export class RatesService {
 
     const maxSeq =
       items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
-    return { items, maxSeq };
+    return { items: items.map(toDto), maxSeq };
   }
 
   async updateRate(
@@ -111,9 +125,11 @@ export class RatesService {
       );
     }
 
-    return tenantPrisma.rate.findUniqueOrThrow({
-      where: { id: rateId },
-    });
+    return toDto(
+      await tenantPrisma.rate.findUniqueOrThrow({
+        where: { id: rateId },
+      }),
+    );
   }
 
   async deactivateRate(rateId: string, expectedVersion: number) {
@@ -144,8 +160,10 @@ export class RatesService {
       );
     }
 
-    return tenantPrisma.rate.findUniqueOrThrow({
-      where: { id: rateId },
-    });
+    return toDto(
+      await tenantPrisma.rate.findUniqueOrThrow({
+        where: { id: rateId },
+      }),
+    );
   }
 }
