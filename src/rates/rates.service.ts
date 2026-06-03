@@ -55,9 +55,6 @@ export class RatesService {
     if (!query.includeInactive) {
       where.isActive = true;
     }
-    if (!query.includeDeleted) {
-      where.deletedAt = null;
-    }
 
     const rates = await tenantPrisma.rate.findMany({
       where,
@@ -68,12 +65,10 @@ export class RatesService {
 
   async pullChanges(query: RateChangesQueryDto): Promise<RateChangesResponse> {
     const tenantPrisma = this.prisma.getTenantClient();
-    const includeDeleted = query.includeDeleted ?? true;
 
     const items = await tenantPrisma.rate.findMany({
       where: {
         syncSeq: { gt: query.afterSeq },
-        ...(includeDeleted ? {} : { deletedAt: null }),
       },
       orderBy: [{ syncSeq: 'asc' }],
       take: query.limit,
@@ -110,7 +105,6 @@ export class RatesService {
         tenantId,
         id: rateId,
         version: expectedVersion,
-        deletedAt: null,
       },
       data: updateData,
     });
@@ -132,21 +126,15 @@ export class RatesService {
     );
   }
 
-  async deactivateRate(rateId: string, expectedVersion: number) {
+  async deleteRate(rateId: string, expectedVersion: number): Promise<void> {
     const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
-    const result = await tenantPrisma.rate.updateMany({
+    const result = await tenantPrisma.rate.deleteMany({
       where: {
         tenantId,
         id: rateId,
         version: expectedVersion,
-        deletedAt: null,
-      },
-      data: {
-        isActive: false,
-        deletedAt: new Date(),
-        version: { increment: 1 },
       },
     });
 
@@ -159,11 +147,5 @@ export class RatesService {
         ErrorCodes.CONFLICT,
       );
     }
-
-    return toDto(
-      await tenantPrisma.rate.findUniqueOrThrow({
-        where: { id: rateId },
-      }),
-    );
   }
 }

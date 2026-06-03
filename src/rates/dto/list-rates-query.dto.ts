@@ -19,13 +19,4 @@ export class ListRatesQueryDto {
   @Transform(({ value }) => parseBoolean(value))
   @IsBoolean()
   includeInactive?: boolean;
-
-  @ApiPropertyOptional({
-    description: 'Include soft-deleted rates in the response.',
-    default: false,
-  })
-  @IsOptional()
-  @Transform(({ value }) => parseBoolean(value))
-  @IsBoolean()
-  includeDeleted?: boolean;
 }

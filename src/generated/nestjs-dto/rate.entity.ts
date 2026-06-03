@@ -43,11 +43,6 @@ createdAt: Date ;
   format: `date-time`,
 })
 updatedAt: Date ;
-@ApiProperty({
-  type: `string`,
-  format: `date-time`,
-})
-deletedAt: Date  | null;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -13,6 +15,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -93,11 +96,12 @@ export class RatesController {
   }
 
   @Delete(':rateId')
+  @HttpCode(HttpStatus.NO_CONTENT)
   @EntityRole(MembershipRole.owner)
   @ApiOperation({
-    summary: 'Soft delete a rate using optimistic locking (expectedVersion)',
+    summary: 'Hard delete a rate using optimistic locking (expectedVersion)',
   })
-  @ApiOkResponse({ type: RateDto })
+  @ApiNoContentResponse({ description: 'Rate deleted successfully' })
   @ApiParam({
     name: 'tenantId',
     description: 'The ID of the tenant (parking lot)',
@@ -106,6 +110,6 @@ export class RatesController {
     @Param('rateId', ParseUUIDPipe) rateId: string,
     @Query() query: ExpectedVersionQueryDto,
   ) {
-    return this.ratesService.deactivateRate(rateId, query.expectedVersion);
+    return this.ratesService.deleteRate(rateId, query.expectedVersion);
   }
 }

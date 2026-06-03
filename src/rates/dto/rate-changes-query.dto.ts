@@ -1,14 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
-
-function parseBoolean(value: unknown): boolean | string | undefined {
-  if (value === undefined) return undefined;
-  if (value === true || value === 'true') return true;
-  if (value === false || value === 'false') return false;
-  if (typeof value === 'string') return value;
-  return 'invalid-boolean';
-}
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class RateChangesQueryDto {
   @ApiPropertyOptional({
@@ -34,13 +26,4 @@ export class RateChangesQueryDto {
   @Min(1)
   @Max(500)
   limit = 200;
-
-  @ApiPropertyOptional({
-    description: 'Include deleted rows in the changes feed.',
-    default: true,
-  })
-  @IsOptional()
-  @Transform(({ value }) => parseBoolean(value))
-  @IsBoolean()
-  includeDeleted?: boolean;
 }

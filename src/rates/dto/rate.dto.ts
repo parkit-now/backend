@@ -33,7 +33,4 @@ export class RateDto {
 
   @ApiProperty({ format: 'date-time' })
   updatedAt: Date;
-
-  @ApiProperty({ format: 'date-time', nullable: true })
-  deletedAt: Date | null;
 }
