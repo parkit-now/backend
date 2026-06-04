@@ -25,11 +25,32 @@ Antes de cambiar código, revisar siempre:
 
 - DB única (Supabase/PostgreSQL) con dos capas lógicas:
   - Global (`users`, `tenants`, `vehicles`, etc)
-  - Tenant-local (`entries` y futuros módulos)
+  - Tenant-local (`entries`, `rates` y futuros módulos operativos)
 - Defensa en profundidad:
   - Capa app (`getTenantClient()`, validaciones de membership/tenant automáticas vía Guards/Interceptors)
   - Capa DB (RLS + policies SQL)
 - Migraciones SQL son append-only en prod (no editar archivos ya mergeados a `main`).
+
+### Arquitectura offline-first del desktop
+
+El cliente desktop opera con IndexedDB local (Dexie.js) como fuente de verdad en runtime. El backend expone endpoints de **sync incremental** basados en `syncSeq`:
+
+```
+GET /tenants/:tenantId/<modelo>/changes?afterSeq=N
+→ { items: ModelDto[], maxSeq: number }
+```
+
+El desktop hace `pull` al reconectar y hace `push` de mutaciones encoladas mientras estuvo offline.
+
+**Campos obligatorios en modelos syncables** (tenant-local):
+- `syncSeq INTEGER DEFAULT nextval('<modelo>_sync_seq')` — asignado en INSERT por DEFAULT, incrementado en UPDATE por trigger
+- `version INTEGER DEFAULT 1` — optimistic locking; se incrementa en cada UPDATE
+- `updated_at TIMESTAMPTZ DEFAULT now()` — actualizado por trigger en UPDATE
+
+**Campos obligatorios en modelos con UUID cliente** (global + tenant-local):
+- Eliminar `@default(dbgenerated("gen_random_uuid()"))` del campo `id` en Prisma para que el cliente provea UUIDv7 generado localmente.
+
+Ver `supabase/migrations/20260529093000_add_rates.sql` y `20260603225951_entries_offline_sync.sql` como referencia del patrón completo.
 
 ### Modelo de roles y permisos (scoped roles)
 
@@ -73,11 +94,12 @@ Antes de cambiar código, revisar siempre:
 Objetivo: DRY en CRUD estándar, control estricto de contratos en APIs críticas.
 
 Aplicación en este repo (estado actual):
-- CRUD de dominio debe importar desde `src/generated/nestjs-dto/`.
-- DTO manual permitido solo en contratos no-CRUD. Ejemplos en el repo:
-  - `src/auth/dto` (login, register, refresh, session — mezclan campos de `users` con campos que no existen en DB como `password`).
-  - `src/password-recovery/dto` (forgot/reset — el payload público es un subset estricto que oculta columnas internas de `password_reset_requests` como `status`/`ipAddress`, y `ResetPasswordDto` no mapea a ninguna tabla).
-  - `src/health/dto`, `src/utils/exceptions/dto`.
+- CRUD de dominio estándar importa desde `src/generated/nestjs-dto/`.
+- DTO manual cuando el contrato HTTP no es 1:1 con la tabla. Ejemplos vigentes:
+  - `src/rates/dto/` — El `CreateRateDto` acepta `id` provisto por cliente (UUIDv7 offline), `pullChanges` retorna `RateChangesResponseDto` que agrega `maxSeq`. Ninguno de estos mapea 1:1 al modelo.
+  - `src/entries/dto/` — `CreateEntryDto` incluye `id` cliente + campos de snapshot de tarifa que no están en el modelo como escritura directa. `CloseEntryDto` es un subset con lógica de negocio (defaultea `leftAt` a `now()` si no se envía).
+  - `src/vehicles/dto/` — `CreateVehicleDto` agrega `id` provisto por cliente.
+  - `src/auth/dto`, `src/password-recovery/dto`, `src/health/dto`, `src/utils/exceptions/dto`.
 
 Cuando hay un modelo en Prisma para auditar/persistir pero el payload del endpoint es distinto, el patrón es: **DTO manual para el contrato HTTP + Prisma client autogenerado para escribir en DB**. Ver `PasswordRecoveryService` como referencia (manual `ForgotPasswordDto` en el controller, `prisma.passwordResetRequest.create(...)` en el service).
 
@@ -171,6 +193,13 @@ make migration NAME=add_<feature>
 make migration-apply
 make generate
 ```
+
+> **Workaround Node 18**: Prisma 7.8.0 requiere Node ≥ 20. Si el sistema tiene Node 18 (sistema),
+> `make migration-apply` aplica la migración SQL correctamente pero falla en el paso `prisma generate`.
+> Solución: regenerar manualmente con nvm:
+> ```bash
+> PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH" bun run db:generate
+> ```
 
 5. Validar:
 

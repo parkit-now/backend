@@ -22,4 +22,35 @@ leftAt: Date  | null;
   format: `double`,
 })
 amountPaid: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+version: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+syncSeq: number ;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+updatedAt: Date ;
+rateSnapshotName: string  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotHourPriceArs: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotStayPriceArs: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
 }

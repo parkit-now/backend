@@ -29,4 +29,31 @@ leftAt?: Date;
 @IsDecimal()
 @Type(()=>String)
 amountPaid?: Prisma.Decimal;
+@IsOptional()
+@IsString()
+rateSnapshotName?: string;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotHourPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotStayPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotFractionPriceArs?: Prisma.Decimal;
 }

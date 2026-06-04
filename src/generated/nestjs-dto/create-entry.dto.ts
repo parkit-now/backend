@@ -1,17 +1,17 @@
 
 import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsNotEmpty,IsOptional,IsRFC3339,IsString,ValidateNested} from 'class-validator'
-import {ApiExtraModels,ApiProperty,getSchemaPath} from '@nestjs/swagger'
-import {ConnectVehicleDto} from './connect-vehicle.dto'
+import {IsDecimal,IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
+import {ApiProperty,getSchemaPath} from '@nestjs/swagger'
 
-export class CreateEntryVehicleRelationInputDto {
-    connect: ConnectVehicleDto;
-  }
 
-@ApiExtraModels(ConnectVehicleDto,CreateEntryVehicleRelationInputDto)
+
+
 export class CreateEntryDto {
   @IsNotEmpty()
+@IsString()
+id: string;
+@IsNotEmpty()
 @IsString()
 plate: string;
 @IsOptional()
@@ -32,8 +32,31 @@ leftAt?: Date;
 @IsDecimal()
 @Type(()=>String)
 amountPaid?: Prisma.Decimal;
-@IsNotEmpty()
-@ValidateNested()
-@Type(()=>CreateEntryVehicleRelationInputDto)
-vehicle: CreateEntryVehicleRelationInputDto;
+@IsOptional()
+@IsString()
+rateSnapshotName?: string;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotHourPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotStayPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotFractionPriceArs?: Prisma.Decimal;
 }

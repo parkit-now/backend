@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import { CreateVehicleDto } from '../generated/nestjs-dto/create-vehicle.dto';
+import { CreateVehicleDto } from './dto/create-vehicle.dto';
 
 @Injectable()
 export class VehiclesService {
@@ -10,6 +10,7 @@ export class VehiclesService {
     // GLOBAL -> usamos this.prisma de manera directa
     return this.prisma.vehicle.create({
       data: {
+        id: data.id,
         brand: data.brand,
         model: data.model,
         type: data.type,

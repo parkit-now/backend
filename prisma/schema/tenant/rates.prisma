@@ -8,9 +8,11 @@ model Rate {
   fractionPriceArs Decimal @map("fraction_price_ars") @db.Decimal(12, 2)
   isActive        Boolean @default(true) @map("is_active")
   version         Int     @default(1)
-  syncSeq         Int     @default(0) @map("sync_seq")
+  syncSeq         Int     @default(dbgenerated("nextval('rates_sync_seq')")) @map("sync_seq")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entries Entry[]
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])
