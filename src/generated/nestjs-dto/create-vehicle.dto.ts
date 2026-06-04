@@ -9,6 +9,9 @@ export class CreateVehicleDto {
   @IsNotEmpty()
 @IsString()
 id: string;
+@IsOptional()
+@IsString()
+plate?: string;
 @IsNotEmpty()
 @IsString()
 brand: string;

@@ -8,6 +8,9 @@ import {IsOptional,IsString} from 'class-validator'
 export class UpdateVehicleDto {
   @IsOptional()
 @IsString()
+plate?: string;
+@IsOptional()
+@IsString()
 brand?: string;
 @IsOptional()
 @IsString()

@@ -19,9 +19,9 @@ export class CreateEntryDto {
   @IsUUID()
   id: string;
 
-  @ApiProperty({ example: 'ABC123', maxLength: 10 })
+  @ApiProperty({ example: 'ABC123', maxLength: 20 })
   @IsString()
-  @MaxLength(10)
+  @MaxLength(20)
   plate: string;
 
   @ApiPropertyOptional({ example: 'Rojo', maxLength: 50 })
@@ -29,6 +29,18 @@ export class CreateEntryDto {
   @IsString()
   @MaxLength(50)
   color?: string;
+
+  @ApiPropertyOptional({ example: 'Cochera 3', maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  cochera?: string;
+
+  @ApiPropertyOptional({ example: 'Cliente frecuente', maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 
   @ApiProperty({
     description:

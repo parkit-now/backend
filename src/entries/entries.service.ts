@@ -9,12 +9,26 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 
-type PrismaEntry = Prisma.EntryGetPayload<Record<string, never>>;
+const includeVehicle = { vehicle: true } as const;
+type PrismaEntry = Prisma.EntryGetPayload<{ include: typeof includeVehicle }>;
 
 function toDto(entry: PrismaEntry): EntryDto {
   return {
-    ...entry,
+    id: entry.id,
+    tenantId: entry.tenantId,
+    plate: entry.plate,
+    color: entry.color,
+    cochera: entry.cochera,
+    notes: entry.notes,
+    enteredAt: entry.enteredAt,
+    leftAt: entry.leftAt,
     amountPaid: entry.amountPaid !== null ? Number(entry.amountPaid) : null,
+    vehicleId: entry.vehicleId,
+    vehicleBrand: entry.vehicle?.brand ?? null,
+    vehicleModel: entry.vehicle?.model ?? null,
+    vehiclePlate: entry.vehicle?.plate ?? null,
+    rateId: entry.rateId,
+    rateSnapshotName: entry.rateSnapshotName,
     rateSnapshotHourPriceArs:
       entry.rateSnapshotHourPriceArs !== null
         ? Number(entry.rateSnapshotHourPriceArs)
@@ -27,6 +41,9 @@ function toDto(entry: PrismaEntry): EntryDto {
       entry.rateSnapshotFractionPriceArs !== null
         ? Number(entry.rateSnapshotFractionPriceArs)
         : null,
+    version: entry.version,
+    syncSeq: entry.syncSeq,
+    updatedAt: entry.updatedAt,
   };
 }
 
@@ -49,6 +66,8 @@ export class EntriesService {
         id: data.id,
         plate: data.plate.toUpperCase(),
         color: data.color,
+        cochera: data.cochera,
+        notes: data.notes,
         enteredAt: new Date(data.enteredAt),
         vehicleId: data.vehicleId,
         rateId: data.rateId,
@@ -58,6 +77,7 @@ export class EntriesService {
         rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
         // tenantId is injected by prismaForTenant(...)
       } as Prisma.EntryUncheckedCreateInput,
+      include: includeVehicle,
     });
     return toDto(entry);
   }
@@ -66,6 +86,7 @@ export class EntriesService {
     const tenantPrisma = this.prisma.getTenantClient();
     const entries = await tenantPrisma.entry.findMany({
       orderBy: [{ enteredAt: 'desc' }],
+      include: includeVehicle,
     });
     return entries.map(toDto);
   }
@@ -81,6 +102,7 @@ export class EntriesService {
       },
       orderBy: [{ syncSeq: 'asc' }],
       take: query.limit,
+      include: includeVehicle,
     });
 
     const maxSeq =
@@ -96,6 +118,14 @@ export class EntriesService {
     const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
+    const updateData: Prisma.EntryUpdateInput = {
+      version: { increment: 1 },
+      leftAt: data.leftAt ? new Date(data.leftAt) : new Date(),
+      amountPaid: data.amountPaid,
+    };
+    if (data.cochera !== undefined) updateData.cochera = data.cochera;
+    if (data.notes !== undefined) updateData.notes = data.notes;
+
     const result = await tenantPrisma.entry.updateMany({
       where: {
         tenantId,
@@ -103,11 +133,7 @@ export class EntriesService {
         version: expectedVersion,
         leftAt: null,
       },
-      data: {
-        version: { increment: 1 },
-        leftAt: data.leftAt ? new Date(data.leftAt) : new Date(),
-        amountPaid: data.amountPaid,
-      },
+      data: updateData,
     });
 
     if (result.count === 0) {
@@ -121,7 +147,10 @@ export class EntriesService {
     }
 
     return toDto(
-      await tenantPrisma.entry.findUniqueOrThrow({ where: { id: entryId } }),
+      await tenantPrisma.entry.findUniqueOrThrow({
+        where: { id: entryId },
+        include: includeVehicle,
+      }),
     );
   }
 }

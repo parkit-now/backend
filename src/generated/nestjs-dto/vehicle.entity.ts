@@ -5,6 +5,7 @@ import {EntryEntity} from './entry.entity'
 
 export class VehicleEntity {
   id: string ;
+plate: string  | null;
 brand: string ;
 model: string ;
 type: string  | null;

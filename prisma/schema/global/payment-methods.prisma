@@ -3,6 +3,8 @@
 // On entity approval, 'mp_transfer' and 'cash' are created automatically with
 // `isSystem=true` (not deletable; can be disabled via `enabled`).
 //
+// Custom methods use type='other' and can be created/deleted freely by owners.
+//
 // Backend-only: service-role, RLS without policies.
 
 enum PaymentMethodType {
@@ -22,10 +24,17 @@ model PaymentMethod {
   isDefault Boolean           @default(false) @map("is_default")
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  version   Int               @default(1)
+  syncSeq   Int               @default(dbgenerated("nextval('payment_methods_sync_seq')")) @map("sync_seq")
+  updatedAt DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, type])
+  // Uniqueness for system methods enforced as a partial index in SQL
+  // (payment_methods_tenant_system_type_idx WHERE is_system = true).
   @@index([tenantId])
+  @@index([tenantId, syncSeq], map: "payment_methods_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "payment_methods_tenant_updated_at_idx")
   @@map("payment_methods")
 }

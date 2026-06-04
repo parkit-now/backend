@@ -17,6 +17,12 @@ plate: string;
 @IsOptional()
 @IsString()
 color?: string;
+@IsOptional()
+@IsString()
+cochera?: string;
+@IsOptional()
+@IsString()
+notes?: string;
 @ApiProperty({
   type: `string`,
   format: `date-time`,

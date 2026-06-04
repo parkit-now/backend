@@ -10,6 +10,9 @@ import {
   EntityProfileDto,
   PaymentMethodSummaryDto,
 } from './dto/entity-profile.dto';
+import { CreatePaymentMethodDto } from './dto/create-payment-method.dto';
+import { PaymentMethodChangesQueryDto } from './dto/payment-method-changes-query.dto';
+import { PaymentMethodChangesResponseDto } from './dto/payment-method-changes-response.dto';
 import { TogglePaymentMethodDto } from './dto/toggle-payment-method.dto';
 import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
 import { toEntityProfileDto, toPaymentMethodDto } from './entities.mappers';
@@ -89,6 +92,71 @@ export class EntitiesService {
     return methods.map(toPaymentMethodDto);
   }
 
+  async pullPaymentMethodChanges(
+    tenantId: string,
+    query: PaymentMethodChangesQueryDto,
+  ): Promise<PaymentMethodChangesResponseDto> {
+    const items = await this.prisma.paymentMethod.findMany({
+      where: { tenantId, syncSeq: { gt: query.afterSeq } },
+      orderBy: { syncSeq: 'asc' },
+      take: query.limit,
+    });
+    const maxSeq =
+      items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
+    return { items: items.map(toPaymentMethodDto), maxSeq };
+  }
+
+  async createPaymentMethod(
+    tenantId: string,
+    user: User,
+    dto: CreatePaymentMethodDto,
+  ): Promise<PaymentMethodSummaryDto> {
+    const method = await this.prisma.paymentMethod.create({
+      data: {
+        tenantId,
+        name: dto.name,
+        type: 'other',
+      },
+    });
+    await this.audit.record({
+      action: AuditActions.PAYMENT_METHOD_TOGGLED,
+      entityType: 'payment_method',
+      entityId: method.id,
+      actorUserId: user.id,
+      tenantId,
+      metadata: { action: 'created', name: dto.name },
+    });
+    return toPaymentMethodDto(method);
+  }
+
+  async deletePaymentMethod(
+    tenantId: string,
+    user: User,
+    paymentMethodId: string,
+  ): Promise<void> {
+    const method = await this.prisma.paymentMethod.findFirst({
+      where: { id: paymentMethodId, tenantId },
+    });
+    if (!method) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        `Payment method ${paymentMethodId} not found in this entity`,
+        '/tenants/:tenantId/payment-methods',
+        ErrorCodes.PAYMENT_METHOD_NOT_FOUND,
+      );
+    }
+    await this.prisma.paymentMethod.delete({ where: { id: paymentMethodId } });
+    await this.audit.record({
+      action: AuditActions.PAYMENT_METHOD_TOGGLED,
+      entityType: 'payment_method',
+      entityId: paymentMethodId,
+      actorUserId: user.id,
+      tenantId,
+      metadata: { action: 'deleted', name: method.name },
+    });
+  }
+
   async togglePaymentMethod(
     tenantId: string,
     user: User,
@@ -109,6 +177,7 @@ export class EntitiesService {
     }
 
     const data: Prisma.PaymentMethodUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
 

@@ -18,4 +18,19 @@ isDefault: boolean ;
   format: `date-time`,
 })
 createdAt: Date ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+version: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+syncSeq: number ;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+updatedAt: Date ;
 }

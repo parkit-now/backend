@@ -8,11 +8,13 @@ import { readCapacity } from './entity-settings';
 export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
   return {
     id: pm.id,
-    type: pm.type,
     name: pm.name,
     enabled: pm.enabled,
     isDefault: pm.isDefault,
-    isSystem: pm.isSystem,
+    syncSeq: pm.syncSeq,
+    version: pm.version,
+    updatedAt: pm.updatedAt.toISOString(),
+    createdAt: pm.createdAt.toISOString(),
   };
 }
 

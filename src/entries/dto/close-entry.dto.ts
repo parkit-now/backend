@@ -4,7 +4,9 @@ import {
   IsDateString,
   IsNumber,
   IsOptional,
+  IsString,
   IsUUID,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -33,4 +35,16 @@ export class CloseEntryDto {
   @IsOptional()
   @IsUUID()
   paymentMethodId?: string;
+
+  @ApiPropertyOptional({ example: 'Cochera 3', maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  cochera?: string;
+
+  @ApiPropertyOptional({ example: 'Cliente frecuente', maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 }

@@ -11,6 +11,7 @@ export class VehiclesService {
     return this.prisma.vehicle.create({
       data: {
         id: data.id,
+        plate: data.plate,
         brand: data.brand,
         model: data.model,
         type: data.type,

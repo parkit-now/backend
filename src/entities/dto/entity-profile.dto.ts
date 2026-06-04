@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import type { BranchStatus, PaymentMethodType } from '@prisma/client';
+import type { BranchStatus } from '@prisma/client';
 
 /**
  * Per-vehicle-type spot capacity of an entity (parking lot). Stored in
@@ -45,16 +45,8 @@ export class PaymentMethodSummaryDto {
   id: string;
 
   @ApiProperty({
-    enum: ['mp_transfer', 'cash', 'other'],
-    description:
-      'Payment method type. `mp_transfer` and `cash` are system methods; `other` is custom.',
-    example: 'cash',
-  })
-  type: PaymentMethodType;
-
-  @ApiProperty({
     description: 'Display name of the payment method.',
-    example: 'Cash',
+    example: 'Efectivo',
   })
   name: string;
 
@@ -71,11 +63,22 @@ export class PaymentMethodSummaryDto {
   isDefault: boolean;
 
   @ApiProperty({
-    description:
-      'Whether this is a system method (`mp_transfer` / `cash`). System methods can be disabled but never deleted.',
-    example: true,
+    type: Number,
+    description: 'Monotonically-increasing sync sequence number.',
   })
-  isSystem: boolean;
+  syncSeq: number;
+
+  @ApiProperty({ type: Number, description: 'Optimistic-lock version.' })
+  version: number;
+
+  @ApiProperty({
+    format: 'date-time',
+    description: 'Last modification timestamp.',
+  })
+  updatedAt: string;
+
+  @ApiProperty({ format: 'date-time', description: 'Creation timestamp.' })
+  createdAt: string;
 }
 
 /**

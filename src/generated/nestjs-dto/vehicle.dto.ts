@@ -4,6 +4,7 @@ import {ApiProperty} from '@nestjs/swagger'
 
 export class VehicleDto {
   id: string ;
+plate: string  | null;
 brand: string ;
 model: string ;
 type: string  | null;

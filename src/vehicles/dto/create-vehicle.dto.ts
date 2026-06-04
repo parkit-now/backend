@@ -24,4 +24,10 @@ export class CreateVehicleDto {
   @IsString()
   @MaxLength(50)
   type?: string;
+
+  @ApiPropertyOptional({ example: 'ABC123', maxLength: 20 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  plate?: string;
 }

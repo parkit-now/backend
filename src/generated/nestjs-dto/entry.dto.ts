@@ -7,6 +7,8 @@ export class EntryDto {
   id: string ;
 plate: string ;
 color: string  | null;
+cochera: string  | null;
+notes: string  | null;
 @ApiProperty({
   type: `string`,
   format: `date-time`,
