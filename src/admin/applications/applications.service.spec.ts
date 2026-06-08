@@ -18,6 +18,7 @@ describe('ApplicationsService', () => {
 
   const tx = {
     tenant: { create: jest.fn() },
+    service: { createMany: jest.fn() },
     userMembership: { create: jest.fn() },
     paymentMethod: { createMany: jest.fn() },
     onboardingApplication: { update: jest.fn() },
@@ -116,6 +117,14 @@ describe('ApplicationsService', () => {
         data: { settings: { capacity: { carSpots: number } } };
       };
       expect(tenantArg.data.settings.capacity.carSpots).toBe(10);
+      // Declared spots also materialize services rows (3 vehicle types).
+      expect(tx.service.createMany).toHaveBeenCalledTimes(1);
+      const serviceArg = tx.service.createMany.mock.calls[0][0] as {
+        data: { code: string; enabled: boolean; spots: number }[];
+      };
+      expect(serviceArg.data).toHaveLength(3);
+      const car = serviceArg.data.find((s) => s.code === 'VEHICLE_CAR');
+      expect(car).toMatchObject({ enabled: true, spots: 10 });
       // System payment methods.
       expect(tx.paymentMethod.createMany).toHaveBeenCalledTimes(1);
       const pmArg = tx.paymentMethod.createMany.mock.calls[0][0] as {

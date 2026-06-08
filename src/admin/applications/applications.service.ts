@@ -142,6 +142,32 @@ export class ApplicationsService {
         },
       });
 
+      // Per-type spot capacity is the source of truth for the owner's
+      // Services config: seed a `services` row per vehicle type, enabled when
+      // it has at least one spot.
+      await tx.service.createMany({
+        data: [
+          {
+            tenantId: tenant.id,
+            code: 'VEHICLE_CAR',
+            enabled: capacity.carSpots > 0,
+            spots: capacity.carSpots,
+          },
+          {
+            tenantId: tenant.id,
+            code: 'VEHICLE_MOTORCYCLE',
+            enabled: capacity.motorcycleSpots > 0,
+            spots: capacity.motorcycleSpots,
+          },
+          {
+            tenantId: tenant.id,
+            code: 'VEHICLE_BICYCLE',
+            enabled: capacity.bicycleSpots > 0,
+            spots: capacity.bicycleSpots,
+          },
+        ],
+      });
+
       // The applicant becomes the owner of the new entity via UserMembership.
       await tx.userMembership.create({
         data: {

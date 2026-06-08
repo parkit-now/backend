@@ -11,7 +11,7 @@
 // Trigger: `make seed-tenant` or `bun run seed:tenant`.
 
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type ServiceCode } from '@prisma/client';
 import { Pool } from 'pg';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
@@ -240,6 +240,33 @@ async function seedOnboarding(): Promise<void> {
       },
     },
   });
+
+  // Services config: per-type spots now live in the `services` table (the
+  // owner edits them from the Services tab). Mirror the capacity above.
+  const demoServices: Record<
+    string,
+    { code: string; enabled: boolean; spots: number }[]
+  > = {
+    [TENANTS.once]: [
+      { code: 'VEHICLE_CAR', enabled: true, spots: 40 },
+      { code: 'VEHICLE_MOTORCYCLE', enabled: true, spots: 10 },
+      { code: 'VEHICLE_BICYCLE', enabled: true, spots: 5 },
+      { code: 'ADVANCE_RESERVATION', enabled: true, spots: 0 },
+    ],
+    [TENANTS.belgrano]: [
+      { code: 'VEHICLE_CAR', enabled: true, spots: 25 },
+      { code: 'VEHICLE_MOTORCYCLE', enabled: true, spots: 8 },
+    ],
+  };
+  for (const [tenantId, rows] of Object.entries(demoServices)) {
+    for (const r of rows) {
+      await prisma.service.upsert({
+        where: { tenantId_code: { tenantId, code: r.code as ServiceCode } },
+        create: { tenantId, code: r.code as ServiceCode, enabled: r.enabled, spots: r.spots },
+        update: { enabled: r.enabled, spots: r.spots },
+      });
+    }
+  }
 
   for (const tenantId of [TENANTS.once, TENANTS.belgrano]) {
     for (const [type, name, isDefault] of [
