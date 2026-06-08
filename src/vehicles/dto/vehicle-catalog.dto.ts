@@ -24,6 +24,12 @@ export class VehicleCatalogItemDto {
   @ApiProperty({ type: Number })
   syncSeq: number;
 
+  @ApiPropertyOptional({
+    format: 'date-time',
+    description: 'Non-null when the vehicle has been soft-deleted.',
+  })
+  deletedAt: string | null;
+
   @ApiProperty({ format: 'date-time' })
   updatedAt: string;
 

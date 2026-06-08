@@ -19,10 +19,11 @@ model Vehicle {
   tenantId String? @map("tenant_id") @db.Uuid
   tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  syncSeq   Int      @default(dbgenerated("nextval('vehicles_sync_seq')")) @map("sync_seq")
-  version   Int      @default(1)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  syncSeq   Int       @default(dbgenerated("nextval('vehicles_sync_seq')")) @map("sync_seq")
+  version   Int       @default(1)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([syncSeq], map: "vehicles_sync_seq_idx")
   @@index([tenantId], map: "vehicles_tenant_id_idx")

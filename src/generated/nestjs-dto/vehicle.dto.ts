@@ -25,6 +25,11 @@ version: number ;
   type: `string`,
   format: `date-time`,
 })
+deletedAt: Date  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
 createdAt: Date ;
 @ApiProperty({
   type: `string`,
