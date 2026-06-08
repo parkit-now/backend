@@ -1,7 +1,7 @@
 
 import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsOptional,IsString} from 'class-validator'
+import {IsDecimal,IsInt,IsOptional,IsString} from 'class-validator'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -35,4 +35,11 @@ stayPriceArs?: Prisma.Decimal;
 @IsDecimal()
 @Type(()=>String)
 fractionPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+@IsOptional()
+@IsInt()
+shortcutNumber?: number;
 }

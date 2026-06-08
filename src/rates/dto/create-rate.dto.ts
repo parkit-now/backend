@@ -1,6 +1,14 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsNumber, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateRateDto {
   @ApiProperty({
@@ -48,4 +56,16 @@ export class CreateRateDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   fractionPriceArs: number;
+
+  @ApiPropertyOptional({
+    description: 'Número de atajo para selección rápida en la operación.',
+    example: 1,
+    minimum: 1,
+    type: Number,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  shortcutNumber?: number;
 }
