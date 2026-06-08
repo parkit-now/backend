@@ -9,8 +9,7 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 
-const includeVehicle = { vehicle: true } as const;
-type PrismaEntry = Prisma.EntryGetPayload<{ include: typeof includeVehicle }>;
+type PrismaEntry = Prisma.EntryGetPayload<Record<string, never>>;
 
 function toDto(entry: PrismaEntry): EntryDto {
   return {
@@ -23,10 +22,8 @@ function toDto(entry: PrismaEntry): EntryDto {
     enteredAt: entry.enteredAt,
     leftAt: entry.leftAt,
     amountPaid: entry.amountPaid !== null ? Number(entry.amountPaid) : null,
-    vehicleId: entry.vehicleId,
-    vehicleBrand: entry.vehicle?.brand ?? null,
-    vehicleModel: entry.vehicle?.model ?? null,
-    vehiclePlate: entry.vehicle?.plate ?? null,
+    vehicleBrand: entry.vehicleBrand,
+    vehicleModel: entry.vehicleModel,
     rateId: entry.rateId,
     rateSnapshotName: entry.rateSnapshotName,
     rateSnapshotHourPriceArs:
@@ -69,15 +66,14 @@ export class EntriesService {
         cochera: data.cochera,
         notes: data.notes,
         enteredAt: new Date(data.enteredAt),
-        vehicleId: data.vehicleId,
+        vehicleBrand: data.vehicleBrand,
+        vehicleModel: data.vehicleModel,
         rateId: data.rateId,
         rateSnapshotName: data.rateSnapshotName,
         rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
         rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
         rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
-        // tenantId is injected by prismaForTenant(...)
       } as Prisma.EntryUncheckedCreateInput,
-      include: includeVehicle,
     });
     return toDto(entry);
   }
@@ -86,7 +82,6 @@ export class EntriesService {
     const tenantPrisma = this.prisma.getTenantClient();
     const entries = await tenantPrisma.entry.findMany({
       orderBy: [{ enteredAt: 'desc' }],
-      include: includeVehicle,
     });
     return entries.map(toDto);
   }
@@ -95,16 +90,11 @@ export class EntriesService {
     query: EntryChangesQueryDto,
   ): Promise<EntryChangesResponse> {
     const tenantPrisma = this.prisma.getTenantClient();
-
     const items = await tenantPrisma.entry.findMany({
-      where: {
-        syncSeq: { gt: query.afterSeq },
-      },
+      where: { syncSeq: { gt: query.afterSeq } },
       orderBy: [{ syncSeq: 'asc' }],
       take: query.limit,
-      include: includeVehicle,
     });
-
     const maxSeq =
       items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
     return { items: items.map(toDto), maxSeq };
@@ -127,12 +117,7 @@ export class EntriesService {
     if (data.notes !== undefined) updateData.notes = data.notes;
 
     const result = await tenantPrisma.entry.updateMany({
-      where: {
-        tenantId,
-        id: entryId,
-        version: expectedVersion,
-        leftAt: null,
-      },
+      where: { tenantId, id: entryId, version: expectedVersion, leftAt: null },
       data: updateData,
     });
 
@@ -147,10 +132,7 @@ export class EntriesService {
     }
 
     return toDto(
-      await tenantPrisma.entry.findUniqueOrThrow({
-        where: { id: entryId },
-        include: includeVehicle,
-      }),
+      await tenantPrisma.entry.findUniqueOrThrow({ where: { id: entryId } }),
     );
   }
 }

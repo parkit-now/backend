@@ -55,4 +55,6 @@ rateSnapshotStayPriceArs: Prisma.Decimal  | null;
   format: `double`,
 })
 rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
+vehicleBrand: string  | null;
+vehicleModel: string  | null;
 }

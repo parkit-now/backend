@@ -5,6 +5,7 @@ import {UserMembershipEntity} from './user-membership.entity'
 import {EntryEntity} from './entry.entity'
 import {RateEntity} from './rate.entity'
 import {PaymentMethodEntity} from './payment-method.entity'
+import {VehicleEntity} from './vehicle.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 
@@ -31,6 +32,7 @@ memberships?: UserMembershipEntity[] ;
 entries?: EntryEntity[] ;
 rates?: RateEntity[] ;
 paymentMethods?: PaymentMethodEntity[] ;
+vehicles?: VehicleEntity[] ;
 auditLogs?: AuditLogEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
 }

@@ -28,20 +28,17 @@ export class EntryDto {
   @ApiPropertyOptional({ type: Number })
   amountPaid: number | null;
 
-  @ApiProperty({ format: 'uuid' })
-  vehicleId: string;
-
-  @ApiPropertyOptional({ example: 'Volkswagen', description: 'Vehicle brand.' })
+  @ApiPropertyOptional({
+    example: 'Volkswagen',
+    description: 'Vehicle brand snapshot.',
+  })
   vehicleBrand: string | null;
 
-  @ApiPropertyOptional({ example: 'Bora', description: 'Vehicle model.' })
-  vehicleModel: string | null;
-
   @ApiPropertyOptional({
-    example: 'ABC123',
-    description: 'Vehicle plate as stored on the vehicle record.',
+    example: 'Bora',
+    description: 'Vehicle model snapshot.',
   })
-  vehiclePlate: string | null;
+  vehicleModel: string | null;
 
   @ApiPropertyOptional({ format: 'uuid' })
   rateId: string | null;

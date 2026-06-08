@@ -21,8 +21,8 @@ model Entry {
   rateSnapshotStayPriceArs     Decimal? @map("rate_snapshot_stay_price_ars") @db.Decimal(12, 2)
   rateSnapshotFractionPriceArs Decimal? @map("rate_snapshot_fraction_price_ars") @db.Decimal(12, 2)
 
-  vehicleId String  @map("vehicle_id") @db.Uuid
-  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+  vehicleBrand String? @map("vehicle_brand") @db.VarChar(120)
+  vehicleModel String? @map("vehicle_model") @db.VarChar(120)
 
   rate Rate? @relation(fields: [rateId], references: [id], onDelete: SetNull, map: "entries_rate_id_fkey")
 

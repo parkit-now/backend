@@ -40,6 +40,7 @@ import {
   ValidationProblemDetailsDto,
 } from '../utils/exceptions/dto/problem-details.dto';
 import { EntitiesService } from './entities.service';
+import { VehiclesService } from '../vehicles/vehicles.service';
 import { EntityAuditQueryDto } from './dto/entity-audit-query.dto';
 import {
   EntityCapacityDto,
@@ -51,6 +52,12 @@ import { PaymentMethodChangesQueryDto } from './dto/payment-method-changes-query
 import { PaymentMethodChangesResponseDto } from './dto/payment-method-changes-response.dto';
 import { TogglePaymentMethodDto } from './dto/toggle-payment-method.dto';
 import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
+import { CreateVehicleDto } from '../vehicles/dto/create-vehicle.dto';
+import {
+  VehicleCatalogChangesQueryDto,
+  VehicleCatalogChangesResponseDto,
+  VehicleCatalogItemDto,
+} from '../vehicles/dto/vehicle-catalog.dto';
 
 @ApiTags('Entities')
 @ApiExtraModels(
@@ -82,7 +89,10 @@ import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
   type: ProblemDetailsDto,
 })
 export class EntitiesController {
-  constructor(private readonly entities: EntitiesService) {}
+  constructor(
+    private readonly entities: EntitiesService,
+    private readonly vehicles: VehiclesService,
+  ) {}
 
   @Get()
   @ApiOperation({
@@ -130,6 +140,42 @@ export class EntitiesController {
   ): Promise<EntityProfileDto> {
     return this.entities.updateProfile(tenantId, user, dto);
   }
+
+  // ── Vehicle catalog ────────────────────────────────────────────────────────
+
+  @Get('vehicles/catalog')
+  @ApiOperation({
+    operationId: 'entitiesPullVehicleCatalog',
+    summary: 'Pull vehicle catalog changes',
+    description:
+      'Returns global vehicles (admin-managed) and tenant-specific vehicles with syncSeq > afterSeq. Used by the desktop for offline-first autocomplete.',
+  })
+  @ApiOkResponse({ type: VehicleCatalogChangesResponseDto })
+  pullVehicleCatalog(
+    @Param('tenantId') tenantId: string,
+    @Query() query: VehicleCatalogChangesQueryDto,
+  ): Promise<VehicleCatalogChangesResponseDto> {
+    return this.vehicles.pullCatalogChanges(tenantId, query);
+  }
+
+  @Post('vehicles')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    operationId: 'entitiesCreateTenantVehicle',
+    summary: 'Add a vehicle to the tenant catalog',
+    description:
+      'Creates a tenant-specific vehicle entry in the catalog. Requires owner role.',
+  })
+  @ApiCreatedResponse({ type: VehicleCatalogItemDto })
+  @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
+  createTenantVehicle(
+    @Param('tenantId') tenantId: string,
+    @Body() dto: CreateVehicleDto,
+  ): Promise<VehicleCatalogItemDto> {
+    return this.vehicles.createTenantVehicle(tenantId, dto);
+  }
+
+  // ── Payment methods ─────────────────────────────────────────────────────────
 
   @Get('payment-methods/changes')
   @ApiOperation({
