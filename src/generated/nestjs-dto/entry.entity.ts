@@ -1,7 +1,6 @@
 
 import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
-import {VehicleEntity} from './vehicle.entity'
 import {RateEntity} from './rate.entity'
 import {TenantEntity} from './tenant.entity'
 
@@ -59,8 +58,8 @@ rateSnapshotStayPriceArs: Prisma.Decimal  | null;
   format: `double`,
 })
 rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
-vehicleId: string ;
-vehicle?: VehicleEntity ;
+vehicleBrand: string  | null;
+vehicleModel: string  | null;
 rate?: RateEntity  | null;
 tenantId: string ;
 tenant?: TenantEntity ;

@@ -22,6 +22,9 @@ export class RateDto {
   @ApiProperty()
   isActive: boolean;
 
+  @ApiProperty({ type: Number, nullable: true })
+  shortcutNumber: number | null;
+
   @ApiProperty({ type: Number })
   version: number;
 

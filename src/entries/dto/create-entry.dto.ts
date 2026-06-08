@@ -43,16 +43,23 @@ export class CreateEntryDto {
   notes?: string;
 
   @ApiProperty({
-    description:
-      'Entry timestamp (ISO 8601). Defaults to now if omitted by the server.',
+    description: 'Entry timestamp (ISO 8601).',
     format: 'date-time',
   })
   @IsDateString()
   enteredAt: string;
 
-  @ApiProperty({ description: 'ID of the vehicle.', format: 'uuid' })
-  @IsUUID()
-  vehicleId: string;
+  @ApiPropertyOptional({ example: 'Volkswagen', maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  vehicleBrand?: string;
+
+  @ApiPropertyOptional({ example: 'Bora', maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  vehicleModel?: string;
 
   @ApiPropertyOptional({
     description: 'ID of the selected rate.',
@@ -68,33 +75,21 @@ export class CreateEntryDto {
   @MaxLength(120)
   rateSnapshotName?: string;
 
-  @ApiPropertyOptional({
-    description: 'Snapshot: hour price in ARS.',
-    type: Number,
-    minimum: 0,
-  })
+  @ApiPropertyOptional({ type: Number, minimum: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   rateSnapshotHourPriceArs?: number;
 
-  @ApiPropertyOptional({
-    description: 'Snapshot: stay price in ARS.',
-    type: Number,
-    minimum: 0,
-  })
+  @ApiPropertyOptional({ type: Number, minimum: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   rateSnapshotStayPriceArs?: number;
 
-  @ApiPropertyOptional({
-    description: 'Snapshot: fraction price in ARS.',
-    type: Number,
-    minimum: 0,
-  })
+  @ApiPropertyOptional({ type: Number, minimum: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })

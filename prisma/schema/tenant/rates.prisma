@@ -7,6 +7,7 @@ model Rate {
   stayPriceArs    Decimal @map("stay_price_ars") @db.Decimal(12, 2)
   fractionPriceArs Decimal @map("fraction_price_ars") @db.Decimal(12, 2)
   isActive        Boolean @default(true) @map("is_active")
+  shortcutNumber  Int?    @map("shortcut_number")
   version         Int     @default(1)
   syncSeq         Int     @default(dbgenerated("nextval('rates_sync_seq')")) @map("sync_seq")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)

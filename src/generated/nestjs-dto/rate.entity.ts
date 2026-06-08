@@ -28,6 +28,11 @@ isActive: boolean ;
   type: `integer`,
   format: `int32`,
 })
+shortcutNumber: number  | null;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
 version: number ;
 @ApiProperty({
   type: `integer`,

@@ -42,6 +42,7 @@ export class RatesService {
         hourPriceArs: data.hourPriceArs,
         stayPriceArs: data.stayPriceArs,
         fractionPriceArs: data.fractionPriceArs,
+        shortcutNumber: data.shortcutNumber ?? null,
         // tenantId is injected by prismaForTenant(...)
       } as Prisma.RateUncheckedCreateInput,
     });
@@ -99,6 +100,8 @@ export class RatesService {
     if (data.fractionPriceArs !== undefined)
       updateData.fractionPriceArs = data.fractionPriceArs;
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
+    if (data.shortcutNumber !== undefined)
+      updateData.shortcutNumber = data.shortcutNumber;
 
     const result = await tenantPrisma.rate.updateMany({
       where: {

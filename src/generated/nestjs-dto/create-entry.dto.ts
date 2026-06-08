@@ -65,4 +65,10 @@ rateSnapshotStayPriceArs?: Prisma.Decimal;
 @IsDecimal()
 @Type(()=>String)
 rateSnapshotFractionPriceArs?: Prisma.Decimal;
+@IsOptional()
+@IsString()
+vehicleBrand?: string;
+@IsOptional()
+@IsString()
+vehicleModel?: string;
 }

@@ -7,6 +7,7 @@ import {RateEntity} from './rate.entity'
 import {ScheduleEntity} from './schedule.entity'
 import {ServiceEntity} from './service.entity'
 import {PaymentMethodEntity} from './payment-method.entity'
+import {VehicleEntity} from './vehicle.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 
@@ -35,6 +36,7 @@ rates?: RateEntity[] ;
 schedules?: ScheduleEntity[] ;
 services?: ServiceEntity[] ;
 paymentMethods?: PaymentMethodEntity[] ;
+vehicles?: VehicleEntity[] ;
 auditLogs?: AuditLogEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
 }

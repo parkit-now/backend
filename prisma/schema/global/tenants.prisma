@@ -32,6 +32,7 @@ model Tenant {
   schedules      Schedule[]
   services       Service[]
   paymentMethods PaymentMethod[]
+  vehicles       Vehicle[]
   auditLogs      AuditLog[]
   applications   OnboardingApplication[]
 
