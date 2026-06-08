@@ -23,6 +23,7 @@ CREATE TYPE schedule_day AS ENUM (
 
 CREATE TYPE service_code AS ENUM (
     'ADVANCE_RESERVATION',
+    'VEHICLE_CAR',
     'VEHICLE_ELECTRIC',
     'VEHICLE_BICYCLE',
     'VEHICLE_MOTORCYCLE',
@@ -123,6 +124,9 @@ CREATE TABLE services (
     tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     code        service_code NOT NULL,
     enabled     boolean NOT NULL DEFAULT false,
+    -- Number of spots assigned to this vehicle type (0 for non-vehicle codes
+    -- such as ADVANCE_RESERVATION). Replaces tenants.settings.capacity.
+    spots       integer NOT NULL DEFAULT 0 CHECK (spots >= 0),
     version     integer NOT NULL DEFAULT 1,
     sync_seq    integer NOT NULL DEFAULT nextval('services_sync_seq'),
     created_at  timestamptz NOT NULL DEFAULT now(),
@@ -181,3 +185,21 @@ CREATE POLICY services_delete_same_tenant ON services
     USING (
         tenant_id = (((select auth.jwt()) -> 'app_metadata') ->> 'tenant_id')::uuid
     );
+
+-- Backfill: migrate the per-type capacity that used to live in
+-- tenants.settings.capacity (carSpots/motorcycleSpots/bicycleSpots) into
+-- services rows. A type is enabled when it had at least one spot.
+INSERT INTO services (tenant_id, code, enabled, spots)
+SELECT
+    t.id,
+    v.code::service_code,
+    COALESCE((t.settings -> 'capacity' ->> v.key)::int, 0) > 0,
+    COALESCE((t.settings -> 'capacity' ->> v.key)::int, 0)
+FROM tenants t
+CROSS JOIN (VALUES
+    ('VEHICLE_CAR', 'carSpots'),
+    ('VEHICLE_MOTORCYCLE', 'motorcycleSpots'),
+    ('VEHICLE_BICYCLE', 'bicycleSpots')
+) AS v(code, key)
+WHERE t.settings -> 'capacity' ->> v.key IS NOT NULL
+ON CONFLICT (tenant_id, code) DO NOTHING;

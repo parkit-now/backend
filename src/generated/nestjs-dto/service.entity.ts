@@ -15,6 +15,11 @@ enabled: boolean ;
   type: `integer`,
   format: `int32`,
 })
+spots: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
 version: number ;
 @ApiProperty({
   type: `integer`,

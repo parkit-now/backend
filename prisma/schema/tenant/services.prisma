@@ -8,6 +8,7 @@ model Service {
   id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code      ServiceCode
   enabled   Boolean     @default(false)
+  spots     Int         @default(0)
   version   Int         @default(1)
   syncSeq   Int         @default(dbgenerated("nextval('services_sync_seq')")) @map("sync_seq")
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -25,6 +26,7 @@ model Service {
 
 enum ServiceCode {
   ADVANCE_RESERVATION
+  VEHICLE_CAR
   VEHICLE_ELECTRIC
   VEHICLE_BICYCLE
   VEHICLE_MOTORCYCLE

@@ -33,12 +33,16 @@ export class ServicesService {
   async listServices(): Promise<ServiceCatalogItemDto[]> {
     const tenantPrisma = this.prisma.getTenantClient();
     const rows = await tenantPrisma.service.findMany();
-    const enabledByCode = new Map(rows.map((r) => [r.code, r.enabled]));
+    const byCode = new Map(rows.map((r) => [r.code, r]));
 
-    return Object.values(ServiceCode).map((code) => ({
-      code,
-      enabled: enabledByCode.get(code) ?? false,
-    }));
+    return Object.values(ServiceCode).map((code) => {
+      const row = byCode.get(code);
+      return {
+        code,
+        enabled: row?.enabled ?? false,
+        spots: row?.spots ?? 0,
+      };
+    });
   }
 
   async pullChanges(
@@ -58,12 +62,13 @@ export class ServicesService {
   }
 
   /**
-   * Upsert the enabled state for a service code in the active tenant.
-   * Updates the existing row (incrementing version) or inserts a new one.
+   * Upsert the enabled state and/or spot count for a service code in the
+   * active tenant. Updates the existing row (incrementing version) or inserts
+   * a new one with the provided values (defaulting the unspecified field).
    */
-  async toggleService(
+  async updateService(
     code: string,
-    enabled: boolean,
+    data: { enabled?: boolean; spots?: number },
   ): Promise<ServiceCatalogItemDto> {
     if (!this.isServiceCode(code)) {
       throw new FormattedException(
@@ -78,22 +83,32 @@ export class ServicesService {
     const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
+    const updateData: Prisma.ServiceUpdateManyMutationInput = {
+      version: { increment: 1 },
+    };
+    if (data.enabled !== undefined) updateData.enabled = data.enabled;
+    if (data.spots !== undefined) updateData.spots = data.spots;
+
     const updated = await tenantPrisma.service.updateMany({
       where: { tenantId, code },
-      data: { enabled, version: { increment: 1 } },
+      data: updateData,
     });
 
+    let row: { enabled: boolean; spots: number };
     if (updated.count === 0) {
-      await tenantPrisma.service.create({
+      row = await tenantPrisma.service.create({
         data: {
           code,
-          enabled,
+          enabled: data.enabled ?? false,
+          spots: data.spots ?? 0,
           // tenantId is injected by prismaForTenant(...)
         } as Prisma.ServiceUncheckedCreateInput,
       });
+    } else {
+      row = await tenantPrisma.service.findFirstOrThrow({ where: { code } });
     }
 
-    return { code, enabled };
+    return { code, enabled: row.enabled, spots: row.spots };
   }
 
   private isServiceCode(value: string): value is ServiceCode {
