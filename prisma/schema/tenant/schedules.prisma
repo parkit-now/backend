@@ -1,0 +1,39 @@
+// Schedule — one row per opening time range of a weekday for a parking lot.
+// A day may hold several non-overlapping ranges ("de corrido" = one range,
+// "por partes" = several). Overlap is enforced in SchedulesService.
+//
+// open_minute/close_minute are minutes since midnight (0..1440); see the
+// add_schedules_and_services migration. Tenant-local + offline-sync fields,
+// mirroring the Rate model.
+
+model Schedule {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day         ScheduleDay
+  openMinute  Int         @map("open_minute")
+  closeMinute Int         @map("close_minute")
+  version     Int         @default(1)
+  syncSeq     Int         @default(dbgenerated("nextval('schedules_sync_seq')")) @map("sync_seq")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId], map: "schedules_tenant_id_idx")
+  @@index([tenantId, day], map: "schedules_tenant_day_idx")
+  @@index([tenantId, syncSeq], map: "schedules_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "schedules_tenant_updated_at_idx")
+  @@map("schedules")
+}
+
+enum ScheduleDay {
+  monday
+  tuesday
+  wednesday
+  thursday
+  friday
+  saturday
+  sunday
+
+  @@map("schedule_day")
+}

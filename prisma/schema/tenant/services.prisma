@@ -1,0 +1,36 @@
+// Service — per-tenant toggle of a known service/amenity (advance reservation,
+// accepted vehicle types, ...). The full catalog lives in the ServiceCode enum;
+// a row exists only for codes the tenant has touched, so GET merges enum
+// defaults (disabled) with stored rows. Tenant-local + offline-sync fields,
+// mirroring the Rate model.
+
+model Service {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      ServiceCode
+  enabled   Boolean     @default(false)
+  spots     Int         @default(0)
+  version   Int         @default(1)
+  syncSeq   Int         @default(dbgenerated("nextval('services_sync_seq')")) @map("sync_seq")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, code], map: "services_tenant_code_unique")
+  @@index([tenantId], map: "services_tenant_id_idx")
+  @@index([tenantId, syncSeq], map: "services_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "services_tenant_updated_at_idx")
+  @@map("services")
+}
+
+enum ServiceCode {
+  ADVANCE_RESERVATION
+  VEHICLE_CAR
+  VEHICLE_BICYCLE
+  VEHICLE_MOTORCYCLE
+  VEHICLE_PICKUP
+  VEHICLE_TRUCK
+
+  @@map("service_code")
+}

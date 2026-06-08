@@ -29,6 +29,8 @@ model Tenant {
   memberships    UserMembership[]
   entries        Entry[]
   rates          Rate[]
+  schedules      Schedule[]
+  services       Service[]
   paymentMethods PaymentMethod[]
   vehicles       Vehicle[]
   auditLogs      AuditLog[]
