@@ -26,15 +26,17 @@ model Tenant {
   settings  Json         @default("{}")
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  memberships    UserMembership[]
-  entries        Entry[]
-  rates          Rate[]
-  schedules      Schedule[]
-  services       Service[]
-  paymentMethods PaymentMethod[]
-  vehicles       Vehicle[]
-  auditLogs      AuditLog[]
-  applications   OnboardingApplication[]
+  memberships          UserMembership[]
+  entries              Entry[]
+  rates                Rate[]
+  schedules            Schedule[]
+  services             Service[]
+  paymentMethods       PaymentMethod[]
+  vehicles             Vehicle[]
+  auditLogs            AuditLog[]
+  applications         OnboardingApplication[]
+  cashSessions         CashSession[]
+  paymentTransactions  PaymentTransaction[]
 
   @@index([cuit])
   @@map("tenants")

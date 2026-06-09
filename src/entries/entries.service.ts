@@ -38,6 +38,8 @@ function toDto(entry: PrismaEntry): EntryDto {
       entry.rateSnapshotFractionPriceArs !== null
         ? Number(entry.rateSnapshotFractionPriceArs)
         : null,
+    cashSessionId: entry.cashSessionId,
+    ticketNumber: entry.ticketNumber,
     version: entry.version,
     syncSeq: entry.syncSeq,
     updatedAt: entry.updatedAt,
@@ -73,6 +75,8 @@ export class EntriesService {
         rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
         rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
         rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
+        cashSessionId: data.cashSessionId,
+        ticketNumber: data.ticketNumber,
       } as Prisma.EntryUncheckedCreateInput,
     });
     return toDto(entry);
@@ -105,34 +109,73 @@ export class EntriesService {
     expectedVersion: number,
     data: CloseEntryDto,
   ): Promise<EntryDto> {
-    const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const leftAt = data.leftAt ? new Date(data.leftAt) : new Date();
 
-    const updateData: Prisma.EntryUpdateInput = {
-      version: { increment: 1 },
-      leftAt: data.leftAt ? new Date(data.leftAt) : new Date(),
-      amountPaid: data.amountPaid,
-    };
-    if (data.cochera !== undefined) updateData.cochera = data.cochera;
-    if (data.notes !== undefined) updateData.notes = data.notes;
+    // Compute amountPaid: sum of payments[] if provided, otherwise use the
+    // directly provided amountPaid (legacy / offline fallback).
+    const computedAmount =
+      data.payments && data.payments.length > 0
+        ? data.payments.reduce((sum, p) => sum + p.amount, 0)
+        : data.amountPaid;
 
-    const result = await tenantPrisma.entry.updateMany({
-      where: { tenantId, id: entryId, version: expectedVersion, leftAt: null },
-      data: updateData,
+    const entry = await this.prisma.$transaction(async (tx) => {
+      const updateData: Prisma.EntryUpdateInput = {
+        version: { increment: 1 },
+        leftAt,
+        amountPaid: computedAmount,
+      };
+      if (data.cochera !== undefined) updateData.cochera = data.cochera;
+      if (data.notes !== undefined) updateData.notes = data.notes;
+
+      const result = await tx.entry.updateMany({
+        where: {
+          tenantId,
+          id: entryId,
+          version: expectedVersion,
+          leftAt: null,
+        },
+        data: updateData,
+      });
+
+      if (result.count === 0) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'Entry was already closed or changed by another write. Refresh and retry.',
+          `/tenants/:tenantId/entries/${entryId}`,
+          ErrorCodes.CONFLICT,
+        );
+      }
+
+      // Create payment transaction records if payments were provided.
+      if (data.payments && data.payments.length > 0) {
+        const cashSessionId =
+          data.cashSessionId ??
+          (
+            await tx.cashSession.findFirst({
+              where: { tenantId, closedAt: null },
+              select: { id: true },
+            })
+          )?.id ??
+          null;
+
+        await tx.paymentTransaction.createMany({
+          data: data.payments.map((p) => ({
+            id: p.id,
+            tenantId,
+            entryId,
+            cashSessionId,
+            paymentMethodId: p.paymentMethodId ?? null,
+            paymentMethodName: p.paymentMethodName,
+            amount: p.amount,
+          })),
+        });
+      }
+
+      return tx.entry.findUniqueOrThrow({ where: { id: entryId } });
     });
 
-    if (result.count === 0) {
-      throw new FormattedException(
-        'Conflict',
-        HttpStatus.CONFLICT,
-        'Entry was already closed or changed by another write. Refresh and retry.',
-        `/tenants/:tenantId/entries/${entryId}`,
-        ErrorCodes.CONFLICT,
-      );
-    }
-
-    return toDto(
-      await tenantPrisma.entry.findUniqueOrThrow({ where: { id: entryId } }),
-    );
+    return toDto(entry);
   }
 }

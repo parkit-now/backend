@@ -2,6 +2,8 @@
 import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {RateEntity} from './rate.entity'
+import {CashSessionEntity} from './cash-session.entity'
+import {PaymentTransactionEntity} from './payment-transaction.entity'
 import {TenantEntity} from './tenant.entity'
 
 
@@ -60,7 +62,15 @@ rateSnapshotStayPriceArs: Prisma.Decimal  | null;
 rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
 vehicleBrand: string  | null;
 vehicleModel: string  | null;
+cashSessionId: string  | null;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+ticketNumber: number  | null;
 rate?: RateEntity  | null;
+cashSession?: CashSessionEntity  | null;
+paymentTransactions?: PaymentTransactionEntity[] ;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

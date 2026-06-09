@@ -37,6 +37,8 @@ const TENANT_MODELS: readonly string[] = [
   'rate',
   'schedule',
   'service',
+  'cashsession',
+  'paymenttransaction',
 ];
 
 const READ_OPS = new Set([

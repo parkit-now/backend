@@ -57,4 +57,9 @@ rateSnapshotStayPriceArs: Prisma.Decimal  | null;
 rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
 vehicleBrand: string  | null;
 vehicleModel: string  | null;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+ticketNumber: number  | null;
 }

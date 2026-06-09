@@ -1,7 +1,7 @@
 
 import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsOptional,IsRFC3339,IsString} from 'class-validator'
+import {IsDecimal,IsInt,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -68,4 +68,11 @@ vehicleBrand?: string;
 @IsOptional()
 @IsString()
 vehicleModel?: string;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+@IsOptional()
+@IsInt()
+ticketNumber?: number;
 }

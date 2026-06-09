@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsDateString,
   IsNumber,
   IsOptional,
@@ -8,7 +9,9 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { PaymentLineDto } from '../../payment-transactions/dto/payment-line.dto';
 
 export class CloseEntryDto {
   @ApiPropertyOptional({
@@ -21,7 +24,8 @@ export class CloseEntryDto {
   leftAt?: string;
 
   @ApiPropertyOptional({
-    description: 'Amount paid in ARS.',
+    description:
+      'Total amount paid in ARS. Computed from payments[] if provided; otherwise stored directly (legacy / offline fallback).',
     type: Number,
     minimum: 0,
   })
@@ -31,10 +35,21 @@ export class CloseEntryDto {
   @Min(0)
   amountPaid?: number;
 
-  @ApiPropertyOptional({ description: 'Payment method used.', format: 'uuid' })
+  @ApiPropertyOptional({
+    description:
+      'Payment breakdown per method. When provided, amountPaid is set to the sum.',
+    type: () => [PaymentLineDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentLineDto)
+  payments?: PaymentLineDto[];
+
+  @ApiPropertyOptional({ description: 'Cash session ID.', format: 'uuid' })
   @IsOptional()
   @IsUUID()
-  paymentMethodId?: string;
+  cashSessionId?: string;
 
   @ApiPropertyOptional({ example: 'Cochera 3', maxLength: 100 })
   @IsOptional()

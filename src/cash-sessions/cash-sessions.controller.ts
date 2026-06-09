@@ -1,0 +1,90 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiTags,
+} from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
+import { TenantInterceptor } from '../database/tenant.interceptor';
+import { CashSessionChangesQueryDto } from './dto/cash-session-changes-query.dto';
+import { CashSessionChangesResponseDto } from './dto/cash-session-changes-response.dto';
+import { CashSessionDto } from './dto/cash-session.dto';
+import { CloseCashSessionDto } from './dto/close-cash-session.dto';
+import { CloseCashSessionResponseDto } from './dto/close-cash-session-response.dto';
+import { CreateCashSessionDto } from './dto/create-cash-session.dto';
+import { CashSessionsService } from './cash-sessions.service';
+
+@ApiTags('Cash Sessions')
+@Controller('tenants/:tenantId/cash-sessions')
+@UseGuards(JwtAuthGuard, TenantMembershipGuard)
+@UseInterceptors(TenantInterceptor)
+@ApiBearerAuth('bearer')
+export class CashSessionsController {
+  constructor(private readonly cashSessionsService: CashSessionsService) {}
+
+  @Get('changes')
+  @ApiOperation({ summary: 'Pull incremental cash session changes for sync' })
+  @ApiOkResponse({ type: CashSessionChangesResponseDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async pullChanges(@Query() query: CashSessionChangesQueryDto) {
+    return this.cashSessionsService.pullChanges(query);
+  }
+
+  @Get('active')
+  @ApiOperation({ summary: 'Get the currently open cash session' })
+  @ApiOkResponse({ type: CashSessionDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async getActive() {
+    const session = await this.cashSessionsService.getActiveSession();
+    if (!session) throw new NotFoundException('No active cash session.');
+    return session;
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'List all cash sessions (most recent first)' })
+  @ApiOkResponse({ type: [CashSessionDto] })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async findAll() {
+    return this.cashSessionsService.listSessions();
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Open a new cash session (client-provided UUIDv7)' })
+  @ApiOkResponse({ type: CashSessionDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async create(@Body() dto: CreateCashSessionDto) {
+    return this.cashSessionsService.createSession(dto);
+  }
+
+  @Patch(':sessionId/close')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Close the current session and auto-open the next one. Active entries carry over.',
+  })
+  @ApiOkResponse({ type: CloseCashSessionResponseDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async close(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Body() dto: CloseCashSessionDto,
+  ) {
+    return this.cashSessionsService.closeSession(sessionId, dto);
+  }
+}

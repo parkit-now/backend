@@ -55,6 +55,12 @@ export class EntryDto {
   @ApiPropertyOptional({ type: Number })
   rateSnapshotFractionPriceArs: number | null;
 
+  @ApiPropertyOptional({ format: 'uuid' })
+  cashSessionId: string | null;
+
+  @ApiPropertyOptional({ type: Number })
+  ticketNumber: number | null;
+
   @ApiProperty({ type: Number })
   version: number;
 

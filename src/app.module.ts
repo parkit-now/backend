@@ -16,6 +16,8 @@ import { EntitiesModule } from './entities/entities.module';
 import { RatesModule } from './rates/rates.module';
 import { SchedulesModule } from './schedules/schedules.module';
 import { ServicesModule } from './services/services.module';
+import { CashSessionsModule } from './cash-sessions/cash-sessions.module';
+import { PaymentTransactionsModule } from './payment-transactions/payment-transactions.module';
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { ServicesModule } from './services/services.module';
     RatesModule,
     SchedulesModule,
     ServicesModule,
+    CashSessionsModule,
+    PaymentTransactionsModule,
   ],
 })
 export class AppModule {}

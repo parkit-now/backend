@@ -10,6 +10,8 @@ import {PaymentMethodEntity} from './payment-method.entity'
 import {VehicleEntity} from './vehicle.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
+import {CashSessionEntity} from './cash-session.entity'
+import {PaymentTransactionEntity} from './payment-transaction.entity'
 
 
 export class TenantEntity {
@@ -39,4 +41,6 @@ paymentMethods?: PaymentMethodEntity[] ;
 vehicles?: VehicleEntity[] ;
 auditLogs?: AuditLogEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
+cashSessions?: CashSessionEntity[] ;
+paymentTransactions?: PaymentTransactionEntity[] ;
 }

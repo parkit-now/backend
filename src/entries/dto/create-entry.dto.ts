@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -95,4 +96,23 @@ export class CreateEntryDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   rateSnapshotFractionPriceArs?: number;
+
+  @ApiPropertyOptional({
+    description: 'Cash session this entry belongs to.',
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsUUID()
+  cashSessionId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Sequential ticket number within the cash session.',
+    type: Number,
+    minimum: 1,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  ticketNumber?: number;
 }

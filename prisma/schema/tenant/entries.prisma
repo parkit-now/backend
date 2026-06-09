@@ -24,7 +24,13 @@ model Entry {
   vehicleBrand String? @map("vehicle_brand") @db.VarChar(120)
   vehicleModel String? @map("vehicle_model") @db.VarChar(120)
 
-  rate Rate? @relation(fields: [rateId], references: [id], onDelete: SetNull, map: "entries_rate_id_fkey")
+  cashSessionId String? @map("cash_session_id") @db.Uuid
+  ticketNumber  Int?    @map("ticket_number")
+
+  rate        Rate?        @relation(fields: [rateId], references: [id], onDelete: SetNull, map: "entries_rate_id_fkey")
+  cashSession CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+
+  paymentTransactions PaymentTransaction[]
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])
@@ -32,5 +38,6 @@ model Entry {
   @@index([tenantId], map: "entries_tenant_id_idx")
   @@index([tenantId, syncSeq], map: "entries_tenant_sync_seq_idx")
   @@index([tenantId, updatedAt], map: "entries_tenant_updated_at_idx")
+  @@index([tenantId, cashSessionId], map: "entries_tenant_cash_session_idx")
   @@map("entries")
 }
