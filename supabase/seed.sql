@@ -19,8 +19,8 @@ DO $seed$
 BEGIN
     IF to_regclass('public.tenants') IS NOT NULL THEN
         INSERT INTO tenants (id, name) VALUES
-            ('11111111-1111-1111-1111-111111111111', 'Estacionamiento Once'),
-            ('22222222-2222-2222-2222-222222222222', 'Estacionamiento Belgrano')
+            ('11111111-1111-4111-8111-111111111111', 'Estacionamiento Once'),
+            ('22222222-2222-4222-8222-222222222222', 'Estacionamiento Belgrano')
         ON CONFLICT (id) DO NOTHING;
     END IF;
 
@@ -29,7 +29,7 @@ BEGIN
     -- migrated yet.
     IF to_regclass('public.vehicles') IS NOT NULL THEN
         INSERT INTO vehicles (id, brand, model, type, created_at, updated_at) VALUES
-            ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', 'Toyota', 'Corolla', 'sedan', now(), now()),
+            ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', 'Toyota', 'Corolla', 'auto', now(), now()),
             ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', 'Ford', 'Ranger', 'pickup', now(), now()),
             ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3', 'Renault', 'Kangoo', 'van', now(), now())
         ON CONFLICT (id) DO UPDATE
