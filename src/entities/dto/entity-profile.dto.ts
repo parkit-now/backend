@@ -63,6 +63,13 @@ export class PaymentMethodSummaryDto {
   isDefault: boolean;
 
   @ApiProperty({
+    description:
+      'Whether this is a built-in system method (`cash`, `transfer`). System methods can be enabled/disabled but never deleted.',
+    example: true,
+  })
+  isSystem: boolean;
+
+  @ApiProperty({
     type: Number,
     description: 'Monotonically-increasing sync sequence number.',
   })

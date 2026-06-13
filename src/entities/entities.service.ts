@@ -146,6 +146,15 @@ export class EntitiesService {
         ErrorCodes.PAYMENT_METHOD_NOT_FOUND,
       );
     }
+    if (method.isSystem) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        `Payment method ${paymentMethodId} is a system method and cannot be deleted; disable it instead`,
+        '/tenants/:tenantId/payment-methods',
+        ErrorCodes.PAYMENT_METHOD_SYSTEM_LOCKED,
+      );
+    }
     await this.prisma.paymentMethod.delete({ where: { id: paymentMethodId } });
     await this.audit.record({
       action: AuditActions.PAYMENT_METHOD_TOGGLED,

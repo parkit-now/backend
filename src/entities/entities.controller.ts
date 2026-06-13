@@ -247,7 +247,7 @@ export class EntitiesController {
     description: [
       'Returns every payment method configured for the `:tenantId` entity, oldest first.',
       '',
-      'System methods (`mp_transfer`, `cash`) are flagged with `isSystem: true` — they can be enabled or disabled but never deleted. Available to any member of the entity.',
+      'System methods (`transfer`, `cash`) are flagged with `isSystem: true` — they can be enabled or disabled but never deleted. Available to any member of the entity.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: PaymentMethodSummaryDto, isArray: true })
@@ -288,7 +288,7 @@ export class EntitiesController {
     description: [
       'Toggles a payment method via the `enabled` and/or `isDefault` flags.',
       '',
-      'System methods (`mp_transfer`, `cash`) can be disabled but never deleted. Setting `isDefault: true` clears the previous default. The change is recorded in the audit trail. Requires the caller to be an `owner` of the entity (platform admins bypass the role check).',
+      'System methods (`transfer`, `cash`) can be disabled but never deleted. Setting `isDefault: true` clears the previous default. The change is recorded in the audit trail. Requires the caller to be an `owner` of the entity (platform admins bypass the role check).',
     ].join('\n'),
   })
   @ApiOkResponse({ type: PaymentMethodSummaryDto })
@@ -322,7 +322,7 @@ export class EntitiesController {
     operationId: 'entitiesDeletePaymentMethod',
     summary: 'Delete a custom payment method',
     description:
-      'Permanently deletes a non-system payment method. System methods (`cash`, `mp_transfer`) cannot be deleted — disable them instead. Requires owner role.',
+      'Permanently deletes a non-system payment method. System methods (`cash`, `transfer`) cannot be deleted — disable them instead. Requires owner role.',
   })
   @ApiNoContentResponse({ description: 'Payment method deleted.' })
   @ApiNotFoundResponse({ type: ProblemDetailsDto })

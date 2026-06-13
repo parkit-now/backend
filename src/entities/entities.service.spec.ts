@@ -39,7 +39,9 @@ describe('EntitiesService', () => {
     paymentMethod: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
+      delete: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -72,6 +74,10 @@ describe('EntitiesService', () => {
           enabled: true,
           isDefault: false,
           isSystem: true,
+          syncSeq: 1,
+          version: 1,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-01T00:00:00.000Z'),
         },
       ]);
 
@@ -80,7 +86,8 @@ describe('EntitiesService', () => {
       expect(profile.id).toBe('t-1');
       expect(profile.name).toBe('Centro');
       expect(profile.paymentMethods).toHaveLength(1);
-      expect(profile.paymentMethods[0].type).toBe('cash');
+      expect(profile.paymentMethods[0].name).toBe('Cash');
+      expect(profile.paymentMethods[0].isSystem).toBe(true);
     });
 
     it('throws ENTITY_NOT_FOUND when the tenant does not exist', async () => {
@@ -163,6 +170,10 @@ describe('EntitiesService', () => {
         enabled: true,
         isDefault: true,
         isSystem: true,
+        syncSeq: 2,
+        version: 2,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-01-02T00:00:00.000Z'),
       });
 
       await service.togglePaymentMethod('t-1', owner, 'pm-1', {
@@ -172,6 +183,50 @@ describe('EntitiesService', () => {
       expect(txInner.paymentMethod.updateMany).toHaveBeenCalledWith({
         where: { tenantId: 't-1', isDefault: true, NOT: { id: 'pm-1' } },
         data: { isDefault: false },
+      });
+      expect(mockAudit.record).toHaveBeenCalled();
+    });
+  });
+
+  describe('deletePaymentMethod', () => {
+    it('throws PAYMENT_METHOD_NOT_FOUND when the method does not exist', async () => {
+      mockPrisma.paymentMethod.findFirst.mockResolvedValue(null);
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        service.deletePaymentMethod('t-1', owner, 'pm-x'),
+      ).rejects.toBeInstanceOf(FormattedException);
+      expect(mockPrisma.paymentMethod.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete a system method (PAYMENT_METHOD_SYSTEM_LOCKED)', async () => {
+      mockPrisma.paymentMethod.findFirst.mockResolvedValue({
+        id: 'pm-1',
+        tenantId: 't-1',
+        name: 'Cash',
+        isSystem: true,
+      });
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        service.deletePaymentMethod('t-1', owner, 'pm-1'),
+      ).rejects.toBeInstanceOf(FormattedException);
+      expect(mockPrisma.paymentMethod.delete).not.toHaveBeenCalled();
+    });
+
+    it('deletes a custom method and audits', async () => {
+      mockPrisma.paymentMethod.findFirst.mockResolvedValue({
+        id: 'pm-2',
+        tenantId: 't-1',
+        name: 'Naranja X',
+        isSystem: false,
+      });
+      mockPrisma.paymentMethod.delete.mockResolvedValue({});
+
+      await service.deletePaymentMethod('t-1', owner, 'pm-2');
+
+      expect(mockPrisma.paymentMethod.delete).toHaveBeenCalledWith({
+        where: { id: 'pm-2' },
       });
       expect(mockAudit.record).toHaveBeenCalled();
     });

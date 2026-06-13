@@ -44,10 +44,13 @@ const VEHICLES = {
 const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
 const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
 
+// Entries no longer hold a vehicle FK: the model snapshots brand/model inline
+// (offline-first denormalization). The Vehicle catalog stays for autocomplete.
 type SeedEntry = {
   id: string;
   tenantId: string;
-  vehicleId: string;
+  vehicleBrand: string;
+  vehicleModel: string;
   plate: string;
   color?: string;
   enteredAt: string;
@@ -59,7 +62,8 @@ const ENTRIES: SeedEntry[] = [
   {
     id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1',
     tenantId: TENANTS.once,
-    vehicleId: VEHICLES.corolla,
+    vehicleBrand: 'Toyota',
+    vehicleModel: 'Corolla',
     plate: 'AA123BB',
     color: 'Negro',
     enteredAt: '2026-05-01T10:05:00.000Z',
@@ -69,7 +73,8 @@ const ENTRIES: SeedEntry[] = [
   {
     id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2',
     tenantId: TENANTS.once,
-    vehicleId: VEHICLES.ranger,
+    vehicleBrand: 'Ford',
+    vehicleModel: 'Ranger',
     plate: 'AC987DE',
     color: 'Blanco',
     enteredAt: '2026-05-02T08:15:00.000Z',
@@ -77,7 +82,8 @@ const ENTRIES: SeedEntry[] = [
   {
     id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3',
     tenantId: TENANTS.belgrano,
-    vehicleId: VEHICLES.kangoo,
+    vehicleBrand: 'Renault',
+    vehicleModel: 'Kangoo',
     plate: 'AG456HI',
     color: 'Rojo',
     enteredAt: '2026-05-01T09:20:00.000Z',
@@ -87,7 +93,8 @@ const ENTRIES: SeedEntry[] = [
   {
     id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4',
     tenantId: TENANTS.belgrano,
-    vehicleId: VEHICLES.corolla,
+    vehicleBrand: 'Toyota',
+    vehicleModel: 'Corolla',
     plate: 'AJ741KL',
     color: 'Azul',
     enteredAt: '2026-05-03T14:00:00.000Z',
@@ -121,9 +128,9 @@ async function main(): Promise<void> {
       id: VEHICLES.corolla,
       brand: 'Toyota',
       model: 'Corolla',
-      type: 'sedan',
+      type: 'auto',
     },
-    update: { brand: 'Toyota', model: 'Corolla', type: 'sedan' },
+    update: { brand: 'Toyota', model: 'Corolla', type: 'auto' },
   });
   await prisma.vehicle.upsert({
     where: { id: VEHICLES.ranger },
@@ -152,7 +159,8 @@ async function main(): Promise<void> {
       create: {
         id: entry.id,
         tenantId: entry.tenantId,
-        vehicleId: entry.vehicleId,
+        vehicleBrand: entry.vehicleBrand,
+        vehicleModel: entry.vehicleModel,
         plate: entry.plate,
         color: entry.color ?? null,
         enteredAt: new Date(entry.enteredAt),
@@ -161,7 +169,8 @@ async function main(): Promise<void> {
       },
       update: {
         tenantId: entry.tenantId,
-        vehicleId: entry.vehicleId,
+        vehicleBrand: entry.vehicleBrand,
+        vehicleModel: entry.vehicleModel,
         plate: entry.plate,
         color: entry.color ?? null,
         enteredAt: new Date(entry.enteredAt),
@@ -268,23 +277,28 @@ async function seedOnboarding(): Promise<void> {
     }
   }
 
+  // System payment methods are unique per (tenantId, type) only through a
+  // *partial* unique index (WHERE is_system = true), which Prisma cannot target
+  // in an upsert. Seed them idempotently with findFirst + create/update.
   for (const tenantId of [TENANTS.once, TENANTS.belgrano]) {
+    // Generic, owner-editable defaults: no brand names baked in.
     for (const [type, name, isDefault] of [
-      ['mp_transfer', 'Bank transfer (Mercado Pago)', true],
-      ['cash', 'Cash', false],
+      ['transfer', 'transfer', true],
+      ['cash', 'cash', false],
     ] as const) {
-      await prisma.paymentMethod.upsert({
-        where: { tenantId_type: { tenantId, type } },
-        create: {
-          tenantId,
-          type,
-          name,
-          enabled: true,
-          isSystem: true,
-          isDefault,
-        },
-        update: { name, isSystem: true },
+      const existing = await prisma.paymentMethod.findFirst({
+        where: { tenantId, type, isSystem: true },
       });
+      if (existing) {
+        await prisma.paymentMethod.update({
+          where: { id: existing.id },
+          data: { name, isSystem: true },
+        });
+      } else {
+        await prisma.paymentMethod.create({
+          data: { tenantId, type, name, enabled: true, isSystem: true, isDefault },
+        });
+      }
     }
   }
 

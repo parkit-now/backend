@@ -1,6 +1,6 @@
 // PaymentMethod — entity-level (tenant) payment methods.
 //
-// On entity approval, 'mp_transfer' and 'cash' are created automatically with
+// On entity approval, 'transfer' and 'cash' are created automatically with
 // `isSystem=true` (not deletable; can be disabled via `enabled`).
 //
 // Custom methods use type='other' and can be created/deleted freely by owners.
@@ -8,7 +8,7 @@
 // Backend-only: service-role, RLS without policies.
 
 enum PaymentMethodType {
-  mp_transfer
+  transfer
   cash
   other
 

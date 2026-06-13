@@ -191,7 +191,7 @@ export class ApplicationsController {
       '',
       '- materializes the declared entity as a real parking lot (tenant), storing the declared car/motorcycle/bicycle spot counts in its settings capacity;',
       '- grants the applicant an `owner` membership on the created entity;',
-      '- creates the system payment methods (`mp_transfer` as default, `cash`), which are non-deletable but can be disabled;',
+      '- creates the system payment methods (`transfer` as default, `cash`), which are non-deletable but can be disabled;',
       '- marks the application `approved` (linking the created `tenantId`) and records the audit trail.',
       '',
       'The entity-level role (`owner`) lives on the membership; the applicant global role stays `user`, so no JWT claim is changed.',

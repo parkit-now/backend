@@ -12,7 +12,7 @@ export class UpdatePaymentMethodDto {
   enum: PaymentMethodType,
 })
 @IsOptional()
-@IsIn(["mp_transfer","cash","other"])
+@IsIn(["transfer","cash","other"])
 type?: PaymentMethodType;
 @IsOptional()
 @IsString()

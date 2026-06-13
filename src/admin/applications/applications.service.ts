@@ -177,21 +177,24 @@ export class ApplicationsService {
         },
       });
 
-      // Default payment methods created on approval.
+      // Default payment methods created on approval. Generic, owner-editable
+      // names (no brand baked in); flagged isSystem so they can't be deleted.
       await tx.paymentMethod.createMany({
         data: [
           {
             tenantId: tenant.id,
-            type: 'mp_transfer',
-            name: 'Mercado Pago',
+            type: 'transfer',
+            name: 'transfer',
             enabled: true,
+            isSystem: true,
             isDefault: true,
           },
           {
             tenantId: tenant.id,
             type: 'cash',
-            name: 'Efectivo',
+            name: 'cash',
             enabled: true,
+            isSystem: true,
             isDefault: false,
           },
         ],

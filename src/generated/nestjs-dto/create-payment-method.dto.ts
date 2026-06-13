@@ -12,7 +12,7 @@ export class CreatePaymentMethodDto {
   enum: PaymentMethodType,
 })
 @IsNotEmpty()
-@IsIn(["mp_transfer","cash","other"])
+@IsIn(["transfer","cash","other"])
 type: PaymentMethodType;
 @IsNotEmpty()
 @IsString()
