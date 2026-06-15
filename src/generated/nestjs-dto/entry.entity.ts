@@ -1,6 +1,7 @@
 
-import {Prisma} from '@prisma/client'
+import {Prisma,VehicleType} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
+import {WhitelistEntity} from './whitelist.entity'
 import {RateEntity} from './rate.entity'
 import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
@@ -28,6 +29,15 @@ leftAt: Date  | null;
   format: `double`,
 })
 amountPaid: Prisma.Decimal  | null;
+source: string ;
+@ApiProperty({
+  enum: VehicleType,
+})
+vehicleType: VehicleType  | null;
+entryImageUrl: string  | null;
+entryCameraId: string  | null;
+exitImageUrl: string  | null;
+exitCameraId: string  | null;
 @ApiProperty({
   type: `integer`,
   format: `int32`,
@@ -68,6 +78,8 @@ cashSessionId: string  | null;
   format: `int32`,
 })
 ticketNumber: number  | null;
+whitelistId: string  | null;
+whitelist?: WhitelistEntity  | null;
 rate?: RateEntity  | null;
 cashSession?: CashSessionEntity  | null;
 paymentTransactions?: PaymentTransactionEntity[] ;

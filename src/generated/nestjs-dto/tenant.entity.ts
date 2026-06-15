@@ -12,6 +12,7 @@ import {AuditLogEntity} from './audit-log.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
+import {WhitelistEntity} from './whitelist.entity'
 
 
 export class TenantEntity {
@@ -43,4 +44,5 @@ auditLogs?: AuditLogEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
 cashSessions?: CashSessionEntity[] ;
 paymentTransactions?: PaymentTransactionEntity[] ;
+whitelists?: WhitelistEntity[] ;
 }
