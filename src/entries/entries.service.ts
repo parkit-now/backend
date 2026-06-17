@@ -8,6 +8,7 @@ import { CloseEntryDto } from './dto/close-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
+import { LprEntryDto } from './dto/lpr-entry.dto';
 
 type PrismaEntry = Prisma.EntryGetPayload<Record<string, never>>;
 
@@ -40,6 +41,13 @@ function toDto(entry: PrismaEntry): EntryDto {
         : null,
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
+    source: entry.source,
+    vehicleType: entry.vehicleType,
+    entryImageUrl: entry.entryImageUrl,
+    entryCameraId: entry.entryCameraId,
+    exitImageUrl: entry.exitImageUrl,
+    exitCameraId: entry.exitCameraId,
+    whitelistId: entry.whitelistId,
     version: entry.version,
     syncSeq: entry.syncSeq,
     updatedAt: entry.updatedAt,
@@ -174,6 +182,55 @@ export class EntriesService {
       }
 
       return tx.entry.findUniqueOrThrow({ where: { id: entryId } });
+    });
+
+    return toDto(entry);
+  }
+
+  async createStayFromLprEvent(data: LprEntryDto): Promise<EntryDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const plate = data.plate.toUpperCase();
+    const now = new Date();
+
+    const entry = await this.prisma.$transaction(async (tx) => {
+      // 1. Reject if an active stay for this plate already exists.
+      const existing = await tx.entry.findFirst({
+        where: { tenantId, plate, leftAt: null },
+      });
+      if (existing) {
+        throw new FormattedException(
+          'Duplicate active stay',
+          HttpStatus.CONFLICT,
+          `Plate ${plate} already has an active stay.`,
+          `/tenants/${tenantId}/entries/lpr`,
+          ErrorCodes.ENTRY_DUPLICATE_ACTIVE_STAY,
+        );
+      }
+
+      // 2. Check whitelist — null result means no active authorization.
+      const whitelistEntry = await tx.whitelist.findFirst({
+        where: {
+          tenantId,
+          plate,
+          OR: [{ validFrom: null }, { validFrom: { lte: now } }],
+          AND: [{ OR: [{ validUntil: null }, { validUntil: { gte: now } }] }],
+        },
+      });
+
+      // 3. Persist the stay. UUID is server-generated for LPR entries.
+      return tx.entry.create({
+        data: {
+          id: crypto.randomUUID(),
+          tenantId,
+          plate,
+          source: 'auto',
+          vehicleType: data.vehicleType ?? null,
+          entryImageUrl: data.imageUrl ?? null,
+          entryCameraId: data.cameraId ?? null,
+          enteredAt: data.timestamp ? new Date(data.timestamp) : now,
+          whitelistId: whitelistEntry?.id ?? null,
+        },
+      });
     });
 
     return toDto(entry);
