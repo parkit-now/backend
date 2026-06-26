@@ -10,6 +10,14 @@ model Entry {
   leftAt     DateTime? @map("left_at")
   amountPaid Decimal?  @map("amount_paid") @db.Decimal(10, 2)
 
+  // LPR fields — populated on automatic ingress; null for manual entries.
+  source         String      @default("manual") @db.VarChar(10)
+  vehicleType    VehicleType? @map("vehicle_type")
+  entryImageUrl  String?     @map("entry_image_url")
+  entryCameraId  String?     @map("entry_camera_id") @db.VarChar(100)
+  exitImageUrl   String?     @map("exit_image_url")
+  exitCameraId   String?     @map("exit_camera_id") @db.VarChar(100)
+
   version   Int      @default(1)
   syncSeq   Int      @default(dbgenerated("nextval('entries_sync_seq')")) @map("sync_seq")
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -26,6 +34,9 @@ model Entry {
 
   cashSessionId String? @map("cash_session_id") @db.Uuid
   ticketNumber  Int?    @map("ticket_number")
+
+  whitelistId String?    @map("whitelist_id") @db.Uuid
+  whitelist   Whitelist? @relation(fields: [whitelistId], references: [id], onDelete: SetNull, map: "entries_whitelist_id_fkey")
 
   rate        Rate?        @relation(fields: [rateId], references: [id], onDelete: SetNull, map: "entries_rate_id_fkey")
   cashSession CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)

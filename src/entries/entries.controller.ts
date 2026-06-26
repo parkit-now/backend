@@ -22,6 +22,7 @@ import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
 import { CloseEntryDto } from './dto/close-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
+import { LprEntryDto } from './dto/lpr-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryChangesResponseDto } from './dto/entry-changes-response.dto';
 import { EntryDto } from './dto/entry.dto';
@@ -50,6 +51,16 @@ export class EntriesController {
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   async pullChanges(@Query() query: EntryChangesQueryDto) {
     return this.entriesService.pullChanges(query);
+  }
+
+  @Post('lpr')
+  @ApiOperation({
+    summary: 'Register a vehicle entry from an LPR detection event',
+  })
+  @ApiOkResponse({ type: EntryDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async createFromLpr(@Body() dto: LprEntryDto) {
+    return this.entriesService.createStayFromLprEvent(dto);
   }
 
   @Post()

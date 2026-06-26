@@ -37,6 +37,7 @@ model Tenant {
   applications         OnboardingApplication[]
   cashSessions         CashSession[]
   paymentTransactions  PaymentTransaction[]
+  whitelists           Whitelist[]
 
   @@index([cuit])
   @@map("tenants")

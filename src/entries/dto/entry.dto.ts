@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { VehicleType } from '@prisma/client';
 
 export class EntryDto {
   @ApiProperty({ format: 'uuid' })
@@ -9,6 +10,35 @@ export class EntryDto {
 
   @ApiProperty({ example: 'ABC123', maxLength: 20 })
   plate: string;
+
+  @ApiProperty({
+    example: 'manual',
+    description: 'auto = created by LPR; manual = operator-typed',
+  })
+  source: string;
+
+  @ApiPropertyOptional({ enum: VehicleType })
+  vehicleType: VehicleType | null;
+
+  @ApiPropertyOptional({
+    description: 'URL of the entry photo captured by the LPR camera',
+  })
+  entryImageUrl: string | null;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  entryCameraId: string | null;
+
+  @ApiPropertyOptional()
+  exitImageUrl: string | null;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  exitCameraId: string | null;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Set when entry was authorized via whitelist',
+  })
+  whitelistId: string | null;
 
   @ApiPropertyOptional({ example: 'Rojo', maxLength: 50 })
   color: string | null;

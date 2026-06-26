@@ -1,0 +1,23 @@
+model Whitelist {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plate      String   @db.VarChar(20)
+  validFrom  DateTime? @map("valid_from") @db.Timestamptz(6)
+  validUntil DateTime? @map("valid_until") @db.Timestamptz(6)
+  notes      String?  @db.Text
+
+  version   Int      @default(1)
+  syncSeq   Int      @default(dbgenerated("nextval('whitelists_sync_seq')")) @map("sync_seq")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entries Entry[]
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId], map: "whitelists_tenant_id_idx")
+  @@index([tenantId, plate], map: "whitelists_tenant_plate_idx")
+  @@index([tenantId, syncSeq], map: "whitelists_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "whitelists_tenant_updated_at_idx")
+  @@map("whitelists")
+}
