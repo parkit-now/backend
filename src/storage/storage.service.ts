@@ -7,6 +7,9 @@ import { FormattedException } from '../utils/exceptions/http-exception/formatted
 /** Private bucket holding onboarding application documents (binaries). */
 export const APPLICATION_DOCUMENTS_BUCKET = 'application-documents';
 
+/** Private bucket holding LPR detection event photos (binaries). */
+export const LPR_DETECTION_IMAGES_BUCKET = 'lpr-detection-images';
+
 interface SignedUrlOptions {
   /**
    * When set, the signed URL is served with
@@ -72,5 +75,33 @@ export class StorageService implements OnModuleInit {
     }
 
     return data.signedUrl;
+  }
+
+  /**
+   * Uploads a binary to a private bucket using the service-role client, so
+   * callers don't need any storage RLS policy of their own — the app layer
+   * (e.g. `TenantMembershipGuard`) is the only gate. `upsert: true` makes the
+   * write idempotent, which matters for offline clients retrying a push.
+   */
+  async upload(
+    bucket: string,
+    path: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    const { error } = await this.client.storage
+      .from(bucket)
+      .upload(path, body, { contentType, upsert: true });
+
+    if (error) {
+      this.logger.error(`Failed to upload ${bucket}/${path}`, error.message);
+      throw new FormattedException(
+        'Bad Gateway',
+        HttpStatus.BAD_GATEWAY,
+        error.message ?? 'Failed to upload object',
+        `/${bucket}`,
+        ErrorCodes.STORAGE_UPLOAD_FAILED,
+      );
+    }
   }
 }

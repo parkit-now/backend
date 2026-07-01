@@ -2,6 +2,11 @@ import { LprDetectionStatus, Prisma, User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
+import {
+  LPR_DETECTION_IMAGES_BUCKET,
+  StorageService,
+} from '../storage/storage.service';
+import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
 import { LprEventsService } from './lpr-events.service';
 
@@ -33,6 +38,11 @@ describe('LprEventsService', () => {
     record: jest.fn(),
   };
   const mockAudit = mockAuditService as unknown as AuditService;
+  const mockStorageService = {
+    upload: jest.fn(),
+    createSignedUrl: jest.fn(),
+  };
+  const mockStorage = mockStorageService as unknown as StorageService;
 
   const dto: UpsertLprDetectionEventDto = {
     id: eventId,
@@ -90,7 +100,12 @@ describe('LprEventsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new LprEventsService(mockPrisma, mockTenantContext, mockAudit);
+    service = new LprEventsService(
+      mockPrisma,
+      mockTenantContext,
+      mockAudit,
+      mockStorage,
+    );
   });
 
   it('creates a pending event through the tenant client without setting tenantId manually', async () => {
@@ -127,5 +142,79 @@ describe('LprEventsService', () => {
     expect(updateArg.data.status).toBe(LprDetectionStatus.registered);
     expect(result.status).toBe(LprDetectionStatus.registered);
     expect(mockAuditService.record.mock.calls).toHaveLength(0);
+  });
+
+  describe('uploadImage', () => {
+    const body = Buffer.from('fake-jpeg-bytes');
+
+    it('uploads to the deterministic path and persists imageStoragePath', async () => {
+      const existing = row();
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(existing);
+      mockStorageService.upload.mockResolvedValue(undefined);
+      mockTenant.lprDetectionEvent.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.lprDetectionEvent.findFirstOrThrow.mockResolvedValue(
+        row({ imageStoragePath: `${tenantId}/${eventId}.jpg` }),
+      );
+
+      const result = await service.uploadImage(eventId, body, 'image/jpeg');
+
+      expect(mockStorageService.upload).toHaveBeenCalledWith(
+        LPR_DETECTION_IMAGES_BUCKET,
+        `${tenantId}/${eventId}.jpg`,
+        body,
+        'image/jpeg',
+      );
+      const updateArg = mockTenant.lprDetectionEvent.updateMany.mock
+        .calls[0][0] as { data: { imageStoragePath: string } };
+      expect(updateArg.data.imageStoragePath).toBe(
+        `${tenantId}/${eventId}.jpg`,
+      );
+      expect(result.imageStoragePath).toBe(`${tenantId}/${eventId}.jpg`);
+    });
+
+    it('throws 404 when the event does not exist for the tenant', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(null);
+
+      const promise = service.uploadImage(eventId, body, 'image/jpeg');
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(promise).rejects.toBeInstanceOf(FormattedException);
+      expect(mockStorageService.upload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getImageSignedUrl', () => {
+    it('mints a signed URL when the event has a stored image', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(
+        row({ imageStoragePath: `${tenantId}/${eventId}.jpg` }),
+      );
+      mockStorageService.createSignedUrl.mockResolvedValue(
+        'https://signed.example/image.jpg',
+      );
+
+      const result = await service.getImageSignedUrl(eventId);
+
+      expect(mockStorageService.createSignedUrl).toHaveBeenCalledWith(
+        LPR_DETECTION_IMAGES_BUCKET,
+        `${tenantId}/${eventId}.jpg`,
+        300,
+      );
+      expect(result).toEqual({
+        url: 'https://signed.example/image.jpg',
+        expiresIn: 300,
+      });
+    });
+
+    it('throws 404 when the event has no stored image yet', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(
+        row({ imageStoragePath: null }),
+      );
+
+      const promise = service.getImageSignedUrl(eventId);
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(promise).rejects.toBeInstanceOf(FormattedException);
+      expect(mockStorageService.createSignedUrl).not.toHaveBeenCalled();
+    });
   });
 });
