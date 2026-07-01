@@ -15,6 +15,8 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -99,6 +101,14 @@ export class LprEventsController {
       '',
       'Object path is deterministic (`<tenantId>/<eventId>.jpg`), so retrying after a dropped connection just overwrites the same object — safe to call again from the offline sync queue.',
     ].join('\n'),
+  })
+  @ApiConsumes('image/jpeg')
+  @ApiBody({
+    schema: {
+      type: 'string',
+      format: 'binary',
+      description: 'Raw JPEG bytes captured by the desktop camera service.',
+    },
   })
   @ApiOkResponse({ type: LprDetectionEventDto })
   async uploadImage(
