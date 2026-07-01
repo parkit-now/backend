@@ -18,6 +18,9 @@ export const AuditActions = {
   ENTITY_REJECTED: 'entity.rejected',
   ENTITY_PROFILE_UPDATED: 'entity.profile_updated',
   PAYMENT_METHOD_TOGGLED: 'payment_method.toggled',
+  LPR_EVENT_REGISTERED: 'lpr_event.registered',
+  LPR_EVENT_DISMISSED: 'lpr_event.dismissed',
+  LPR_EVENT_SUPPRESSED: 'lpr_event.suppressed',
   // Admin · parkings
   PARKING_CREATED: 'parking.created',
   PARKING_UPDATED: 'parking.updated',

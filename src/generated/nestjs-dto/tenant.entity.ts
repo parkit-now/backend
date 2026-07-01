@@ -13,6 +13,7 @@ import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
 import {WhitelistEntity} from './whitelist.entity'
+import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 
 
 export class TenantEntity {
@@ -45,4 +46,5 @@ applications?: OnboardingApplicationEntity[] ;
 cashSessions?: CashSessionEntity[] ;
 paymentTransactions?: PaymentTransactionEntity[] ;
 whitelists?: WhitelistEntity[] ;
+lprDetectionEvents?: LprDetectionEventEntity[] ;
 }

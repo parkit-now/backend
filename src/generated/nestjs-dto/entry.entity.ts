@@ -5,6 +5,7 @@ import {WhitelistEntity} from './whitelist.entity'
 import {RateEntity} from './rate.entity'
 import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
+import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {TenantEntity} from './tenant.entity'
 
 
@@ -83,6 +84,7 @@ whitelist?: WhitelistEntity  | null;
 rate?: RateEntity  | null;
 cashSession?: CashSessionEntity  | null;
 paymentTransactions?: PaymentTransactionEntity[] ;
+lprDetectionEvents?: LprDetectionEventEntity[] ;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

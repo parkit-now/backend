@@ -4,6 +4,7 @@ import {ApiProperty} from '@nestjs/swagger'
 import {UserMembershipEntity} from './user-membership.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {AuditLogEntity} from './audit-log.entity'
+import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 
 
 export class UserEntity {
@@ -23,4 +24,5 @@ memberships?: UserMembershipEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
 reviewedApplications?: OnboardingApplicationEntity[] ;
 auditLogs?: AuditLogEntity[] ;
+reviewedLprDetectionEvents?: LprDetectionEventEntity[] ;
 }

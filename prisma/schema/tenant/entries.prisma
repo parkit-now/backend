@@ -42,6 +42,7 @@ model Entry {
   cashSession CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
 
   paymentTransactions PaymentTransaction[]
+  lprDetectionEvents  LprDetectionEvent[]
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])

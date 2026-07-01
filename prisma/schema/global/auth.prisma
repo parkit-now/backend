@@ -33,6 +33,7 @@ model User {
   applications         OnboardingApplication[] @relation("ApplicantApplications")
   reviewedApplications OnboardingApplication[] @relation("ReviewedApplications")
   auditLogs            AuditLog[]
+  reviewedLprDetectionEvents LprDetectionEvent[]
 
   @@map("users")
 }

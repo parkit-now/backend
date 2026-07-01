@@ -40,6 +40,7 @@ const TENANT_MODELS: readonly string[] = [
   'cashsession',
   'paymenttransaction',
   'whitelist',
+  'lprdetectionevent',
 ];
 
 const READ_OPS = new Set([

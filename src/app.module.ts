@@ -18,6 +18,7 @@ import { SchedulesModule } from './schedules/schedules.module';
 import { ServicesModule } from './services/services.module';
 import { CashSessionsModule } from './cash-sessions/cash-sessions.module';
 import { PaymentTransactionsModule } from './payment-transactions/payment-transactions.module';
+import { LprEventsModule } from './lpr-events/lpr-events.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { PaymentTransactionsModule } from './payment-transactions/payment-transa
     ServicesModule,
     CashSessionsModule,
     PaymentTransactionsModule,
+    LprEventsModule,
   ],
 })
 export class AppModule {}

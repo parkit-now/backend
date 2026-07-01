@@ -1,0 +1,70 @@
+model LprDetectionEvent {
+  // UUID from the desktop camera service, stable across offline sync retries.
+  id String @id @db.Uuid
+
+  cameraId       String   @map("camera_id") @db.VarChar(100)
+  location       String   @db.VarChar(50)
+  firstSeenAt    DateTime @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime @map("last_seen_at") @db.Timestamptz(6)
+  rawText        String?  @map("raw_text") @db.VarChar(32)
+  normalizedText String?  @map("normalized_text") @db.VarChar(20)
+  displayPlate   String?  @map("display_plate") @db.VarChar(32)
+  confidence     Float    @default(0)
+  formatValid    Boolean  @default(false) @map("format_valid")
+  formatType     LprFormatType @default(unknown) @map("format_type")
+  qualityStatus  LprQualityStatus @default(low_confidence) @map("quality_status")
+  status         LprDetectionStatus @default(pending)
+
+  entryId          String?   @map("entry_id") @db.Uuid
+  reviewedAt       DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
+  imageStoragePath String?   @map("image_storage_path")
+  imageUrl         String?   @map("image_url")
+  bestCaptureId    String?   @map("best_capture_id")
+  candidates       Json      @default("[]")
+
+  version   Int      @default(1)
+  syncSeq   Int      @default(dbgenerated("nextval('lpr_detection_events_sync_seq')")) @map("sync_seq")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entry          Entry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  reviewedByUser User?  @relation(fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  tenantId       String @map("tenant_id") @db.Uuid
+
+  @@index([tenantId], map: "lpr_detection_events_tenant_id_idx")
+  @@index([tenantId, syncSeq], map: "lpr_detection_events_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "lpr_detection_events_tenant_updated_at_idx")
+  @@index([tenantId, status], map: "lpr_detection_events_tenant_status_idx")
+  @@index([entryId], map: "lpr_detection_events_entry_id_idx")
+  @@map("lpr_detection_events")
+}
+
+enum LprDetectionStatus {
+  pending
+  registered
+  dismissed
+  suppressed_active_entry
+  suppressed_pending_event
+  suppressed_recent_exit
+
+  @@map("lpr_detection_status")
+}
+
+enum LprFormatType {
+  argentina_old
+  argentina_mercosur
+  unknown
+
+  @@map("lpr_format_type")
+}
+
+enum LprQualityStatus {
+  valid_high
+  valid_low
+  invalid_format
+  low_confidence
+
+  @@map("lpr_quality_status")
+}

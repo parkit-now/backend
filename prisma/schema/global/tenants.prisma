@@ -38,6 +38,7 @@ model Tenant {
   cashSessions         CashSession[]
   paymentTransactions  PaymentTransaction[]
   whitelists           Whitelist[]
+  lprDetectionEvents   LprDetectionEvent[]
 
   @@index([cuit])
   @@map("tenants")
