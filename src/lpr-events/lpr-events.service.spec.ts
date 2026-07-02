@@ -84,6 +84,8 @@ describe('LprEventsService', () => {
       entryId: null,
       reviewedAt: null,
       reviewedByUserId: null,
+      archivedAt: null,
+      archivedByUserId: null,
       imageStoragePath: null,
       imageUrl: null,
       bestCaptureId: null,
@@ -180,6 +182,49 @@ describe('LprEventsService', () => {
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(promise).rejects.toBeInstanceOf(FormattedException);
       expect(mockStorageService.upload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('archive', () => {
+    it('archives a dismissed event without changing its status', async () => {
+      const archivedAt = new Date('2026-07-01T12:05:00.000Z');
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(
+        row({ status: LprDetectionStatus.dismissed }),
+      );
+      mockTenant.lprDetectionEvent.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.lprDetectionEvent.findFirstOrThrow.mockResolvedValue(
+        row({
+          status: LprDetectionStatus.dismissed,
+          archivedAt,
+          archivedByUserId: actor.id,
+        }),
+      );
+
+      const result = await service.archive(eventId, actor);
+
+      const updateArg = mockTenant.lprDetectionEvent.updateMany.mock
+        .calls[0][0] as {
+        data: { archivedAt: Date; archivedByUserId: string };
+      };
+      expect(updateArg.data.archivedAt).toBeInstanceOf(Date);
+      expect(updateArg.data.archivedByUserId).toBe(actor.id);
+      expect(result.status).toBe(LprDetectionStatus.dismissed);
+      expect(result.archivedAt).toBe(archivedAt);
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'lpr_event.archived' }),
+      );
+    });
+
+    it('rejects non-dismissed events', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(
+        row({ status: LprDetectionStatus.pending }),
+      );
+
+      const promise = service.archive(eventId, actor);
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(promise).rejects.toBeInstanceOf(FormattedException);
+      expect(mockTenant.lprDetectionEvent.updateMany).not.toHaveBeenCalled();
     });
   });
 

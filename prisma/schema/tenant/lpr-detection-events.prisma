@@ -18,6 +18,8 @@ model LprDetectionEvent {
   entryId          String?   @map("entry_id") @db.Uuid
   reviewedAt       DateTime? @map("reviewed_at") @db.Timestamptz(6)
   reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
+  archivedAt       DateTime? @map("archived_at") @db.Timestamptz(6)
+  archivedByUserId String?   @map("archived_by_user_id") @db.Uuid
   imageStoragePath String?   @map("image_storage_path")
   imageUrl         String?   @map("image_url")
   bestCaptureId    String?   @map("best_capture_id")
@@ -30,6 +32,7 @@ model LprDetectionEvent {
 
   entry          Entry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
   reviewedByUser User?  @relation(fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  archivedByUser User?  @relation("ArchivedLprDetectionEvents", fields: [archivedByUserId], references: [id], onDelete: SetNull)
   tenant         Tenant @relation(fields: [tenantId], references: [id])
   tenantId       String @map("tenant_id") @db.Uuid
 
@@ -37,6 +40,7 @@ model LprDetectionEvent {
   @@index([tenantId, syncSeq], map: "lpr_detection_events_tenant_sync_seq_idx")
   @@index([tenantId, updatedAt], map: "lpr_detection_events_tenant_updated_at_idx")
   @@index([tenantId, status], map: "lpr_detection_events_tenant_status_idx")
+  @@index([tenantId, status, archivedAt], map: "lpr_detection_events_tenant_status_archived_idx")
   @@index([entryId], map: "lpr_detection_events_entry_id_idx")
   @@map("lpr_detection_events")
 }

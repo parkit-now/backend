@@ -43,6 +43,13 @@ displayPlate?: string;
 @IsOptional()
 @IsRFC3339()
 reviewedAt?: Date;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+archivedAt?: Date;
 @IsOptional()
 @IsString()
 imageStoragePath?: string;

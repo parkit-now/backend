@@ -43,6 +43,11 @@ status: LprDetectionStatus ;
   format: `date-time`,
 })
 reviewedAt: Date  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+archivedAt: Date  | null;
 imageStoragePath: string  | null;
 imageUrl: string  | null;
 bestCaptureId: string  | null;

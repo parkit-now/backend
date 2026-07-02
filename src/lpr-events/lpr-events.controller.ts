@@ -22,9 +22,10 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import type { User } from '@prisma/client';
+import { MembershipRole, type User } from '@prisma/client';
 import type { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
@@ -90,6 +91,34 @@ export class LprEventsController {
     @CurrentUser() user: User,
   ) {
     return this.lprEvents.updateStatus(eventId, dto, user);
+  }
+
+  @Patch(':eventId/archive')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    summary: 'Archive a dismissed LPR detection event after owner review',
+    description:
+      'Hides a dismissed event from the owner review inbox without deleting the auditable event or its stored evidence image.',
+  })
+  @ApiOkResponse({ type: LprDetectionEventDto })
+  async archive(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.lprEvents.archive(eventId, user);
+  }
+
+  @Patch(':eventId/unarchive')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    summary: 'Move an archived LPR detection event back to owner review',
+  })
+  @ApiOkResponse({ type: LprDetectionEventDto })
+  async unarchive(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.lprEvents.unarchive(eventId, user);
   }
 
   @Post(':eventId/image')

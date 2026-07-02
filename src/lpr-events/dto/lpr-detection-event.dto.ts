@@ -57,6 +57,12 @@ export class LprDetectionEventDto {
   @ApiPropertyOptional({ format: 'uuid', nullable: true })
   reviewedByUserId: string | null;
 
+  @ApiPropertyOptional({ format: 'date-time', nullable: true })
+  archivedAt: Date | null;
+
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  archivedByUserId: string | null;
+
   @ApiPropertyOptional({ nullable: true })
   imageStoragePath: string | null;
 
