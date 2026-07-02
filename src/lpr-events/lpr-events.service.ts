@@ -8,13 +8,21 @@ import {
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
+import {
+  LPR_DETECTION_IMAGES_BUCKET,
+  StorageService,
+} from '../storage/storage.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { LprDetectionEventChangesQueryDto } from './dto/lpr-detection-event-changes-query.dto';
 import { LprDetectionEventDto } from './dto/lpr-detection-event.dto';
+import { LprDetectionEventImageSignedUrlDto } from './dto/lpr-detection-event-image-signed-url.dto';
 import { ListLprDetectionEventsQueryDto } from './dto/list-lpr-detection-events-query.dto';
 import { UpdateLprDetectionEventDto } from './dto/update-lpr-detection-event.dto';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
+
+/** Validity window of an image signed URL, in seconds (5 minutes). */
+const IMAGE_SIGNED_URL_TTL = 300;
 
 type ChangesResponse = {
   items: LprDetectionEventDto[];
@@ -85,6 +93,7 @@ export class LprEventsService {
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
     private readonly audit: AuditService,
+    private readonly storage: StorageService,
   ) {}
 
   async upsert(
@@ -167,6 +176,81 @@ export class LprEventsService {
       await this.recordStatusAudit(updated, actor);
     }
     return toLprDetectionEventDto(updated);
+  }
+
+  /**
+   * Uploads the event's photo to the private bucket (service-role, bypasses
+   * storage RLS) and persists its path. Path is deterministic
+   * (`<tenantId>/<eventId>.jpg`) so a retried upload after a dropped
+   * connection just overwrites the same object instead of leaking orphans.
+   */
+  async uploadImage(
+    eventId: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<LprDetectionEventDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const tenantPrisma = this.prisma.getTenantClient();
+    const existing = await tenantPrisma.lprDetectionEvent.findFirst({
+      where: { id: eventId },
+    });
+    if (!existing) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        'LPR detection event not found.',
+        `/tenants/${tenantId}/lpr-events/${eventId}/image`,
+        ErrorCodes.NOT_FOUND,
+      );
+    }
+
+    const path = `${tenantId}/${eventId}.jpg`;
+    await this.storage.upload(
+      LPR_DETECTION_IMAGES_BUCKET,
+      path,
+      body,
+      contentType,
+    );
+
+    await tenantPrisma.lprDetectionEvent.updateMany({
+      where: { tenantId, id: eventId },
+      data: { imageStoragePath: path },
+    });
+    const updated = await tenantPrisma.lprDetectionEvent.findFirstOrThrow({
+      where: { id: eventId },
+    });
+    return toLprDetectionEventDto(updated);
+  }
+
+  /**
+   * Mints a short-lived signed URL so an owner/operator can preview an
+   * event's photo. Never persisted: the photo is sensitive (plate + vehicle
+   * appearance), so URLs are minted on demand instead of stored permanently.
+   */
+  async getImageSignedUrl(
+    eventId: string,
+  ): Promise<LprDetectionEventImageSignedUrlDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const tenantPrisma = this.prisma.getTenantClient();
+    const existing = await tenantPrisma.lprDetectionEvent.findFirst({
+      where: { id: eventId },
+    });
+    if (!existing?.imageStoragePath) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        'LPR detection event has no stored image.',
+        `/tenants/${tenantId}/lpr-events/${eventId}/image-signed-url`,
+        ErrorCodes.NOT_FOUND,
+      );
+    }
+
+    const url = await this.storage.createSignedUrl(
+      LPR_DETECTION_IMAGES_BUCKET,
+      existing.imageStoragePath,
+      IMAGE_SIGNED_URL_TTL,
+    );
+    return { url, expiresIn: IMAGE_SIGNED_URL_TTL };
   }
 
   async pullChanges(

@@ -6,6 +6,7 @@ import {
 import { HttpAdapterHost, NestFactory, Reflector } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationError } from 'class-validator';
+import { raw } from 'express';
 
 import { AppModule } from './app.module';
 import { ExceptionFilter } from './utils/exceptions/http-exception/error-filter-handler';
@@ -98,6 +99,15 @@ async function bootstrap() {
     });
 
     logger.log('CORS enabled');
+
+    // LPR event photos arrive as raw JPEG bytes (Content-Type: image/jpeg),
+    // not JSON — Nest's default body parsers skip non-matching content
+    // types, so this route needs its own binary parser ahead of the
+    // controller. Capped at 2MB; oversized bodies get an automatic 413.
+    app.use(
+      '/tenants/:tenantId/lpr-events/:eventId/image',
+      raw({ type: 'image/jpeg', limit: '2mb' }),
+    );
 
     app.useGlobalPipes(
       new ValidationPipe({
