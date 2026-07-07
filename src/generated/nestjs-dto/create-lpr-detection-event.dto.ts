@@ -59,6 +59,13 @@ imageStoragePath?: string;
 @IsOptional()
 @IsString()
 imageUrl?: string;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+imageDeletedAt?: Date;
 @IsOptional()
 @IsString()
 bestCaptureId?: string;

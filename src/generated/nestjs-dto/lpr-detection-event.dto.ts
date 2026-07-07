@@ -50,6 +50,11 @@ reviewedAt: Date  | null;
 archivedAt: Date  | null;
 imageStoragePath: string  | null;
 imageUrl: string  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+imageDeletedAt: Date  | null;
 bestCaptureId: string  | null;
 candidates: Prisma.JsonValue ;
 @ApiProperty({

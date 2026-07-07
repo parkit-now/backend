@@ -22,6 +22,7 @@ model LprDetectionEvent {
   archivedByUserId String?   @map("archived_by_user_id") @db.Uuid
   imageStoragePath String?   @map("image_storage_path")
   imageUrl         String?   @map("image_url")
+  imageDeletedAt   DateTime? @map("image_deleted_at") @db.Timestamptz(6)
   bestCaptureId    String?   @map("best_capture_id")
   candidates       Json      @default("[]")
 
