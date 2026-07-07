@@ -104,4 +104,24 @@ export class StorageService implements OnModuleInit {
       );
     }
   }
+
+  /**
+   * Removes a private object, e.g. as part of a retention/purge job. Callers
+   * that batch-delete across many rows should catch failures per-item so one
+   * bad object doesn't abort the whole run.
+   */
+  async remove(bucket: string, path: string): Promise<void> {
+    const { error } = await this.client.storage.from(bucket).remove([path]);
+
+    if (error) {
+      this.logger.error(`Failed to remove ${bucket}/${path}`, error.message);
+      throw new FormattedException(
+        'Bad Gateway',
+        HttpStatus.BAD_GATEWAY,
+        error.message ?? 'Failed to remove object',
+        `/${bucket}`,
+        ErrorCodes.STORAGE_REMOVE_FAILED,
+      );
+    }
+  }
 }
