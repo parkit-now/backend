@@ -69,6 +69,9 @@ export class LprDetectionEventDto {
   @ApiPropertyOptional({ nullable: true })
   imageUrl: string | null;
 
+  @ApiPropertyOptional({ format: 'date-time', nullable: true })
+  imageDeletedAt: Date | null;
+
   @ApiPropertyOptional({ nullable: true })
   bestCaptureId: string | null;
 

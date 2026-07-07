@@ -63,6 +63,7 @@ export function toLprDetectionEventDto(
     archivedByUserId: event.archivedByUserId,
     imageStoragePath: event.imageStoragePath,
     imageUrl: event.imageUrl,
+    imageDeletedAt: event.imageDeletedAt,
     bestCaptureId: event.bestCaptureId,
     candidates: jsonArray(event.candidates),
     version: event.version,
