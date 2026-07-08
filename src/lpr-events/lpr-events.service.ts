@@ -386,8 +386,8 @@ export class LprEventsService {
           : new Date()
         : undefined,
       reviewedByUserId: isResolved(status) ? actor.id : undefined,
-      imageStoragePath: dto.imageStoragePath,
-      imageUrl: dto.imageUrl,
+      // imageStoragePath/imageUrl are intentionally NOT read from the client:
+      // only uploadImage() may set them. A brand-new event never has one yet.
       bestCaptureId: dto.bestCaptureId,
       candidates: (dto.candidates ?? []) as Prisma.InputJsonValue,
     };
@@ -424,8 +424,13 @@ export class LprEventsService {
         : existing.reviewedByUserId,
       archivedAt: existing.archivedAt,
       archivedByUserId: existing.archivedByUserId,
-      imageStoragePath: dto.imageStoragePath ?? existing.imageStoragePath,
-      imageUrl: dto.imageUrl ?? existing.imageUrl,
+      // Never accept imageStoragePath/imageUrl from the client here: only
+      // uploadImage() may set them, and only the retention job may clear
+      // them. Otherwise a client with a stale local copy (e.g. re-upserting
+      // the same event on every camera poll tick) can resurrect a path the
+      // retention job already purged from Storage.
+      imageStoragePath: existing.imageStoragePath,
+      imageUrl: existing.imageUrl,
       bestCaptureId: dto.bestCaptureId ?? existing.bestCaptureId,
       candidates: (dto.candidates ??
         jsonArray(existing.candidates)) as Prisma.InputJsonValue,
