@@ -15,6 +15,9 @@ const REGISTERED_RETENTION_DAYS = 45;
 /** Noise (never became a paid stay): keep the image at least this long. */
 const NOISE_RETENTION_FLOOR_HOURS = 48;
 
+/** A `pending` event that never got reviewed is treated as noise past this. */
+const PENDING_STUCK_HOURS = 24;
+
 /** Safety cap so one run can't try to purge an unbounded backlog. */
 const MAX_CANDIDATES_PER_TIER = 500;
 
@@ -42,6 +45,10 @@ type Tier = 'registered' | 'noise' | 'archived';
  *  - noise (`dismissed`/`suppressed_*`, never billed): kept only until the
  *    tenant has no open cash session (i.e. between shifts) and
  *    `NOISE_RETENTION_FLOOR_HOURS` have passed.
+ *  - `pending` events that never got reviewed (camera fired, nobody
+ *    resolved it) are treated the same way, but with a shorter
+ *    `PENDING_STUCK_HOURS` floor — a stale pending detection has even less
+ *    reason to stick around than a reviewed-and-dismissed one.
  *  - `archived` (a human already reviewed and dismissed it): purged on the
  *    next run, no floor.
  *
@@ -112,16 +119,24 @@ export class LprImageRetentionService {
   }
 
   private findNoiseCandidates(): Promise<PurgeCandidate[]> {
-    const cutoff = new Date(
+    const noiseCutoff = new Date(
       Date.now() - NOISE_RETENTION_FLOOR_HOURS * 60 * 60 * 1000,
+    );
+    const pendingCutoff = new Date(
+      Date.now() - PENDING_STUCK_HOURS * 60 * 60 * 1000,
     );
     return this.prisma.lprDetectionEvent.findMany({
       where: {
-        status: { in: NOISE_STATUSES },
         imageStoragePath: { not: null },
         imageDeletedAt: null,
-        updatedAt: { lt: cutoff },
         tenant: { cashSessions: { none: { closedAt: null } } },
+        OR: [
+          { status: { in: NOISE_STATUSES }, updatedAt: { lt: noiseCutoff } },
+          {
+            status: LprDetectionStatus.pending,
+            updatedAt: { lt: pendingCutoff },
+          },
+        ],
       },
       select: { id: true, tenantId: true, imageStoragePath: true },
       take: MAX_CANDIDATES_PER_TIER,

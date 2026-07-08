@@ -127,26 +127,49 @@ describe('LprImageRetentionService', () => {
     ]);
   });
 
-  it('filters noise candidates by status and requires no open cash session for the tenant', async () => {
+  it('filters noise candidates by status/pending-timeout and requires no open cash session for the tenant', async () => {
     mockConfigService.get.mockReturnValue('true');
     await makeService().run();
 
     const noiseCall = mockPrisma.lprDetectionEvent.findMany.mock
       .calls[1][0] as {
       where: {
-        status: { in: LprDetectionStatus[] };
         tenant: unknown;
+        OR: [
+          { status: { in: LprDetectionStatus[] } },
+          { status: LprDetectionStatus },
+        ];
       };
     };
-    expect(noiseCall.where.status.in).toEqual([
+    expect(noiseCall.where.OR[0].status.in).toEqual([
       LprDetectionStatus.dismissed,
       LprDetectionStatus.suppressed_active_entry,
       LprDetectionStatus.suppressed_pending_event,
       LprDetectionStatus.suppressed_recent_exit,
     ]);
+    expect(noiseCall.where.OR[1].status).toBe(LprDetectionStatus.pending);
     expect(noiseCall.where.tenant).toEqual({
       cashSessions: { none: { closedAt: null } },
     });
+  });
+
+  it('gives stuck pending events a shorter floor than reviewed noise', async () => {
+    mockConfigService.get.mockReturnValue('true');
+    await makeService().run();
+
+    const noiseCall = mockPrisma.lprDetectionEvent.findMany.mock
+      .calls[1][0] as {
+      where: {
+        OR: [
+          { updatedAt: { lt: Date } },
+          { status: LprDetectionStatus; updatedAt: { lt: Date } },
+        ];
+      };
+    };
+    const [noiseBranch, pendingBranch] = noiseCall.where.OR;
+    expect(pendingBranch.updatedAt.lt.getTime()).toBeGreaterThan(
+      noiseBranch.updatedAt.lt.getTime(),
+    );
   });
 
   it('filters archived candidates without any time floor', async () => {
