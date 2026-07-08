@@ -37,6 +37,7 @@ export const ErrorCodes = {
   // Storage (Supabase object storage)
   STORAGE_SIGNED_URL_FAILED: 'STORAGE_SIGNED_URL_FAILED',
   STORAGE_UPLOAD_FAILED: 'STORAGE_UPLOAD_FAILED',
+  STORAGE_REMOVE_FAILED: 'STORAGE_REMOVE_FAILED',
 
   // Admin · parkings (tenants managed from the Ops panel)
   PARKING_NOT_FOUND: 'PARKING_NOT_FOUND',

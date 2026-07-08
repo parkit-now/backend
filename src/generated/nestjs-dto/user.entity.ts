@@ -25,4 +25,5 @@ applications?: OnboardingApplicationEntity[] ;
 reviewedApplications?: OnboardingApplicationEntity[] ;
 auditLogs?: AuditLogEntity[] ;
 reviewedLprDetectionEvents?: LprDetectionEventEntity[] ;
+archivedLprDetectionEvents?: LprDetectionEventEntity[] ;
 }

@@ -84,6 +84,8 @@ describe('LprEventsService', () => {
       entryId: null,
       reviewedAt: null,
       reviewedByUserId: null,
+      archivedAt: null,
+      archivedByUserId: null,
       imageStoragePath: null,
       imageUrl: null,
       bestCaptureId: null,
@@ -144,6 +146,33 @@ describe('LprEventsService', () => {
     expect(mockAuditService.record.mock.calls).toHaveLength(0);
   });
 
+  it('never lets an upsert resurrect an image the retention job already purged', async () => {
+    // A client resending a stale local copy of the event (e.g. the desktop
+    // re-upserting the same detection on every camera poll tick) must not be
+    // able to bring back imageStoragePath after it was cleared server-side.
+    // `imageStoragePath`/`imageUrl` aren't even part of the DTO type anymore,
+    // but simulate a client sneaking them into the request body regardless
+    // (e.g. an older desktop build, or a hand-crafted request).
+    const dtoWithStaleImage = {
+      ...dto,
+      imageStoragePath: `${tenantId}/${eventId}.jpg`,
+      imageUrl: 'https://stale-signed-url.example/old.jpg',
+    } as UpsertLprDetectionEventDto;
+    const existing = row({ imageStoragePath: null, imageUrl: null });
+    mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(existing);
+    mockTenant.lprDetectionEvent.updateMany.mockResolvedValue({ count: 1 });
+    mockTenant.lprDetectionEvent.findFirstOrThrow.mockResolvedValue(existing);
+
+    await service.upsert(dtoWithStaleImage, actor);
+
+    const updateArg = mockTenant.lprDetectionEvent.updateMany.mock
+      .calls[0][0] as {
+      data: { imageStoragePath: string | null; imageUrl: string | null };
+    };
+    expect(updateArg.data.imageStoragePath).toBeNull();
+    expect(updateArg.data.imageUrl).toBeNull();
+  });
+
   describe('uploadImage', () => {
     const body = Buffer.from('fake-jpeg-bytes');
 
@@ -180,6 +209,49 @@ describe('LprEventsService', () => {
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(promise).rejects.toBeInstanceOf(FormattedException);
       expect(mockStorageService.upload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('archive', () => {
+    it('archives a dismissed event without changing its status', async () => {
+      const archivedAt = new Date('2026-07-01T12:05:00.000Z');
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(
+        row({ status: LprDetectionStatus.dismissed }),
+      );
+      mockTenant.lprDetectionEvent.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.lprDetectionEvent.findFirstOrThrow.mockResolvedValue(
+        row({
+          status: LprDetectionStatus.dismissed,
+          archivedAt,
+          archivedByUserId: actor.id,
+        }),
+      );
+
+      const result = await service.archive(eventId, actor);
+
+      const updateArg = mockTenant.lprDetectionEvent.updateMany.mock
+        .calls[0][0] as {
+        data: { archivedAt: Date; archivedByUserId: string };
+      };
+      expect(updateArg.data.archivedAt).toBeInstanceOf(Date);
+      expect(updateArg.data.archivedByUserId).toBe(actor.id);
+      expect(result.status).toBe(LprDetectionStatus.dismissed);
+      expect(result.archivedAt).toBe(archivedAt);
+      expect(mockAuditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'lpr_event.archived' }),
+      );
+    });
+
+    it('rejects non-dismissed events', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(
+        row({ status: LprDetectionStatus.pending }),
+      );
+
+      const promise = service.archive(eventId, actor);
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(promise).rejects.toBeInstanceOf(FormattedException);
+      expect(mockTenant.lprDetectionEvent.updateMany).not.toHaveBeenCalled();
     });
   });
 

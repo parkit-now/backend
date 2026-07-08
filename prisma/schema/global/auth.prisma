@@ -34,6 +34,7 @@ model User {
   reviewedApplications OnboardingApplication[] @relation("ReviewedApplications")
   auditLogs            AuditLog[]
   reviewedLprDetectionEvents LprDetectionEvent[]
+  archivedLprDetectionEvents LprDetectionEvent[] @relation("ArchivedLprDetectionEvents")
 
   @@map("users")
 }

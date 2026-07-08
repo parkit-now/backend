@@ -48,8 +48,19 @@ entryId: string  | null;
 })
 reviewedAt: Date  | null;
 reviewedByUserId: string  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+archivedAt: Date  | null;
+archivedByUserId: string  | null;
 imageStoragePath: string  | null;
 imageUrl: string  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+imageDeletedAt: Date  | null;
 bestCaptureId: string  | null;
 candidates: Prisma.JsonValue ;
 @ApiProperty({
@@ -74,6 +85,7 @@ createdAt: Date ;
 updatedAt: Date ;
 entry?: EntryEntity  | null;
 reviewedByUser?: UserEntity  | null;
+archivedByUser?: UserEntity  | null;
 tenant?: TenantEntity ;
 tenantId: string ;
 }

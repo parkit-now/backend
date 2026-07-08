@@ -43,8 +43,18 @@ status: LprDetectionStatus ;
   format: `date-time`,
 })
 reviewedAt: Date  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+archivedAt: Date  | null;
 imageStoragePath: string  | null;
 imageUrl: string  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+imageDeletedAt: Date  | null;
 bestCaptureId: string  | null;
 candidates: Prisma.JsonValue ;
 @ApiProperty({

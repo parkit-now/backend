@@ -21,6 +21,9 @@ export const AuditActions = {
   LPR_EVENT_REGISTERED: 'lpr_event.registered',
   LPR_EVENT_DISMISSED: 'lpr_event.dismissed',
   LPR_EVENT_SUPPRESSED: 'lpr_event.suppressed',
+  LPR_EVENT_ARCHIVED: 'lpr_event.archived',
+  LPR_EVENT_UNARCHIVED: 'lpr_event.unarchived',
+  LPR_EVENT_IMAGE_PURGED: 'lpr_event.image_purged',
   // Admin · parkings
   PARKING_CREATED: 'parking.created',
   PARKING_UPDATED: 'parking.updated',

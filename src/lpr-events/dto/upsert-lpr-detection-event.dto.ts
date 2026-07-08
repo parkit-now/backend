@@ -97,16 +97,6 @@ export class UpsertLprDetectionEventDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  imageStoragePath?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  imageUrl?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
   bestCaptureId?: string;
 
   @ApiPropertyOptional({ type: 'array', items: { type: 'object' } })

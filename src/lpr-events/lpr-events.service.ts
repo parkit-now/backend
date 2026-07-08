@@ -59,8 +59,11 @@ export function toLprDetectionEventDto(
     entryId: event.entryId,
     reviewedAt: event.reviewedAt,
     reviewedByUserId: event.reviewedByUserId,
+    archivedAt: event.archivedAt,
+    archivedByUserId: event.archivedByUserId,
     imageStoragePath: event.imageStoragePath,
     imageUrl: event.imageUrl,
+    imageDeletedAt: event.imageDeletedAt,
     bestCaptureId: event.bestCaptureId,
     candidates: jsonArray(event.candidates),
     version: event.version,
@@ -178,6 +181,81 @@ export class LprEventsService {
     return toLprDetectionEventDto(updated);
   }
 
+  async archive(eventId: string, actor: User): Promise<LprDetectionEventDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const tenantPrisma = this.prisma.getTenantClient();
+    const existing = await tenantPrisma.lprDetectionEvent.findFirst({
+      where: { id: eventId },
+    });
+    if (!existing) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        'LPR detection event not found.',
+        `/tenants/${tenantId}/lpr-events/${eventId}/archive`,
+        ErrorCodes.NOT_FOUND,
+      );
+    }
+    if (existing.status !== LprDetectionStatus.dismissed) {
+      throw new FormattedException(
+        'Bad Request',
+        HttpStatus.BAD_REQUEST,
+        'Only dismissed LPR detection events can be archived.',
+        `/tenants/${tenantId}/lpr-events/${eventId}/archive`,
+        ErrorCodes.BAD_REQUEST,
+      );
+    }
+    if (existing.archivedAt) {
+      return toLprDetectionEventDto(existing);
+    }
+
+    await tenantPrisma.lprDetectionEvent.updateMany({
+      where: { tenantId, id: eventId },
+      data: {
+        archivedAt: new Date(),
+        archivedByUserId: actor.id,
+      },
+    });
+    const updated = await tenantPrisma.lprDetectionEvent.findFirstOrThrow({
+      where: { id: eventId },
+    });
+    await this.recordArchiveAudit(updated, actor, true);
+    return toLprDetectionEventDto(updated);
+  }
+
+  async unarchive(eventId: string, actor: User): Promise<LprDetectionEventDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const tenantPrisma = this.prisma.getTenantClient();
+    const existing = await tenantPrisma.lprDetectionEvent.findFirst({
+      where: { id: eventId },
+    });
+    if (!existing) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        'LPR detection event not found.',
+        `/tenants/${tenantId}/lpr-events/${eventId}/unarchive`,
+        ErrorCodes.NOT_FOUND,
+      );
+    }
+    if (!existing.archivedAt) {
+      return toLprDetectionEventDto(existing);
+    }
+
+    await tenantPrisma.lprDetectionEvent.updateMany({
+      where: { tenantId, id: eventId },
+      data: {
+        archivedAt: null,
+        archivedByUserId: null,
+      },
+    });
+    const updated = await tenantPrisma.lprDetectionEvent.findFirstOrThrow({
+      where: { id: eventId },
+    });
+    await this.recordArchiveAudit(updated, actor, false);
+    return toLprDetectionEventDto(updated);
+  }
+
   /**
    * Uploads the event's photo to the private bucket (service-role, bypasses
    * storage RLS) and persists its path. Path is deterministic
@@ -272,7 +350,10 @@ export class LprEventsService {
   ): Promise<LprDetectionEventDto[]> {
     const tenantPrisma = this.prisma.getTenantClient();
     const items = await tenantPrisma.lprDetectionEvent.findMany({
-      where: query.status ? { status: query.status } : undefined,
+      where: {
+        ...(query.status ? { status: query.status } : {}),
+        archivedAt: query.archived ? { not: null } : null,
+      },
       orderBy: [{ lastSeenAt: 'desc' }],
       take: query.limit,
     });
@@ -305,8 +386,8 @@ export class LprEventsService {
           : new Date()
         : undefined,
       reviewedByUserId: isResolved(status) ? actor.id : undefined,
-      imageStoragePath: dto.imageStoragePath,
-      imageUrl: dto.imageUrl,
+      // imageStoragePath/imageUrl are intentionally NOT read from the client:
+      // only uploadImage() may set them. A brand-new event never has one yet.
       bestCaptureId: dto.bestCaptureId,
       candidates: (dto.candidates ?? []) as Prisma.InputJsonValue,
     };
@@ -341,8 +422,15 @@ export class LprEventsService {
       reviewedByUserId: resolved
         ? (existing.reviewedByUserId ?? actor.id)
         : existing.reviewedByUserId,
-      imageStoragePath: dto.imageStoragePath ?? existing.imageStoragePath,
-      imageUrl: dto.imageUrl ?? existing.imageUrl,
+      archivedAt: existing.archivedAt,
+      archivedByUserId: existing.archivedByUserId,
+      // Never accept imageStoragePath/imageUrl from the client here: only
+      // uploadImage() may set them, and only the retention job may clear
+      // them. Otherwise a client with a stale local copy (e.g. re-upserting
+      // the same event on every camera poll tick) can resurrect a path the
+      // retention job already purged from Storage.
+      imageStoragePath: existing.imageStoragePath,
+      imageUrl: existing.imageUrl,
       bestCaptureId: dto.bestCaptureId ?? existing.bestCaptureId,
       candidates: (dto.candidates ??
         jsonArray(existing.candidates)) as Prisma.InputJsonValue,
@@ -368,6 +456,30 @@ export class LprEventsService {
         confidence: event.confidence,
         qualityStatus: event.qualityStatus,
         entryId: event.entryId,
+      },
+    });
+  }
+
+  private async recordArchiveAudit(
+    event: LprDetectionEvent,
+    actor: User,
+    archived: boolean,
+  ): Promise<void> {
+    await this.audit.record({
+      action: archived
+        ? AuditActions.LPR_EVENT_ARCHIVED
+        : AuditActions.LPR_EVENT_UNARCHIVED,
+      entityType: 'lpr_detection_event',
+      entityId: event.id,
+      actorUserId: actor.id,
+      tenantId: event.tenantId,
+      severity: 'info',
+      metadata: {
+        status: event.status,
+        normalizedText: event.normalizedText,
+        confidence: event.confidence,
+        archivedAt: event.archivedAt?.toISOString() ?? null,
+        archivedByUserId: event.archivedByUserId,
       },
     });
   }
