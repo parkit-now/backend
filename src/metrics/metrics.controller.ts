@@ -6,6 +6,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiForbiddenResponse,
   ApiOkResponse,
@@ -18,9 +19,14 @@ import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
-import { ProblemDetailsDto } from '../utils/exceptions/dto/problem-details.dto';
+import {
+  ProblemDetailsDto,
+  ValidationProblemDetailsDto,
+} from '../utils/exceptions/dto/problem-details.dto';
 import { MetricsTzQueryDto } from './dto/metrics-tz-query.dto';
 import { OccupancyResponseDto } from './dto/occupancy-response.dto';
+import { RevenueQueryDto } from './dto/revenue-query.dto';
+import { RevenueResponseDto } from './dto/revenue-response.dto';
 import { MetricsSummaryDto } from './dto/summary-response.dto';
 import { MetricsService } from './metrics.service';
 
@@ -65,6 +71,31 @@ export class MetricsController {
     @Query() query: MetricsTzQueryDto,
   ): Promise<MetricsSummaryDto> {
     return this.metricsService.getSummary(query);
+  }
+
+  @Get('revenue')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    operationId: 'metricsGetRevenue',
+    summary: 'Revenue and vehicle counts over a window, bucketed',
+    description: [
+      'Time series behind the revenue dashboard. `from`/`to` describe one continuous interval (not a repeating daily window), and the first and last buckets are clipped to the exact instants requested.',
+      '',
+      'Both the money series and the vehicle-count series come back together, so the dashboard’s $/cars toggle needs no second request. Note they use different time anchors — see `totals`.',
+      '',
+      'Optional filters narrow to a payment method or a vehicle type; `paymentMethod` switches the revenue source, reported in `revenueSource`.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: RevenueResponseDto })
+  @ApiBadRequestResponse({
+    description:
+      '`from` is not before `to`, a date-time lacks an explicit offset, or the range and granularity together exceed the bucket limit.',
+    type: ValidationProblemDetailsDto,
+  })
+  async getRevenue(
+    @Query() query: RevenueQueryDto,
+  ): Promise<RevenueResponseDto> {
+    return this.metricsService.getRevenue(query);
   }
 
   @Get('occupancy')

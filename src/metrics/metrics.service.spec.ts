@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Prisma } from '@prisma/client';
+import { Prisma, VehicleType } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
+import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { MetricsService } from './metrics.service';
 import { DEFAULT_TIME_ZONE, dayKeyIn, shiftDayKey } from './metrics-tz';
 
@@ -14,6 +15,10 @@ type MetricsWhere = {
   enteredAt?: DateRange;
   status?: string;
   archivedAt?: null;
+  vehicleType?: string;
+  paymentMethodName?: string;
+  // Transactions carry no timestamp, so their window rides on the relation.
+  entry?: { leftAt?: DateRange; tenantId?: string };
 };
 
 type WhereArgs = { where: MetricsWhere };
@@ -33,6 +38,10 @@ describe('MetricsService', () => {
       count: jest.fn(),
       aggregate: jest.fn(),
       groupBy: jest.fn(),
+      findMany: jest.fn(),
+    },
+    paymentTransaction: {
+      findMany: jest.fn(),
     },
     service: {
       findMany: jest.fn(),
@@ -102,6 +111,8 @@ describe('MetricsService', () => {
     mockPrisma.getTenantClient.mockReturnValue(mockTenant);
     mockTenant.service.findMany.mockResolvedValue([{ spots: 100 }]);
     mockTenant.entry.groupBy.mockResolvedValue([]);
+    mockTenant.entry.findMany.mockResolvedValue([]);
+    mockTenant.paymentTransaction.findMany.mockResolvedValue([]);
     mockTenant.lprDetectionEvent.count.mockResolvedValue(0);
     mockPrisma.tenant.findUnique.mockResolvedValue({ settings: {} });
     seedDays({});
@@ -177,6 +188,194 @@ describe('MetricsService', () => {
         { type: 'moto', occupied: 13 },
         { type: 'auto', occupied: 10 },
       ]);
+    });
+  });
+
+  describe('getRevenue', () => {
+    const AR_OFFSET = '-03:00';
+    const range = {
+      from: `2026-08-07T13:00:00${AR_OFFSET}`,
+      to: `2026-08-10T13:00:00${AR_OFFSET}`,
+    };
+
+    /** Closed stays, as the service selects them (id + leftAt + amountPaid). */
+    const exits = (rows: [string, number][]) =>
+      rows.map(([leftAt, amount], i) => ({
+        id: `e${i}`,
+        leftAt: new Date(leftAt),
+        amountPaid: new Prisma.Decimal(amount),
+      }));
+
+    it('buckets revenue by civil day in the requested timezone', async () => {
+      mockTenant.entry.findMany
+        .mockResolvedValueOnce(
+          exits([
+            ['2026-08-07T16:00:00Z', 1000], // 13:00 AR del 7
+            ['2026-08-08T16:00:00Z', 500], // 13:00 AR del 8
+            ['2026-08-08T20:00:00Z', 250], // 17:00 AR del 8
+          ]),
+        )
+        .mockResolvedValueOnce([]);
+
+      const result = await service.getRevenue(range);
+
+      expect(result.granularity).toBe('day');
+      expect(result.revenueSource).toBe('entries');
+      expect(result.currency).toBe('ARS');
+      expect(result.buckets.map((b) => [b.key, b.revenue])).toEqual([
+        ['2026-08-07', 1000],
+        ['2026-08-08', 750],
+        ['2026-08-09', 0],
+        ['2026-08-10', 0],
+      ]);
+      expect(result.totals.revenue).toBe(1750);
+      expect(result.totals.vehiclesOut).toBe(3);
+    });
+
+    it('clips the edge buckets to the requested instants', async () => {
+      mockTenant.entry.findMany.mockResolvedValue([]);
+
+      const result = await service.getRevenue(range);
+
+      // Window starts 13:00 AR on the 7th, not midnight.
+      expect(result.buckets[0].from.toISOString()).toBe(
+        '2026-08-07T16:00:00.000Z',
+      );
+      expect(result.buckets[0].to.toISOString()).toBe(
+        '2026-08-08T03:00:00.000Z',
+      );
+      const last = result.buckets[result.buckets.length - 1];
+      expect(last.to.toISOString()).toBe('2026-08-10T16:00:00.000Z');
+    });
+
+    it('anchors money on exit and vehicle counts on arrival', async () => {
+      // One stay: arrives on the 7th, leaves on the 9th.
+      mockTenant.entry.findMany
+        .mockResolvedValueOnce(exits([['2026-08-09T16:00:00Z', 3000]]))
+        .mockResolvedValueOnce([
+          { enteredAt: new Date('2026-08-07T16:00:00Z') },
+        ]);
+
+      const result = await service.getRevenue(range);
+      const byKey = Object.fromEntries(result.buckets.map((b) => [b.key, b]));
+
+      // The visit counts on the 7th...
+      expect(byKey['2026-08-07'].vehiclesIn).toBe(1);
+      expect(byKey['2026-08-07'].revenue).toBe(0);
+      // ...and the money on the 9th.
+      expect(byKey['2026-08-09'].revenue).toBe(3000);
+      expect(byKey['2026-08-09'].vehiclesIn).toBe(0);
+      expect(byKey['2026-08-09'].vehiclesOut).toBe(1);
+    });
+
+    it('switches source to transactions when filtering by payment method', async () => {
+      mockTenant.paymentTransaction.findMany.mockResolvedValue([
+        {
+          amount: new Prisma.Decimal(700),
+          entryId: 'e1',
+          entry: { leftAt: new Date('2026-08-07T16:00:00Z') },
+        },
+      ]);
+
+      const result = await service.getRevenue({
+        ...range,
+        paymentMethod: 'Efectivo',
+      });
+
+      expect(result.revenueSource).toBe('paymentTransactions');
+      expect(result.totals.revenue).toBe(700);
+      expect(mockTenant.entry.findMany).toHaveBeenCalledTimes(1); // arrivals only
+      const where = wheresOf(mockTenant.paymentTransaction.findMany)[0];
+      expect(where.paymentMethodName).toBe('Efectivo');
+      // Range is applied through the relation, since transactions have no
+      // timestamp of their own.
+      expect(where.entry?.leftAt).toBeDefined();
+      // ...and the relation restates the tenant, which the client extension
+      // only injects at the top level. Without it Postgres cannot use the
+      // (tenant_id, left_at) index and full-scans `entries`.
+      expect(where.entry?.tenantId).toBe('tenant-1');
+    });
+
+    it('counts a stay once even when it splits across several transactions', async () => {
+      mockTenant.paymentTransaction.findMany.mockResolvedValue([
+        {
+          amount: new Prisma.Decimal(400),
+          entryId: 'same-entry',
+          entry: { leftAt: new Date('2026-08-07T16:00:00Z') },
+        },
+        {
+          amount: new Prisma.Decimal(600),
+          entryId: 'same-entry',
+          entry: { leftAt: new Date('2026-08-07T16:00:00Z') },
+        },
+      ]);
+
+      const result = await service.getRevenue({
+        ...range,
+        paymentMethod: 'Efectivo',
+      });
+
+      expect(result.totals.revenue).toBe(1000);
+      expect(result.totals.vehiclesOut).toBe(1);
+    });
+
+    it('passes the vehicle type filter through to both series', async () => {
+      await service.getRevenue({ ...range, vehicleType: VehicleType.moto });
+
+      const wheres = wheresOf(mockTenant.entry.findMany);
+      expect(wheres).toHaveLength(2); // exits + arrivals
+      for (const where of wheres) {
+        expect(where.vehicleType).toBe('moto');
+      }
+    });
+
+    it('rejects an inverted range', async () => {
+      const failure = await service
+        .getRevenue({ from: range.to, to: range.from })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(FormattedException);
+    });
+
+    it('rejects a range that would explode into too many buckets', async () => {
+      const failure = await service
+        .getRevenue({
+          from: `2020-01-01T00:00:00${AR_OFFSET}`,
+          to: `2026-01-01T00:00:00${AR_OFFSET}`,
+          granularity: 'hour',
+        })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(FormattedException);
+    });
+
+    it('supports hourly granularity', async () => {
+      mockTenant.entry.findMany
+        .mockResolvedValueOnce(exits([['2026-08-07T17:30:00Z', 900]]))
+        .mockResolvedValueOnce([]);
+
+      const result = await service.getRevenue({
+        from: `2026-08-07T13:00:00${AR_OFFSET}`,
+        to: `2026-08-07T16:00:00${AR_OFFSET}`,
+        granularity: 'hour',
+      });
+
+      expect(result.buckets.map((b) => b.key)).toEqual([
+        '2026-08-07T13',
+        '2026-08-07T14',
+        '2026-08-07T15',
+      ]);
+      expect(result.buckets[1].revenue).toBe(900); // 14:30 AR
+    });
+
+    it('never threads tenantId through the revenue filters', async () => {
+      await service.getRevenue(range);
+
+      for (const call of mockTenant.entry.findMany.mock.calls) {
+        const [args] = call as [{ where: Record<string, any> }];
+        expect(args.where).not.toHaveProperty('tenantId');
+      }
+      expect(mockPrisma.getTenantClient).toHaveBeenCalled();
     });
   });
 
