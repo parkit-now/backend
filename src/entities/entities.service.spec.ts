@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import type { Tenant, User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { AuditEventDto } from '../audit/dto/audit-event.dto';
 import { PrismaService } from '../database/prisma.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { EntitiesService } from './entities.service';
@@ -233,16 +234,66 @@ describe('EntitiesService', () => {
   });
 
   describe('listAudit', () => {
-    it('delegates to AuditService.listForTenant', async () => {
+    beforeEach(() => {
       mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
-      mockAudit.listForTenant.mockResolvedValue([]);
+      mockAudit.listForTenant.mockResolvedValue({ items: [], total: 0 });
+    });
 
-      await service.listAudit('t-1', { limit: 50 });
+    it('translates pagination into skip/take and passes the filters', async () => {
+      await service.listAudit('t-1', {
+        page: 3,
+        pageSize: 20,
+        severity: 'warn',
+        action: 'entity.profile_updated',
+        from: '2026-08-01T00:00:00-03:00',
+        to: '2026-09-01T00:00:00-03:00',
+      });
 
       expect(mockAudit.listForTenant).toHaveBeenCalledWith('t-1', {
-        limit: 50,
-        severity: undefined,
+        severity: 'warn',
+        action: 'entity.profile_updated',
+        from: new Date('2026-08-01T00:00:00-03:00'),
+        to: new Date('2026-09-01T00:00:00-03:00'),
+        skip: 40,
+        take: 20,
       });
+    });
+
+    it('wraps the result in the paginated envelope', async () => {
+      const event = { id: 'a-1' } as AuditEventDto;
+      mockAudit.listForTenant.mockResolvedValue({ items: [event], total: 137 });
+
+      const result = await service.listAudit('t-1', { page: 2, pageSize: 10 });
+
+      // The envelope carries the requested page and the *unpaged* total, so
+      // the table can size its pager without a second call.
+      expect(result).toEqual({
+        items: [event],
+        page: 2,
+        pageSize: 10,
+        total: 137,
+      });
+    });
+
+    it('leaves the date bounds undefined when not supplied', async () => {
+      await service.listAudit('t-1', {});
+
+      expect(mockAudit.listForTenant).toHaveBeenCalledWith(
+        't-1',
+        expect.objectContaining({ from: undefined, to: undefined }),
+      );
+    });
+
+    it('rejects an inverted range before querying', async () => {
+      const failure = await service
+        .listAudit('t-1', {
+          from: '2026-09-01T00:00:00-03:00',
+          to: '2026-08-01T00:00:00-03:00',
+        })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(FormattedException);
+      expect(mockAudit.listForTenant).not.toHaveBeenCalled();
     });
   });
 });

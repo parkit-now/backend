@@ -9,8 +9,26 @@ describe('AuditService', () => {
     auditLog: {
       create: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn(),
     },
+    // listForTenant pairs findMany+count; resolve them in declaration order.
+    $transaction: jest.fn(),
   };
+
+  /** Filters and paging the service handed to `auditLog.findMany`. */
+  type FindManyArgs = {
+    where: {
+      tenantId: string;
+      severity?: string;
+      action?: string;
+      createdAt?: { gte?: Date; lt?: Date };
+    };
+    skip: number;
+    take: number;
+  };
+
+  const findManyArgs = (): FindManyArgs =>
+    mockPrisma.auditLog.findMany.mock.calls[0]?.[0] as FindManyArgs;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -67,29 +85,81 @@ describe('AuditService', () => {
   });
 
   describe('listForTenant', () => {
+    const row = {
+      id: 'a-1',
+      action: 'entity.approved',
+      entityType: 'tenant',
+      entityId: 't-1',
+      severity: 'info',
+      metadata: {},
+      createdAt: new Date('2026-05-01T10:00:00.000Z'),
+      actorUserId: 'u-1',
+      tenantId: 't-1',
+      actor: { email: 'owner@once.test' },
+    };
+
+    const returns = (rows: unknown[], total = rows.length) =>
+      mockPrisma.$transaction.mockResolvedValue([rows, total]);
+
     it('filters by tenantId and maps rows to events', async () => {
-      mockPrisma.auditLog.findMany.mockResolvedValue([
-        {
-          id: 'a-1',
-          action: 'entity.approved',
-          entityType: 'tenant',
-          entityId: 't-1',
-          severity: 'info',
-          metadata: {},
-          createdAt: new Date('2026-05-01T10:00:00.000Z'),
-          actorUserId: 'u-1',
-          tenantId: 't-1',
-          actor: { email: 'owner@once.test' },
-        },
-      ]);
+      returns([row]);
 
-      const events = await service.listForTenant('t-1');
+      const { items, total } = await service.listForTenant('t-1');
 
-      const whereArg = mockPrisma.auditLog.findMany.mock.calls[0][0] as {
-        where: { tenantId: string };
-      };
-      expect(whereArg.where.tenantId).toBe('t-1');
-      expect(events[0].actorName).toBe('owner@once.test');
+      expect(findManyArgs().where.tenantId).toBe('t-1');
+      expect(items[0].actorName).toBe('owner@once.test');
+      expect(total).toBe(1);
+    });
+
+    it('composes severity, action and the instant range', async () => {
+      returns([]);
+      const from = new Date('2026-08-01T03:00:00Z');
+      const to = new Date('2026-09-01T03:00:00Z');
+
+      await service.listForTenant('t-1', {
+        severity: 'warn',
+        action: AuditActions.ENTITY_PROFILE_UPDATED,
+        from,
+        to,
+      });
+
+      expect(findManyArgs().where).toEqual({
+        tenantId: 't-1',
+        severity: 'warn',
+        action: AuditActions.ENTITY_PROFILE_UPDATED,
+        // Half-open, so an event exactly on `to` belongs to the next range.
+        createdAt: { gte: from, lt: to },
+      });
+    });
+
+    it('omits the date filter entirely when neither bound is given', async () => {
+      returns([]);
+
+      await service.listForTenant('t-1', { severity: 'info' });
+
+      expect(findManyArgs().where.createdAt).toBeUndefined();
+    });
+
+    it('accepts an open-ended range', async () => {
+      returns([]);
+      const from = new Date('2026-08-01T03:00:00Z');
+
+      await service.listForTenant('t-1', { from });
+
+      expect(findManyArgs().where.createdAt).toEqual({ gte: from });
+    });
+
+    it('pages through results and reports the unpaged total', async () => {
+      returns([row], 137);
+
+      const { total } = await service.listForTenant('t-1', {
+        skip: 40,
+        take: 20,
+      });
+
+      expect(findManyArgs().skip).toBe(40);
+      expect(findManyArgs().take).toBe(20);
+      expect(total).toBe(137);
     });
   });
 

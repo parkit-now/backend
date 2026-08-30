@@ -1,10 +1,11 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import type { Prisma, User } from '@prisma/client';
-import { AuditEventDto } from '../audit/dto/audit-event.dto';
+import { PaginatedAuditDto } from '../audit/dto/paginated-audit.dto';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import { resolvePagination } from '../utils/pagination/pagination-query.dto';
 import { EntityAuditQueryDto } from './dto/entity-audit-query.dto';
 import {
   EntityProfileDto,
@@ -218,12 +219,33 @@ export class EntitiesService {
   async listAudit(
     tenantId: string,
     query: EntityAuditQueryDto,
-  ): Promise<AuditEventDto[]> {
+  ): Promise<PaginatedAuditDto> {
     await this.loadTenant(tenantId);
-    return this.audit.listForTenant(tenantId, {
-      limit: query.limit,
+
+    const { page, pageSize, skip, take } = resolvePagination(query);
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+
+    if (from && to && from >= to) {
+      throw new FormattedException(
+        'Bad Request',
+        HttpStatus.BAD_REQUEST,
+        '`from` must be earlier than `to`.',
+        `/tenants/${tenantId}/audit`,
+        ErrorCodes.VALIDATION_FAILED,
+      );
+    }
+
+    const { items, total } = await this.audit.listForTenant(tenantId, {
       severity: query.severity,
+      action: query.action,
+      from,
+      to,
+      skip,
+      take,
     });
+
+    return { items, page, pageSize, total };
   }
 
   private async loadTenant(tenantId: string) {
