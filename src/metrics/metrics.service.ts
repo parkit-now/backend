@@ -6,12 +6,19 @@ import { readCapacity } from '../entities/entity-settings';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { MetricsTzQueryDto } from './dto/metrics-tz-query.dto';
+import { MetricsWindowQueryDto } from './dto/metrics-window-query.dto';
 import {
   CapacitySource,
   OccupancyDto,
   OccupancyResponseDto,
 } from './dto/occupancy-response.dto';
+import { PaymentMethodBreakdownDto } from './dto/payment-method-breakdown.dto';
 import { RevenueQueryDto } from './dto/revenue-query.dto';
+import {
+  TopPlatesQueryDto,
+  type TopPlatesOrder,
+} from './dto/top-plates-query.dto';
+import { TopPlatesResponseDto } from './dto/top-plates-response.dto';
 import {
   RevenueBucketDto,
   RevenueResponseDto,
@@ -42,6 +49,21 @@ const UNKNOWN_VEHICLE_TYPE = 'unknown';
 const CURRENCY = 'ARS';
 
 const REVENUE_INSTANCE = '/tenants/:tenantId/metrics/revenue';
+const BREAKDOWN_INSTANCE =
+  '/tenants/:tenantId/metrics/revenue/by-payment-method';
+const TOP_PLATES_INSTANCE = '/tenants/:tenantId/metrics/top-plates';
+
+/** How many plates the ranking returns when the caller does not say. */
+const DEFAULT_TOP_PLATES = 10;
+
+const MS_PER_MINUTE = 60_000;
+
+/** Whole minutes a stay lasted. Defensive against a null or inverted exit. */
+function minutesBetween(enteredAt: Date, leftAt: Date | null): number {
+  if (!leftAt) return 0;
+  const elapsed = leftAt.getTime() - enteredAt.getTime();
+  return elapsed > 0 ? Math.round(elapsed / MS_PER_MINUTE) : 0;
+}
 
 /** Ratios are money-adjacent; 4 decimals is plenty and keeps JSON readable. */
 function roundRatio(value: number): number {
@@ -155,14 +177,11 @@ export class MetricsService {
   async getRevenue(query: RevenueQueryDto): Promise<RevenueResponseDto> {
     const tz = query.tz ?? DEFAULT_TIME_ZONE;
     const granularity: Granularity = query.granularity ?? 'day';
-    const from = new Date(query.from);
-    const to = new Date(query.to);
+    const { from, to } = this.resolveWindow(query, REVENUE_INSTANCE);
 
-    if (from >= to) {
-      throw this.badRevenueRange('`from` must be earlier than `to`.');
-    }
     if (exceedsBucketLimit(from, to, granularity)) {
-      throw this.badRevenueRange(
+      throw this.badWindow(
+        REVENUE_INSTANCE,
         `This range at '${granularity}' granularity exceeds the ${MAX_BUCKETS}-bucket limit. Widen the granularity or shorten the range.`,
       );
     }
@@ -225,6 +244,147 @@ export class MetricsService {
         revenue: roundMoney(row.revenue),
       })),
     };
+  }
+
+  /**
+   * Revenue split by payment method, for the dashboard's pie chart.
+   *
+   * Reconciles two tables that legitimately disagree. `entries.amountPaid` is
+   * the authoritative total, but the per-method split only exists in
+   * `payment_transactions` — and a stay closed through the offline
+   * `amountPaid` fallback never wrote one. The gap is reported as
+   * `unallocated` rather than quietly dropped, so the slices always add up to
+   * the KPI the owner sees elsewhere.
+   */
+  async getPaymentMethodBreakdown(
+    query: MetricsWindowQueryDto,
+  ): Promise<PaymentMethodBreakdownDto> {
+    const tenantPrisma = this.prisma.getTenantClient();
+    const { from, to } = this.resolveWindow(query, BREAKDOWN_INSTANCE);
+    const leftAt = { gte: from, lt: to };
+
+    const [authoritative, groups] = await Promise.all([
+      tenantPrisma.entry.aggregate({
+        _sum: { amountPaid: true },
+        where: { leftAt, ...vehicleTypeWhere(query.vehicleType) },
+      }),
+      tenantPrisma.paymentTransaction.groupBy({
+        by: ['paymentMethodName'],
+        _sum: { amount: true },
+        _count: { _all: true },
+        where: {
+          entry: {
+            // See `loadExits`: the tenant scope does not reach into a nested
+            // relation filter, and without it the range cannot use the index.
+            tenantId: this.tenantContext.getTenantIdOrThrow(),
+            leftAt,
+            ...vehicleTypeWhere(query.vehicleType),
+          },
+        },
+      }),
+    ]);
+
+    const total = roundMoney(Number(authoritative._sum.amountPaid ?? 0));
+    const methods = groups
+      .map((group) => ({
+        name: group.paymentMethodName,
+        amount: roundMoney(Number(group._sum.amount ?? 0)),
+        count: group._count._all,
+        share: null as number | null,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const allocated = roundMoney(
+      methods.reduce((sum, method) => sum + method.amount, 0),
+    );
+    for (const method of methods) {
+      method.share = total > 0 ? roundRatio(method.amount / total) : null;
+    }
+
+    return {
+      from,
+      to,
+      currency: CURRENCY,
+      total,
+      allocated,
+      unallocated: roundMoney(total - allocated),
+      methods,
+    };
+  }
+
+  /**
+   * The plates that mattered most over the window.
+   *
+   * Only stays that **ended** in the window count: an open stay has no final
+   * amount and no known duration, so including it would understate both.
+   *
+   * Rows are aggregated in memory rather than by `groupBy` because duration
+   * has no SQL expression in Prisma's grouping API, and computing two of the
+   * three metrics one way and the third another would risk them disagreeing.
+   */
+  async getTopPlates(query: TopPlatesQueryDto): Promise<TopPlatesResponseDto> {
+    const tenantPrisma = this.prisma.getTenantClient();
+    const { from, to } = this.resolveWindow(query, TOP_PLATES_INSTANCE);
+    const orderBy: TopPlatesOrder = query.orderBy ?? 'revenue';
+    const limit = query.limit ?? DEFAULT_TOP_PLATES;
+
+    const stays = await tenantPrisma.entry.findMany({
+      where: {
+        leftAt: { gte: from, lt: to },
+        ...vehicleTypeWhere(query.vehicleType),
+      },
+      select: { plate: true, enteredAt: true, leftAt: true, amountPaid: true },
+    });
+
+    const byPlate = new Map<
+      string,
+      { revenue: number; visits: number; totalMinutes: number }
+    >();
+    for (const stay of stays) {
+      const bucket = byPlate.get(stay.plate) ?? {
+        revenue: 0,
+        visits: 0,
+        totalMinutes: 0,
+      };
+      bucket.revenue += Number(stay.amountPaid ?? 0);
+      bucket.visits += 1;
+      bucket.totalMinutes += minutesBetween(stay.enteredAt, stay.leftAt);
+      byPlate.set(stay.plate, bucket);
+    }
+
+    const ranked = [...byPlate.entries()]
+      .map(([plate, totals]) => ({
+        plate,
+        revenue: roundMoney(totals.revenue),
+        visits: totals.visits,
+        totalMinutes: totals.totalMinutes,
+        averageMinutes: Math.round(totals.totalMinutes / totals.visits),
+      }))
+      .sort((a, b) => {
+        if (orderBy === 'visits') return b.visits - a.visits;
+        if (orderBy === 'duration') return b.totalMinutes - a.totalMinutes;
+        return b.revenue - a.revenue;
+      })
+      .slice(0, limit);
+
+    return { from, to, currency: CURRENCY, orderBy, items: ranked };
+  }
+
+  /**
+   * Parses and validates the `from`/`to` pair shared by every analytical
+   * endpoint. The offset is already enforced by `@IsOffsetDateTime`, so all
+   * that is left is ordering.
+   */
+  private resolveWindow(
+    query: MetricsWindowQueryDto,
+    instance: string,
+  ): { from: Date; to: Date } {
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    if (from >= to) {
+      throw this.badWindow(instance, '`from` must be earlier than `to`.');
+    }
+    return { from, to };
   }
 
   /**
@@ -311,12 +471,12 @@ export class MetricsService {
     return entries.map((entry) => entry.enteredAt);
   }
 
-  private badRevenueRange(detail: string): FormattedException {
+  private badWindow(instance: string, detail: string): FormattedException {
     return new FormattedException(
       'Bad Request',
       HttpStatus.BAD_REQUEST,
       detail,
-      REVENUE_INSTANCE,
+      instance,
       ErrorCodes.VALIDATION_FAILED,
     );
   }

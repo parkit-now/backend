@@ -24,9 +24,13 @@ import {
   ValidationProblemDetailsDto,
 } from '../utils/exceptions/dto/problem-details.dto';
 import { MetricsTzQueryDto } from './dto/metrics-tz-query.dto';
+import { MetricsWindowQueryDto } from './dto/metrics-window-query.dto';
 import { OccupancyResponseDto } from './dto/occupancy-response.dto';
+import { PaymentMethodBreakdownDto } from './dto/payment-method-breakdown.dto';
 import { RevenueQueryDto } from './dto/revenue-query.dto';
 import { RevenueResponseDto } from './dto/revenue-response.dto';
+import { TopPlatesQueryDto } from './dto/top-plates-query.dto';
+import { TopPlatesResponseDto } from './dto/top-plates-response.dto';
 import { MetricsSummaryDto } from './dto/summary-response.dto';
 import { MetricsService } from './metrics.service';
 
@@ -96,6 +100,52 @@ export class MetricsController {
     @Query() query: RevenueQueryDto,
   ): Promise<RevenueResponseDto> {
     return this.metricsService.getRevenue(query);
+  }
+
+  @Get('revenue/by-payment-method')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    operationId: 'metricsGetPaymentMethodBreakdown',
+    summary: 'Revenue split by payment method (pie chart)',
+    description: [
+      'One slice per payment method over the window, largest first.',
+      '',
+      'Also returns `unallocated`: revenue with no itemised transactions behind it, because the stay was closed through the offline `amountPaid` fallback. Slices plus `unallocated` add up to `total`, so the chart reconciles with the revenue KPI instead of quietly falling short of it.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: PaymentMethodBreakdownDto })
+  @ApiBadRequestResponse({
+    description:
+      '`from` is not before `to`, or a date-time lacks an explicit offset.',
+    type: ValidationProblemDetailsDto,
+  })
+  async getPaymentMethodBreakdown(
+    @Query() query: MetricsWindowQueryDto,
+  ): Promise<PaymentMethodBreakdownDto> {
+    return this.metricsService.getPaymentMethodBreakdown(query);
+  }
+
+  @Get('top-plates')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    operationId: 'metricsGetTopPlates',
+    summary: 'Highest-value plates over a window',
+    description: [
+      'Ranks plates by revenue, visit count or time parked — every metric comes back regardless, so switching the ranking is a re-sort rather than another request.',
+      '',
+      'Counts only stays that ended inside the window: a vehicle still parked has no final amount or duration yet.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: TopPlatesResponseDto })
+  @ApiBadRequestResponse({
+    description:
+      '`from` is not before `to`, or a date-time lacks an explicit offset.',
+    type: ValidationProblemDetailsDto,
+  })
+  async getTopPlates(
+    @Query() query: TopPlatesQueryDto,
+  ): Promise<TopPlatesResponseDto> {
+    return this.metricsService.getTopPlates(query);
   }
 
   @Get('occupancy')

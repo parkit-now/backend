@@ -42,6 +42,7 @@ describe('MetricsService', () => {
     },
     paymentTransaction: {
       findMany: jest.fn(),
+      groupBy: jest.fn(),
     },
     service: {
       findMany: jest.fn(),
@@ -113,6 +114,7 @@ describe('MetricsService', () => {
     mockTenant.entry.groupBy.mockResolvedValue([]);
     mockTenant.entry.findMany.mockResolvedValue([]);
     mockTenant.paymentTransaction.findMany.mockResolvedValue([]);
+    mockTenant.paymentTransaction.groupBy.mockResolvedValue([]);
     mockTenant.lprDetectionEvent.count.mockResolvedValue(0);
     mockPrisma.tenant.findUnique.mockResolvedValue({ settings: {} });
     seedDays({});
@@ -376,6 +378,207 @@ describe('MetricsService', () => {
         expect(args.where).not.toHaveProperty('tenantId');
       }
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+    });
+  });
+
+  describe('getPaymentMethodBreakdown', () => {
+    const range = {
+      from: '2026-08-07T13:00:00-03:00',
+      to: '2026-08-10T13:00:00-03:00',
+    };
+
+    const slice = (name: string, amount: number, count: number) => ({
+      paymentMethodName: name,
+      _sum: { amount: new Prisma.Decimal(amount) },
+      _count: { _all: count },
+    });
+
+    const totalOf = (amount: number) =>
+      mockTenant.entry.aggregate.mockResolvedValue({
+        _sum: { amountPaid: new Prisma.Decimal(amount) },
+      });
+
+    it('splits revenue by method, largest slice first', async () => {
+      totalOf(3000);
+      mockTenant.paymentTransaction.groupBy.mockResolvedValue([
+        slice('Transferencia', 800, 1),
+        slice('Efectivo', 2200, 3),
+      ]);
+
+      const result = await service.getPaymentMethodBreakdown(range);
+
+      expect(result.methods.map((m) => m.name)).toEqual([
+        'Efectivo',
+        'Transferencia',
+      ]);
+      expect(result.methods[0]).toEqual({
+        name: 'Efectivo',
+        amount: 2200,
+        count: 3,
+        share: 0.7333,
+      });
+      expect(result.total).toBe(3000);
+      expect(result.allocated).toBe(3000);
+      expect(result.unallocated).toBe(0);
+    });
+
+    it('reports the gap when stays were closed without itemised payments', async () => {
+      // The offline fallback: amountPaid recorded, no transaction rows.
+      totalOf(5000);
+      mockTenant.paymentTransaction.groupBy.mockResolvedValue([
+        slice('Efectivo', 2000, 2),
+      ]);
+
+      const result = await service.getPaymentMethodBreakdown(range);
+
+      expect(result.total).toBe(5000);
+      expect(result.allocated).toBe(2000);
+      expect(result.unallocated).toBe(3000);
+      // Slices plus the gap still account for the whole KPI.
+      expect(result.methods[0].share).toBe(0.4);
+    });
+
+    it('leaves shares null rather than dividing by an empty window', async () => {
+      totalOf(0);
+      mockTenant.paymentTransaction.groupBy.mockResolvedValue([]);
+
+      const result = await service.getPaymentMethodBreakdown(range);
+
+      expect(result.total).toBe(0);
+      expect(result.unallocated).toBe(0);
+      expect(result.methods).toEqual([]);
+    });
+
+    it('scopes the transaction grouping through the entry relation', async () => {
+      totalOf(0);
+
+      await service.getPaymentMethodBreakdown(range);
+
+      const where = wheresOf(mockTenant.paymentTransaction.groupBy)[0];
+      expect(where.entry?.leftAt).toBeDefined();
+      expect(where.entry?.tenantId).toBe('tenant-1');
+    });
+
+    it('rejects an inverted range', async () => {
+      const failure = await service
+        .getPaymentMethodBreakdown({ from: range.to, to: range.from })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(FormattedException);
+    });
+  });
+
+  describe('getTopPlates', () => {
+    const range = {
+      from: '2026-08-07T13:00:00-03:00',
+      to: '2026-08-10T13:00:00-03:00',
+    };
+
+    /** [plate, amount, minutes parked] */
+    const stays = (rows: [string, number, number][]) =>
+      rows.map(([plate, amount, minutes]) => ({
+        plate,
+        enteredAt: new Date('2026-08-08T12:00:00Z'),
+        leftAt: new Date(Date.parse('2026-08-08T12:00:00Z') + minutes * 60_000),
+        amountPaid: new Prisma.Decimal(amount),
+      }));
+
+    it('aggregates every metric per plate', async () => {
+      mockTenant.entry.findMany.mockResolvedValue(
+        stays([
+          ['AAA111', 1000, 60],
+          ['AAA111', 2000, 120],
+          ['BBB222', 5000, 30],
+        ]),
+      );
+
+      const result = await service.getTopPlates(range);
+
+      expect(result.items).toEqual([
+        {
+          plate: 'BBB222',
+          revenue: 5000,
+          visits: 1,
+          totalMinutes: 30,
+          averageMinutes: 30,
+        },
+        {
+          plate: 'AAA111',
+          revenue: 3000,
+          visits: 2,
+          totalMinutes: 180,
+          averageMinutes: 90,
+        },
+      ]);
+      expect(result.orderBy).toBe('revenue');
+    });
+
+    it('re-ranks by visits without changing the metrics', async () => {
+      mockTenant.entry.findMany.mockResolvedValue(
+        stays([
+          ['AAA111', 1000, 60],
+          ['AAA111', 2000, 120],
+          ['BBB222', 5000, 30],
+        ]),
+      );
+
+      const result = await service.getTopPlates({
+        ...range,
+        orderBy: 'visits',
+      });
+
+      expect(result.items.map((i) => i.plate)).toEqual(['AAA111', 'BBB222']);
+      expect(result.items[0].revenue).toBe(3000);
+    });
+
+    it('re-ranks by time parked', async () => {
+      mockTenant.entry.findMany.mockResolvedValue(
+        stays([
+          ['AAA111', 1000, 600],
+          ['BBB222', 5000, 30],
+        ]),
+      );
+
+      const result = await service.getTopPlates({
+        ...range,
+        orderBy: 'duration',
+      });
+
+      expect(result.items.map((i) => i.plate)).toEqual(['AAA111', 'BBB222']);
+    });
+
+    it('honours the limit', async () => {
+      mockTenant.entry.findMany.mockResolvedValue(
+        stays([
+          ['AAA111', 3000, 60],
+          ['BBB222', 2000, 60],
+          ['CCC333', 1000, 60],
+        ]),
+      );
+
+      const result = await service.getTopPlates({ ...range, limit: 2 });
+
+      expect(result.items.map((i) => i.plate)).toEqual(['AAA111', 'BBB222']);
+    });
+
+    it('only considers stays that already ended', async () => {
+      mockTenant.entry.findMany.mockResolvedValue([]);
+
+      await service.getTopPlates(range);
+
+      const where = wheresOf(mockTenant.entry.findMany)[0];
+      expect(where.leftAt).toEqual({
+        gte: new Date(range.from),
+        lt: new Date(range.to),
+      });
+    });
+
+    it('rejects an inverted range', async () => {
+      const failure = await service
+        .getTopPlates({ from: range.to, to: range.from })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(FormattedException);
     });
   });
 
