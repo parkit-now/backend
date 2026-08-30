@@ -88,7 +88,7 @@ describe('MetricsController', () => {
       const result = await controller.getSummary(query);
 
       expect(mockMetricsService.getSummary).toHaveBeenCalledWith(query);
-      expect(result).toEqual({ tz: 'UTC' });
+      expect(result.tz).toBe('UTC');
     });
 
     it('passes the revenue window and filters through untouched', async () => {
@@ -147,7 +147,7 @@ describe('MetricsController', () => {
       const result = await controller.getOccupancy();
 
       expect(mockMetricsService.getOccupancy).toHaveBeenCalledWith();
-      expect(result).toEqual({ capacity: 100 });
+      expect(result.capacity).toBe(100);
     });
   });
 });

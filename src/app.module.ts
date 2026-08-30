@@ -21,6 +21,7 @@ import { CashSessionsModule } from './cash-sessions/cash-sessions.module';
 import { PaymentTransactionsModule } from './payment-transactions/payment-transactions.module';
 import { LprEventsModule } from './lpr-events/lpr-events.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { StaffModule } from './staff/staff.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { MetricsModule } from './metrics/metrics.module';
     PaymentTransactionsModule,
     LprEventsModule,
     MetricsModule,
+    StaffModule,
   ],
 })
 export class AppModule {}
