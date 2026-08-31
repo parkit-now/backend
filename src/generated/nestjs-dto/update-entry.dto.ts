@@ -39,7 +39,7 @@ amountPaid?: Prisma.Decimal;
   enum: VehicleType,
 })
 @IsOptional()
-@IsIn(["auto","pickup","suv","van","moto","camioneta","otro"])
+@IsIn(["auto","moto","bici","suv","pickup","van","camion","otro"])
 vehicleType?: VehicleType;
 @IsOptional()
 @IsString()

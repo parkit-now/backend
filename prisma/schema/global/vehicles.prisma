@@ -1,10 +1,19 @@
+/// Tipo de carrocería del vehículo.
+///
+/// `camioneta` se quitó en 20260831190000_vehicles_type_enum_v2.sql: se pisaba
+/// con `pickup` y con `suv` (una Hilux es las dos cosas). La taxonomía de
+/// negocio —la que tiene plazas asignables— es `ServiceCode.VEHICLE_*`, donde
+/// `VEHICLE_PICKUP` ya está etiquetado "Camionetas". Mapeo:
+///   auto -> VEHICLE_CAR · moto -> VEHICLE_MOTORCYCLE · bici -> VEHICLE_BICYCLE
+///   suv|pickup|van -> VEHICLE_PICKUP · camion -> VEHICLE_TRUCK
 enum VehicleType {
   auto
-  pickup
-  suv
-  van
   moto
-  camioneta
+  bici
+  suv
+  pickup
+  van
+  camion
   otro
 
   @@map("vehicle_type")
@@ -25,6 +34,16 @@ model Vehicle {
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Unicidad: índice único PARCIAL y de EXPRESIÓN sobre
+  // (COALESCE(tenant_id, nil_uuid), lower(btrim(brand)), lower(btrim(model)))
+  // acotado a `deleted_at IS NULL`. Prisma no puede expresar ninguna de las tres
+  // cosas, así que vive solo en
+  // supabase/migrations/20260831190100_vehicles_unique_brand_model.sql.
+  //
+  // NO agregar `@@unique([tenantId, brand, model])` como "aproximación": sería
+  // semánticamente falso (no cubre el NULL de los globales, ni el
+  // case-insensitive, ni las bajas lógicas), generaría un findUnique engañoso y
+  // haría que `prisma migrate diff` quiera crear un índice de más.
   @@index([syncSeq], map: "vehicles_sync_seq_idx")
   @@index([tenantId], map: "vehicles_tenant_id_idx")
   @@map("vehicles")

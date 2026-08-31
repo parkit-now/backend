@@ -21,7 +21,7 @@ model: string;
   enum: VehicleType,
 })
 @IsOptional()
-@IsIn(["auto","pickup","suv","van","moto","camioneta","otro"])
+@IsIn(["auto","moto","bici","suv","pickup","van","camion","otro"])
 type?: VehicleType;
 @ApiProperty({
   type: `string`,
