@@ -1,7 +1,7 @@
 // Local-only tenant business seed.
 //
-// Creates sample `entries` rows for two tenants using global `vehicles`.
-// Idempotent — safe to run multiple times.
+// Creates sample `rates` and `entries` rows for two tenants using global
+// `vehicles`. Idempotent — safe to run multiple times.
 //
 // Guardrails:
 //   - Refuses to run unless SUPABASE_URL points to localhost / 127.0.0.1.
@@ -43,6 +43,71 @@ const VEHICLES = {
 // PENDING application under review (feeds the PARKIT Ops queue).
 const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
 const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
+
+// Rates were missing from this seed, so `make reset && make seed-all` left the
+// table empty and both the web ABM and the desktop panel came up with no
+// tariffs — which reads as a persistence bug rather than an empty seed.
+//
+// The non-round prices are deliberate: they exercise ARS formatting and the
+// Decimal(12,2) precision path, where round numbers would hide bugs.
+type SeedRate = {
+  id: string;
+  tenantId: string;
+  name: string;
+  hourPriceArs: string;
+  stayPriceArs: string;
+  fractionPriceArs: string;
+  shortcutNumber: number;
+  isActive?: boolean;
+  /** Set to seed a soft-deleted rate (tombstone) — see RATES below. */
+  deleted?: boolean;
+};
+
+const RATES: SeedRate[] = [
+  {
+    id: 'ffffffff-ffff-ffff-ffff-fffffffffff1',
+    tenantId: TENANTS.once,
+    name: 'DIA AUTO ONCE',
+    hourPriceArs: '4444.44',
+    stayPriceArs: '8000.00',
+    fractionPriceArs: '300.00',
+    shortcutNumber: 1,
+  },
+  // Deactivated, not deleted: the owner panel still lists it and can reactivate
+  // it. Keeps the isActive/deletedAt distinction visible in a fresh environment.
+  {
+    id: 'ffffffff-ffff-ffff-ffff-fffffffffff2',
+    tenantId: TENANTS.once,
+    name: 'NOCHE MOTO ONCE',
+    hourPriceArs: '1800.50',
+    stayPriceArs: '4000.00',
+    fractionPriceArs: '150.00',
+    shortcutNumber: 2,
+    isActive: false,
+  },
+  // Soft-deleted: never returned by GET /rates, but shipped by
+  // GET /rates/changes as a tombstone. Its shortcut number stays reusable
+  // because the unique index is scoped to `deleted_at IS NULL`.
+  {
+    id: 'ffffffff-ffff-ffff-ffff-fffffffffff3',
+    tenantId: TENANTS.once,
+    name: 'TASA BORRADA (DEMO)',
+    hourPriceArs: '999.99',
+    stayPriceArs: '2500.00',
+    fractionPriceArs: '99.00',
+    shortcutNumber: 9,
+    deleted: true,
+  },
+  {
+    id: 'ffffffff-ffff-ffff-ffff-fffffffffff4',
+    tenantId: TENANTS.belgrano,
+    name: 'TARIFA BELGRANO',
+    hourPriceArs: '5000.00',
+    stayPriceArs: '12000.00',
+    fractionPriceArs: '500.00',
+    shortcutNumber: 1,
+  },
+];
 
 // Entries no longer hold a vehicle FK: the model snapshots brand/model inline
 // (offline-first denormalization). The Vehicle catalog stays for autocomplete.
@@ -111,8 +176,59 @@ async function tableExists(table: string): Promise<boolean> {
   return rows[0]?.exists === true;
 }
 
+/** Fixed so re-seeding writes the same value instead of a moving timestamp. */
+const DEMO_DELETED_AT = new Date('2026-05-04T18:00:00.000Z');
+
+/**
+ * Rates seed (idempotent, keyed by fixed ids).
+ *
+ * `syncSeq` is never passed: the column defaults to `nextval('rates_sync_seq')`
+ * and an explicit value would land as 0, which is invisible to `/rates/changes`
+ * (that's what 20260604024720_fix_sync_seq_zero.sql had to repair).
+ */
+async function seedRates(): Promise<void> {
+  let seeded = 0;
+
+  for (const rate of RATES) {
+    const fields = {
+      tenantId: rate.tenantId,
+      name: rate.name,
+      hourPriceArs: rate.hourPriceArs,
+      stayPriceArs: rate.stayPriceArs,
+      fractionPriceArs: rate.fractionPriceArs,
+      shortcutNumber: rate.shortcutNumber,
+      isActive: rate.isActive ?? true,
+      deletedAt: rate.deleted ? DEMO_DELETED_AT : null,
+    };
+
+    try {
+      await prisma.rate.upsert({
+        where: { id: rate.id },
+        create: { id: rate.id, ...fields },
+        update: fields,
+      });
+      seeded += 1;
+    } catch (error) {
+      // The partial unique index on (tenant_id, shortcut_number) is scoped to
+      // `deleted_at IS NULL`, so a hand-made live rate holding the same
+      // shortcut collides. Skip it with a clear message instead of aborting
+      // the whole `make seed-all`.
+      const code = (error as { code?: string }).code;
+      if (code !== 'P2002') throw error;
+      console.warn(
+        `⚠ Skipped rate "${rate.name}": shortcut ${rate.shortcutNumber} is already taken in this tenant by another rate.`,
+      );
+    }
+  }
+
+  const tombstones = RATES.filter((r) => r.deleted).length;
+  console.log(
+    `✓ Seeded ${seeded} rates across 2 tenants (${tombstones} soft-deleted, for tombstone sync).`,
+  );
+}
+
 async function main(): Promise<void> {
-  const required = ['tenants', 'vehicles', 'entries'];
+  const required = ['tenants', 'vehicles', 'entries', 'rates'];
   for (const table of required) {
     const exists = await tableExists(table);
     if (!exists) {
@@ -152,6 +268,8 @@ async function main(): Promise<void> {
     },
     update: { brand: 'Renault', model: 'Kangoo', type: 'van' },
   });
+
+  await seedRates();
 
   for (const entry of ENTRIES) {
     await prisma.entry.upsert({
@@ -271,7 +389,12 @@ async function seedOnboarding(): Promise<void> {
     for (const r of rows) {
       await prisma.service.upsert({
         where: { tenantId_code: { tenantId, code: r.code as ServiceCode } },
-        create: { tenantId, code: r.code as ServiceCode, enabled: r.enabled, spots: r.spots },
+        create: {
+          tenantId,
+          code: r.code as ServiceCode,
+          enabled: r.enabled,
+          spots: r.spots,
+        },
         update: { enabled: r.enabled, spots: r.spots },
       });
     }
@@ -296,7 +419,14 @@ async function seedOnboarding(): Promise<void> {
         });
       } else {
         await prisma.paymentMethod.create({
-          data: { tenantId, type, name, enabled: true, isSystem: true, isDefault },
+          data: {
+            tenantId,
+            type,
+            name,
+            enabled: true,
+            isSystem: true,
+            isDefault,
+          },
         });
       }
     }
