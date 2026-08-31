@@ -51,7 +51,10 @@ export class RatesService {
 
   async listRates(query: ListRatesQueryDto): Promise<RateDto[]> {
     const tenantPrisma = this.prisma.getTenantClient();
-    const where: Prisma.RateWhereInput = {};
+    // Soft-deleted rates are never listed. This is independent of
+    // `includeInactive`: `isActive: false` means "deactivated" (still visible
+    // and reactivable in the owner panel), `deletedAt` means "deleted".
+    const where: Prisma.RateWhereInput = { deletedAt: null };
 
     if (!query.includeInactive) {
       where.isActive = true;
@@ -64,6 +67,11 @@ export class RatesService {
     return rates.map(toDto);
   }
 
+  /**
+   * Incremental sync feed. Deliberately does NOT filter `deletedAt`: shipping
+   * soft-deleted rows with a non-null `deletedAt` is precisely how a deletion
+   * reaches offline clients. Mirrors `VehiclesService.pullCatalogChanges`.
+   */
   async pullChanges(query: RateChangesQueryDto): Promise<RateChangesResponse> {
     const tenantPrisma = this.prisma.getTenantClient();
 
@@ -108,6 +116,7 @@ export class RatesService {
         tenantId,
         id: rateId,
         version: expectedVersion,
+        deletedAt: null,
       },
       data: updateData,
     });
@@ -129,15 +138,31 @@ export class RatesService {
     );
   }
 
+  /**
+   * Soft delete: stamps `deletedAt` instead of removing the row.
+   *
+   * The `rates_before_update` trigger bumps `sync_seq` on any UPDATE, so the
+   * marked row keeps flowing through `pullChanges` as a tombstone and offline
+   * clients can drop it locally. A hard delete emits nothing, which is why a
+   * deleted rate used to linger forever in the desktop's IndexedDB.
+   *
+   * `deletedAt: null` in the where clause makes a second DELETE return 409
+   * instead of re-stamping the mark and re-emitting the tombstone.
+   */
   async deleteRate(rateId: string, expectedVersion: number): Promise<void> {
     const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
-    const result = await tenantPrisma.rate.deleteMany({
+    const result = await tenantPrisma.rate.updateMany({
       where: {
         tenantId,
         id: rateId,
         version: expectedVersion,
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: new Date(),
+        version: { increment: 1 },
       },
     });
 

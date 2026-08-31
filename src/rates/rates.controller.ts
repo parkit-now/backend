@@ -99,7 +99,11 @@ export class RatesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @EntityRole(MembershipRole.owner)
   @ApiOperation({
-    summary: 'Hard delete a rate using optimistic locking (expectedVersion)',
+    summary: 'Soft-delete a rate using optimistic locking (expectedVersion)',
+    description:
+      'Soft-deletes the rate (sets deleted_at). The row keeps flowing through ' +
+      'GET /rates/changes as a tombstone so offline clients can remove it ' +
+      'from their local copy. Requires owner role.',
   })
   @ApiNoContentResponse({ description: 'Rate deleted successfully' })
   @ApiParam({

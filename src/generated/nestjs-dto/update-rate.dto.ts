@@ -1,7 +1,7 @@
 
 import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsInt,IsOptional,IsString} from 'class-validator'
+import {IsDecimal,IsInt,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -42,4 +42,11 @@ fractionPriceArs?: Prisma.Decimal;
 @IsOptional()
 @IsInt()
 shortcutNumber?: number;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+deletedAt?: Date;
 }
