@@ -32,11 +32,56 @@ const TENANTS = {
   belgrano: '22222222-2222-4222-8222-222222222222',
 } as const;
 
-const VEHICLES = {
-  corolla: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
-  ranger: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2',
-  kangoo: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3',
-} as const;
+// Vehículos PROPIOS de cada estacionamiento. Los globales (244 modelos) los
+// aplica la migración 20260831190200_vehicles_global_catalog_seed.sql, no un
+// seed: `supabase/seed.sql` nunca llega a la nube y producción quedaría con el
+// catálogo vacío.
+//
+// Antes acá se re-upserteaban los 3 globales del seed viejo. Eso disparaba el
+// trigger en cada `make seed-all` y les rotaba `sync_seq`/`version` al pedo.
+type SeedVehicle = {
+  id: string;
+  tenantId: string;
+  brand: string;
+  model: string;
+  type: 'auto' | 'moto' | 'bici' | 'suv' | 'pickup' | 'van' | 'camion' | 'otro';
+  /** Sembrado ya borrado, para ejercitar el tombstone del sync. */
+  deleted?: boolean;
+};
+
+const TENANT_VEHICLES: SeedVehicle[] = [
+  {
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb1',
+    tenantId: TENANTS.once,
+    brand: 'Iveco',
+    model: 'Daily',
+    type: 'van',
+  },
+  {
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb2',
+    tenantId: TENANTS.once,
+    brand: 'Zanella',
+    model: 'RX 150',
+    type: 'moto',
+  },
+  {
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb3',
+    tenantId: TENANTS.belgrano,
+    brand: 'Agrale',
+    model: 'Marruá',
+    type: 'pickup',
+  },
+  {
+    // Tombstone a propósito: ejercita que una baja llegue a los clientes
+    // offline por /vehicles/catalog. Mismo criterio que las tasas borradas.
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb4',
+    tenantId: TENANTS.once,
+    brand: 'Corven',
+    model: 'Energy',
+    type: 'moto',
+    deleted: true,
+  },
+];
 
 // Onboarding demo: two already-APPROVED entities (Once + Belgrano, owned by
 // owner@example.com via memberships) carry legal data + payment methods, and one
@@ -180,6 +225,52 @@ async function tableExists(table: string): Promise<boolean> {
 const DEMO_DELETED_AT = new Date('2026-05-04T18:00:00.000Z');
 
 /**
+ * Vehículos propios de cada estacionamiento (idempotente, ids fijos).
+ *
+ * Antes ningún seed creaba vehículos de tenant ni bajas, así que el ABM y el
+ * camino de tombstones del sync arrancaban sin fixtures.
+ *
+ * `syncSeq` nunca se pasa: la columna tiene DEFAULT nextval('vehicles_sync_seq')
+ * y un valor explícito caería en 0, invisible para /vehicles/catalog.
+ */
+async function seedTenantVehicles(): Promise<void> {
+  let seeded = 0;
+
+  for (const vehicle of TENANT_VEHICLES) {
+    const fields = {
+      tenantId: vehicle.tenantId,
+      brand: vehicle.brand,
+      model: vehicle.model,
+      type: vehicle.type,
+      deletedAt: vehicle.deleted ? DEMO_DELETED_AT : null,
+    };
+
+    try {
+      await prisma.vehicle.upsert({
+        where: { id: vehicle.id },
+        create: { id: vehicle.id, ...fields },
+        update: fields,
+      });
+      seeded += 1;
+    } catch (error) {
+      // `vehicles_scope_brand_model_uidx` es parcial sobre `deleted_at IS NULL`,
+      // así que una fila viva cargada a mano con la misma marca/modelo colisiona.
+      // Se saltea con un mensaje claro en vez de voltear todo `make seed-all`.
+      const code = (error as { code?: string }).code;
+      if (code !== 'P2002') throw error;
+      console.warn(
+        `⚠ Skipped vehicle "${vehicle.brand} ${vehicle.model}": already taken in this tenant.`,
+      );
+    }
+  }
+
+  const tombstones = TENANT_VEHICLES.filter((v) => v.deleted).length;
+  console.log(
+    `✓ Seeded ${seeded} tenant vehicles across 2 tenants (${tombstones} soft-deleted, for tombstone sync).`,
+  );
+}
+
+/**
  * Rates seed (idempotent, keyed by fixed ids).
  *
  * `syncSeq` is never passed: the column defaults to `nextval('rates_sync_seq')`
@@ -238,36 +329,7 @@ async function main(): Promise<void> {
     }
   }
 
-  await prisma.vehicle.upsert({
-    where: { id: VEHICLES.corolla },
-    create: {
-      id: VEHICLES.corolla,
-      brand: 'Toyota',
-      model: 'Corolla',
-      type: 'auto',
-    },
-    update: { brand: 'Toyota', model: 'Corolla', type: 'auto' },
-  });
-  await prisma.vehicle.upsert({
-    where: { id: VEHICLES.ranger },
-    create: {
-      id: VEHICLES.ranger,
-      brand: 'Ford',
-      model: 'Ranger',
-      type: 'pickup',
-    },
-    update: { brand: 'Ford', model: 'Ranger', type: 'pickup' },
-  });
-  await prisma.vehicle.upsert({
-    where: { id: VEHICLES.kangoo },
-    create: {
-      id: VEHICLES.kangoo,
-      brand: 'Renault',
-      model: 'Kangoo',
-      type: 'van',
-    },
-    update: { brand: 'Renault', model: 'Kangoo', type: 'van' },
-  });
+  await seedTenantVehicles();
 
   await seedRates();
 
