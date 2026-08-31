@@ -61,6 +61,12 @@ export const ErrorCodes = {
   // Vehicles
   VEHICLE_NOT_FOUND: 'VEHICLE_NOT_FOUND',
   VEHICLE_NOT_OWNED_BY_TENANT: 'VEHICLE_NOT_OWNED_BY_TENANT',
+  // Ya existe otra entrada viva con la misma marca/modelo en el catálogo
+  // privado de este estacionamiento.
+  VEHICLE_DUPLICATE: 'VEHICLE_DUPLICATE',
+  // La marca/modelo ya está en el catálogo global: una copia privada solo
+  // duplicaría la entrada en el autocompletado.
+  VEHICLE_ALREADY_IN_GLOBAL_CATALOG: 'VEHICLE_ALREADY_IN_GLOBAL_CATALOG',
 
   // Payment methods
   PAYMENT_METHOD_NOT_FOUND: 'PAYMENT_METHOD_NOT_FOUND',

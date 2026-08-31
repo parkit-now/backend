@@ -7,6 +7,7 @@ import { VehiclesService } from './vehicles.service';
   imports: [PrismaModule],
   controllers: [VehiclesController],
   providers: [VehiclesService],
-  exports: [VehiclesService],
+  // Sin `exports`: EntitiesController era el único consumidor externo y las
+  // rutas de vehículos ahora viven en VehiclesController.
 })
 export class VehiclesModule {}
