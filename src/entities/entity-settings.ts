@@ -2,19 +2,15 @@ import type { Prisma } from '@prisma/client';
 import type { EntityCapacityDto } from './dto/entity-profile.dto';
 
 /**
- * Typed view of `Tenant.settings` (a free-form JSON column). Today it only
- * carries the per-vehicle-type spot `capacity` (the `zones` table was removed);
- * keep new structured settings here so reads/writes stay type-checked.
+ * Vista tipada de `Tenant.settings` (una columna JSON libre). Hoy sólo lleva la
+ * capacidad total del estacionamiento; si aparecen settings estructurados
+ * nuevos, van acá para que lecturas y escrituras queden type-checked.
  */
 export interface EntitySettings {
   capacity?: EntityCapacityDto;
 }
 
-const ZERO_CAPACITY: EntityCapacityDto = {
-  carSpots: 0,
-  motorcycleSpots: 0,
-  bicycleSpots: 0,
-};
+const ZERO_CAPACITY: EntityCapacityDto = { total: 0 };
 
 function asInt(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value)
@@ -22,7 +18,14 @@ function asInt(value: unknown): number {
     : 0;
 }
 
-/** Reads `settings.capacity`, defaulting any missing type to `0`. */
+/**
+ * Lee `settings.capacity`, defaulteando a `0`.
+ *
+ * Tolera la forma VIEJA (`carSpots`/`motorcycleSpots`/`bicycleSpots`) sumándola:
+ * la migración las colapsa, pero una fila escrita por un deploy viejo entre
+ * medio devolvería `total: 0` en silencio, y un dueño con 55 plazas vería cero.
+ * Es barato y evita un cero mentiroso.
+ */
 export function readCapacity(settings: Prisma.JsonValue): EntityCapacityDto {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
     return { ...ZERO_CAPACITY };
@@ -32,14 +35,15 @@ export function readCapacity(settings: Prisma.JsonValue): EntityCapacityDto {
     return { ...ZERO_CAPACITY };
   }
   const c = capacity as Record<string, unknown>;
-  return {
-    carSpots: asInt(c.carSpots),
-    motorcycleSpots: asInt(c.motorcycleSpots),
-    bicycleSpots: asInt(c.bicycleSpots),
-  };
+
+  if (c.total !== undefined) return { total: asInt(c.total) };
+
+  const legacy =
+    asInt(c.carSpots) + asInt(c.motorcycleSpots) + asInt(c.bicycleSpots);
+  return { total: legacy };
 }
 
-/** Returns a new settings object with `capacity` merged in. */
+/** Devuelve un objeto de settings nuevo con `capacity` mergeado. */
 export function withCapacity(
   settings: Prisma.JsonValue,
   capacity: EntityCapacityDto,

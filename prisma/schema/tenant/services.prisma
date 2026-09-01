@@ -1,14 +1,17 @@
-// Service — per-tenant toggle of a known service/amenity (advance reservation,
-// accepted vehicle types, ...). The full catalog lives in the ServiceCode enum;
-// a row exists only for codes the tenant has touched, so GET merges enum
-// defaults (disabled) with stored rows. Tenant-local + offline-sync fields,
-// mirroring the Rate model.
+// Service — toggle por tenant de una prestación conocida. El catálogo completo
+// vive en el enum ServiceCode; existe una fila sólo para los códigos que el
+// tenant tocó, así que el GET mergea los defaults del enum (deshabilitados) con
+// las filas guardadas. Tenant-local + campos de sync, espejando Rate.
+//
+// Los códigos VEHICLE_* y la columna `spots` se retiraron: las plazas son una
+// capacidad general (`tenant.settings.capacity.total`) y "qué vehículos acepta
+// la playa" vive en `vehicle_types.accepted`. Eran tres taxonomías desalineadas
+// para una sola pregunta.
 
 model Service {
   id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code      ServiceCode
   enabled   Boolean     @default(false)
-  spots     Int         @default(0)
   version   Int         @default(1)
   syncSeq   Int         @default(dbgenerated("nextval('services_sync_seq')")) @map("sync_seq")
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -26,11 +29,6 @@ model Service {
 
 enum ServiceCode {
   ADVANCE_RESERVATION
-  VEHICLE_CAR
-  VEHICLE_BICYCLE
-  VEHICLE_MOTORCYCLE
-  VEHICLE_PICKUP
-  VEHICLE_TRUCK
 
   @@map("service_code")
 }

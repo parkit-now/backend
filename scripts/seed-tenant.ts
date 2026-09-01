@@ -441,8 +441,8 @@ async function seedOnboarding(): Promise<void> {
   // --- APPROVED entities: Once + Belgrano (owned by owner@example.com) ---
   // Membership is seeded by seed-auth; here we fill the relocated legal/contact
   // data and the entity-level payment methods.
-  // Per-type spot capacity now lives in `tenant.settings.capacity` (the `zones`
-  // table was removed). It feeds the owner dashboard occupancy and config.
+  // La capacidad total vive en `tenant.settings.capacity.total`: un solo
+  // número. Alimenta la ocupación del dashboard y la pantalla de config.
   await prisma.tenant.update({
     where: { id: TENANTS.once },
     data: {
@@ -452,9 +452,7 @@ async function seedOnboarding(): Promise<void> {
       phone: '+541140000000',
       address: 'Bartolomé Mitre 2500, CABA',
       status: 'active',
-      settings: {
-        capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
-      },
+      settings: { capacity: { total: 55 } },
     },
   });
   await prisma.tenant.update({
@@ -466,28 +464,16 @@ async function seedOnboarding(): Promise<void> {
       phone: '+541140000000',
       address: 'Av. Cabildo 2000, CABA',
       status: 'active',
-      settings: {
-        capacity: { carSpots: 25, motorcycleSpots: 8, bicycleSpots: 0 },
-      },
+      settings: { capacity: { total: 33 } },
     },
   });
 
-  // Services config: per-type spots now live in the `services` table (the
-  // owner edits them from the Services tab). Mirror the capacity above.
-  const demoServices: Record<
-    string,
-    { code: string; enabled: boolean; spots: number }[]
-  > = {
-    [TENANTS.once]: [
-      { code: 'VEHICLE_CAR', enabled: true, spots: 40 },
-      { code: 'VEHICLE_MOTORCYCLE', enabled: true, spots: 10 },
-      { code: 'VEHICLE_BICYCLE', enabled: true, spots: 5 },
-      { code: 'ADVANCE_RESERVATION', enabled: true, spots: 0 },
-    ],
-    [TENANTS.belgrano]: [
-      { code: 'VEHICLE_CAR', enabled: true, spots: 25 },
-      { code: 'VEHICLE_MOTORCYCLE', enabled: true, spots: 8 },
-    ],
+  // Servicios: sólo amenities. Los códigos VEHICLE_* se retiraron — "qué
+  // vehículos acepta la playa" vive en `vehicle_types.accepted`, y las plazas
+  // en `tenant.settings.capacity.total`.
+  const demoServices: Record<string, { code: string; enabled: boolean }[]> = {
+    [TENANTS.once]: [{ code: 'ADVANCE_RESERVATION', enabled: true }],
+    [TENANTS.belgrano]: [{ code: 'ADVANCE_RESERVATION', enabled: false }],
   };
   for (const [tenantId, rows] of Object.entries(demoServices)) {
     for (const r of rows) {
@@ -497,9 +483,8 @@ async function seedOnboarding(): Promise<void> {
           tenantId,
           code: r.code as ServiceCode,
           enabled: r.enabled,
-          spots: r.spots,
         },
-        update: { enabled: r.enabled, spots: r.spots },
+        update: { enabled: r.enabled },
       });
     }
   }

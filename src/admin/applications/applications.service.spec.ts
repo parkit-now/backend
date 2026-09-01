@@ -66,7 +66,7 @@ describe('ApplicationsService', () => {
         cuit: '30123456789',
         email: 'acme@x.com',
         phone: '+541100000000',
-        carSpots: 10,
+        totalSpots: 55,
       },
       applicant: {
         id: 'u-applicant',
@@ -112,33 +112,17 @@ describe('ApplicationsService', () => {
       expect(membershipArg.data.userId).toBe('u-applicant');
       expect(membershipArg.data.tenantId).toBe('tenant-1');
       expect(membershipArg.data.role).toBe(MembershipRole.owner);
-      // Declared spots → capacity stored in tenant settings.
+      // Declared spots -> capacity stored in tenant settings, as ONE number.
       const tenantArg = tx.tenant.create.mock.calls[0][0] as {
-        data: { settings: { capacity: { carSpots: number } } };
+        data: { settings: { capacity: { total: number } } };
       };
-      expect(tenantArg.data.settings.capacity.carSpots).toBe(10);
-      // Declared spots also materialize services rows (3 vehicle types).
-      expect(tx.service.createMany).toHaveBeenCalledTimes(1);
-      const serviceArg = tx.service.createMany.mock.calls[0][0] as {
-        data: { code: string; enabled: boolean; spots: number }[];
-      };
-      expect(serviceArg.data).toHaveLength(3);
-      const car = serviceArg.data.find((s) => s.code === 'VEHICLE_CAR');
-      expect(car).toMatchObject({ enabled: true, spots: 10 });
-      // System payment methods.
-      expect(tx.paymentMethod.createMany).toHaveBeenCalledTimes(1);
-      const pmArg = tx.paymentMethod.createMany.mock.calls[0][0] as {
-        data: unknown[];
-      };
-      expect(pmArg.data).toHaveLength(2);
-      // Application approved + linked to the created tenant.
-      const appUpdateArg = tx.onboardingApplication.update.mock.calls[0][0] as {
-        data: { status: string; tenantId: string };
-      };
-      expect(appUpdateArg.data.status).toBe('approved');
-      expect(appUpdateArg.data.tenantId).toBe('tenant-1');
-      // The GLOBAL role never changes (no driver→owner promotion).
-      expect(tx.user.update).not.toHaveBeenCalled();
+      expect(tenantArg.data.settings.capacity.total).toBe(55);
+      // Services, vehicle types, catalog and system payment methods are seeded
+      // by the `AFTER INSERT ON tenants` trigger, NOT here. Asserting they are
+      // NOT created is the point: before, this was the only creation path that
+      // did it, and `admin/parkings.create` silently skipped them.
+      expect(tx.service.createMany).not.toHaveBeenCalled();
+      expect(tx.paymentMethod.createMany).not.toHaveBeenCalled();
       expect(result.status).toBe('approved');
     });
 

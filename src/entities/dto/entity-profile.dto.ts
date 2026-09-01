@@ -2,35 +2,22 @@ import { ApiProperty } from '@nestjs/swagger';
 import type { BranchStatus } from '@prisma/client';
 
 /**
- * Per-vehicle-type spot capacity of an entity (parking lot). Stored in
- * `tenant.settings.capacity` (the `zones` table was removed). Feeds the owner
- * dashboard occupancy and the lot configuration screen. Defaults to `0` for any
- * type the lot has not configured yet.
+ * Capacidad total del estacionamiento, en plazas. Vive en
+ * `tenant.settings.capacity`.
+ *
+ * Antes eran tres contadores por tipo de vehículo, duplicados además en
+ * `services.spots`. Las plazas no dependen de la carrocería: los tipos de
+ * vehículo dicen QUÉ acepta la playa (`vehicle_types.accepted`), y esto dice
+ * CUÁNTAS plazas tiene.
  */
 export class EntityCapacityDto {
   @ApiProperty({
     type: 'integer',
     minimum: 0,
-    description: 'Number of car spots.',
-    example: 80,
+    description: 'Plazas totales del estacionamiento.',
+    example: 110,
   })
-  carSpots: number;
-
-  @ApiProperty({
-    type: 'integer',
-    minimum: 0,
-    description: 'Number of motorcycle spots.',
-    example: 20,
-  })
-  motorcycleSpots: number;
-
-  @ApiProperty({
-    type: 'integer',
-    minimum: 0,
-    description: 'Number of bicycle spots.',
-    example: 10,
-  })
-  bicycleSpots: number;
+  total: number;
 }
 
 /**

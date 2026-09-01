@@ -117,18 +117,14 @@ describe('EntitiesService', () => {
 
     it('merges capacity into settings and sets status', async () => {
       mockPrisma.tenant.findUnique.mockResolvedValue(
-        tenant({
-          settings: {
-            capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
-          },
-        }),
+        tenant({ settings: { capacity: { total: 55 } } }),
       );
       mockPrisma.tenant.update.mockResolvedValue(tenant());
       mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
 
       await service.updateProfile('t-1', owner, {
         status: 'maintenance',
-        capacity: { carSpots: 50 },
+        capacity: { total: 80 },
       });
 
       const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
@@ -138,12 +134,43 @@ describe('EntitiesService', () => {
         };
       };
       expect(updateArg.data.status).toBe('maintenance');
-      // Only carSpots changes; the other types keep their previous values.
-      expect(updateArg.data.settings.capacity).toEqual({
-        carSpots: 50,
-        motorcycleSpots: 10,
-        bicycleSpots: 5,
-      });
+      expect(updateArg.data.settings.capacity).toEqual({ total: 80 });
+    });
+
+    it('un capacity sin `total` conserva el valor actual, no lo pone en cero', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({ settings: { capacity: { total: 55 } } }),
+      );
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, { capacity: {} });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: { settings: { capacity: Record<string, number> } };
+      };
+      expect(updateArg.data.settings.capacity).toEqual({ total: 55 });
+    });
+
+    it('lee la forma vieja de tres contadores sumándola', async () => {
+      // Una fila escrita por un deploy anterior a la migración devolvería
+      // `total: 0` en silencio, y un dueño con 55 plazas vería cero.
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({
+          settings: {
+            capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
+          },
+        }),
+      );
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, { capacity: {} });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: { settings: { capacity: Record<string, number> } };
+      };
+      expect(updateArg.data.settings.capacity).toEqual({ total: 55 });
     });
   });
 

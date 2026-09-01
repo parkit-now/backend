@@ -33,9 +33,7 @@ interface DeclaredEntity {
   cuit?: string;
   email?: string;
   phone?: string;
-  carSpots?: number;
-  motorcycleSpots?: number;
-  bicycleSpots?: number;
+  totalSpots?: number;
 }
 
 @Injectable()
@@ -108,11 +106,16 @@ export class ApplicationsService {
   }
 
   /**
-   * Atomic approval: materializes the declared entity as a `Tenant` (+ initial
-   * zone + applicant `owner` membership + system payment methods) and marks the
-   * application approved. The entity-level role (owner) lives on
-   * `UserMembership.role`; the applicant's GLOBAL role stays `user`, so there is
-   * no JWT claim to mirror.
+   * Aprobación atómica: materializa la entidad declarada como `Tenant` + la
+   * membresía `owner` del solicitante, y marca la solicitud aprobada. El rol de
+   * entidad vive en `UserMembership.role`; el rol GLOBAL del solicitante sigue
+   * siendo `user`, así que no hay claim de JWT que espejar.
+   *
+   * Los servicios, los tipos de vehículo, el catálogo y los métodos de pago del
+   * sistema NO se crean acá: los siembra el trigger `AFTER INSERT ON tenants`
+   * (`bootstrap_tenant_defaults()`), que corre dentro de esta misma transacción.
+   * Antes se creaban acá y el alta directa por `admin/parkings` se los olvidaba,
+   * así que un estacionamiento dado de alta por el panel nacía manco.
    */
   async approve(admin: User, id: string): Promise<ApplicationDto> {
     const application = await this.loadApplication(id);
@@ -122,13 +125,10 @@ export class ApplicationsService {
     const applicant = application.applicant;
 
     await this.prisma.$transaction(async (tx) => {
-      // Declared per-type spot capacity is materialized into `tenant.settings`
-      // (the `zones` table was removed); it feeds the owner dashboard and config.
-      const capacity = {
-        carSpots: entity.carSpots ?? 0,
-        motorcycleSpots: entity.motorcycleSpots ?? 0,
-        bicycleSpots: entity.bicycleSpots ?? 0,
-      };
+      // La capacidad declarada se materializa en `tenant.settings.capacity`.
+      // Es UN número: las plazas no dependen de la carrocería. Qué vehículos
+      // acepta la playa vive en `vehicle_types.accepted`.
+      const capacity = { total: entity.totalSpots ?? 0 };
       const tenant = await tx.tenant.create({
         data: {
           name: entity.name ?? 'Untitled',
@@ -142,32 +142,6 @@ export class ApplicationsService {
         },
       });
 
-      // Per-type spot capacity is the source of truth for the owner's
-      // Services config: seed a `services` row per vehicle type, enabled when
-      // it has at least one spot.
-      await tx.service.createMany({
-        data: [
-          {
-            tenantId: tenant.id,
-            code: 'VEHICLE_CAR',
-            enabled: capacity.carSpots > 0,
-            spots: capacity.carSpots,
-          },
-          {
-            tenantId: tenant.id,
-            code: 'VEHICLE_MOTORCYCLE',
-            enabled: capacity.motorcycleSpots > 0,
-            spots: capacity.motorcycleSpots,
-          },
-          {
-            tenantId: tenant.id,
-            code: 'VEHICLE_BICYCLE',
-            enabled: capacity.bicycleSpots > 0,
-            spots: capacity.bicycleSpots,
-          },
-        ],
-      });
-
       // The applicant becomes the owner of the new entity via UserMembership.
       await tx.userMembership.create({
         data: {
@@ -175,29 +149,6 @@ export class ApplicationsService {
           tenantId: tenant.id,
           role: MembershipRole.owner,
         },
-      });
-
-      // Default payment methods created on approval. Generic, owner-editable
-      // names (no brand baked in); flagged isSystem so they can't be deleted.
-      await tx.paymentMethod.createMany({
-        data: [
-          {
-            tenantId: tenant.id,
-            type: 'transfer',
-            name: 'transfer',
-            enabled: true,
-            isSystem: true,
-            isDefault: true,
-          },
-          {
-            tenantId: tenant.id,
-            type: 'cash',
-            name: 'cash',
-            enabled: true,
-            isSystem: true,
-            isDefault: false,
-          },
-        ],
       });
 
       await tx.onboardingApplication.update({
