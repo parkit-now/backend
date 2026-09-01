@@ -15,5 +15,25 @@ model VehicleTypeDefault {
   name     String  @id @db.VarChar(60)
   accepted Boolean @default(true)
 
+  catalogDefaults VehicleCatalogDefault[]
+
   @@map("vehicle_type_defaults")
+}
+
+/// Plantilla del catálogo: los modelos con los que nace cada cuenta nueva.
+///
+/// Sin `id`: la PK es (brand, model) y cada tenant genera los suyos al copiar.
+/// Eso elimina el aparato de UUIDv5 determinísticos que necesitaba el catálogo
+/// global, donde los ids eran compartidos por todas las playas.
+model VehicleCatalogDefault {
+  brand String @db.VarChar(120)
+  model String @db.VarChar(120)
+
+  /// Nombre del tipo por defecto. FK a `vehicle_type_defaults.name` para que
+  /// el generador no pueda emitir un tipo inexistente.
+  typeName    String             @map("type_name") @db.VarChar(60)
+  defaultType VehicleTypeDefault @relation(fields: [typeName], references: [name], onUpdate: Cascade)
+
+  @@id([brand, model])
+  @@map("vehicle_catalog_defaults")
 }

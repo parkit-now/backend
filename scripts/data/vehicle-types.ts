@@ -1,5 +1,5 @@
 /**
- * Tipo de carrocería de cada modelo del catálogo global.
+ * Tipo de carrocería de cada modelo del catálogo semilla de la plataforma.
  *
  * POR QUÉ ESTE ARCHIVO EXISTE
  *
@@ -13,16 +13,53 @@
  * agregar modelos nuevos los tipifique mal en silencio, y como los globales son
  * read-only para los tenants, nadie podría corregirlos desde la app.
  *
- * CRITERIO (enum `VehicleType`):
+ * CRITERIO (carrocería, el dato de origen):
  *   auto   - sedán, hatchback, coupé, familiar, monovolumen
  *   suv    - SUV y crossover, con o sin tracción integral
  *   pickup - caja de carga abierta
  *   van    - utilitario / furgón, con o sin ventanas
  *
- * `moto`, `bici`, `camion` y `otro` no se usan acá (las 27 marcas son de autos),
- * pero están en el enum para lo que carguen los tenants.
+ * Esto clasifica por CARROCERÍA y se mantiene fiel al dato real: una Kangoo es
+ * una van. Lo que se SIEMBRA es otra cosa —el nombre de un tipo de la
+ * plantilla— y sale de `TEMPLATE_TYPE_NAME`. Se conservan separados a propósito:
+ * falsear la carrocería para que coincida con la plantilla sería mentir en la
+ * fuente, y la información ya no se recupera.
  */
 export type CatalogVehicleType = 'auto' | 'suv' | 'pickup' | 'van';
+
+/**
+ * Carrocería -> nombre del tipo por defecto con el que se siembra cada cuenta.
+ *
+ * `van -> Otro` es donde se reclasifican los 10 utilitarios (Kangoo, Partner,
+ * Berlingo...). Los siete defaults no incluyen "Utilitario" A PROPÓSITO: es el
+ * ejemplo canónico de la categoría que crea el dueño, y dejarlo afuera hace que
+ * la feature se explique sola la primera vez que alguien la necesita.
+ *
+ * Si algún día "Utilitario" entrara como default, se cambia ESTA línea y los 10
+ * se reclasifican solos.
+ */
+export const TEMPLATE_TYPE_NAME: Record<CatalogVehicleType, string> = {
+  auto: 'Auto',
+  suv: 'SUV',
+  pickup: 'Pickup',
+  van: 'Otro',
+};
+
+/**
+ * Los siete tipos que siembra `vehicle_type_defaults`. Duplicado acá para que
+ * el generador falle ANTES de emitir SQL si `TEMPLATE_TYPE_NAME` apunta a un
+ * nombre que no existe. La FK a `vehicle_type_defaults(name)` es el backstop en
+ * la base; esto avisa en el momento de generar.
+ */
+export const DEFAULT_TYPE_NAMES = [
+  'Auto',
+  'Moto',
+  'Bici',
+  'SUV',
+  'Pickup',
+  'Camión',
+  'Otro',
+] as const;
 
 export const MODEL_TYPES: Record<string, Record<string, CatalogVehicleType>> = {
   Volkswagen: {

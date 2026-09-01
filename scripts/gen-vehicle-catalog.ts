@@ -1,5 +1,5 @@
 /**
- * Genera el SQL del catálogo global de vehículos. Imprime a stdout.
+ * Genera el SQL de la PLANTILLA del catálogo de vehículos. Imprime a stdout.
  *
  *   bun run scripts/gen-vehicle-catalog.ts > /tmp/catalog.sql
  *
@@ -7,58 +7,32 @@
  * append-only). No se corre solo en ningún hook ni pipeline: es una herramienta
  * de desarrollo, y su output queda versionado en el SQL.
  *
+ * QUÉ ES LA PLANTILLA
+ *
+ * `vehicle_catalog_defaults` no la ve ningún estacionamiento: la lee sólo
+ * `bootstrap_tenant_defaults()`, el trigger `AFTER INSERT ON tenants`, que le
+ * da a cada cuenta NUEVA su copia propia y editable de estos modelos. Cambiar
+ * la plantilla afecta a las cuentas que se creen de ahora en más; nunca toca a
+ * las playas existentes, que son dueñas de su catálogo.
+ *
  * POR QUÉ UNA MIGRACIÓN Y NO `supabase/seed.sql`
  *
  * `seed.sql` es local-only por diseño: `supabase db push --linked` NUNCA lo
- * aplica. Si el catálogo viviera ahí, producción arrancaría con cero vehículos
- * globales y el autocompletado del desktop quedaría vacío para todos los
- * tenants reales. El catálogo es dato de referencia de la plataforma, no
+ * aplica. Si la plantilla viviera ahí, producción arrancaría vacía y cada
+ * cuenta nueva nacería sin catálogo. Es dato de referencia de la plataforma, no
  * fixtures de desarrollo.
  */
-import { createHash } from 'node:crypto';
 import { BRANDS } from './data/vehicle-brands';
-import { MODEL_TYPES, type CatalogVehicleType } from './data/vehicle-types';
-
-/**
- * Namespace del UUIDv5. NUNCA CAMBIARLO: los ids se derivan de él, así que
- * cambiarlo re-genera los 244 y duplica el catálogo entero en cualquier base
- * que ya haya corrido la migración.
- */
-const NAMESPACE = '3a3c1a1e-6f7d-4c9c-9a1e-8b6a2f0d5e11';
-
-/**
- * Los 3 globales que sembraba `supabase/seed.sql` antes de esta migración. Sus
- * ids ya están publicados y sincronizados a los clientes offline; si el
- * generador les asignara un UUIDv5 nuevo, el INSERT chocaría contra la fila
- * existente en `vehicles_scope_brand_model_uidx`.
- */
-const LEGACY_IDS: Record<string, string> = {
-  'toyota|corolla': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
-  'ford|ranger': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2',
-  'renault|kangoo': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3',
-};
+import {
+  DEFAULT_TYPE_NAMES,
+  MODEL_TYPES,
+  TEMPLATE_TYPE_NAME,
+  type CatalogVehicleType,
+} from './data/vehicle-types';
 
 /** Misma normalización que `vehicles_scope_brand_model_uidx`: lower + btrim. */
 function key(brand: string, model: string): string {
   return `${brand.trim().toLowerCase()}|${model.trim().toLowerCase()}`;
-}
-
-function uuidv5(name: string, namespace: string): string {
-  const ns = Buffer.from(namespace.replace(/-/g, ''), 'hex');
-  const digest = createHash('sha1')
-    .update(ns)
-    .update(Buffer.from(name, 'utf8'))
-    .digest();
-  const b = Buffer.from(digest.subarray(0, 16));
-  b[6] = (b[6] & 0x0f) | 0x50; // versión 5
-  b[8] = (b[8] & 0x3f) | 0x80; // variante RFC 4122
-  const h = b.toString('hex');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
-
-function vehicleId(brand: string, model: string): string {
-  const k = key(brand, model);
-  return LEGACY_IDS[k] ?? uuidv5(k, NAMESPACE);
 }
 
 /** Postgres: escapar comilla simple duplicándola. */
@@ -67,10 +41,12 @@ function lit(value: string): string {
 }
 
 interface CatalogRow {
-  id: string;
   brand: string;
   model: string;
+  /** Carrocería: el dato de origen. */
   type: CatalogVehicleType;
+  /** Nombre del tipo por defecto con el que se siembra. */
+  typeName: string;
 }
 
 function buildCatalog(): CatalogRow[] {
@@ -101,7 +77,12 @@ function buildCatalog(): CatalogRow[] {
         unclassified.push(`${brand.name} ${model}`);
         continue;
       }
-      rows.push({ id: vehicleId(brand.name, model), brand: brand.name, model, type });
+      rows.push({
+        brand: brand.name,
+        model,
+        type,
+        typeName: TEMPLATE_TYPE_NAME[type],
+      });
     }
   }
 
@@ -135,6 +116,18 @@ function buildCatalog(): CatalogRow[] {
     );
   }
 
+  // Cuarto guard: la plantilla no puede apuntar a un tipo que no exista entre
+  // los defaults. La FK a `vehicle_type_defaults(name)` es el backstop en la
+  // base; esto falla acá, antes de emitir una sola línea de SQL.
+  const unknownTypeNames = [...new Set(Object.values(TEMPLATE_TYPE_NAME))].filter(
+    (name) => !DEFAULT_TYPE_NAMES.includes(name as (typeof DEFAULT_TYPE_NAMES)[number]),
+  );
+  if (unknownTypeNames.length > 0) {
+    throw new Error(
+      `TEMPLATE_TYPE_NAME apunta a tipos que no están en DEFAULT_TYPE_NAMES: ${unknownTypeNames.join(', ')}`,
+    );
+  }
+
   if (duplicates.length > 0) {
     console.error(`-- Duplicados descartados: ${duplicates.join(', ')}`);
   }
@@ -144,45 +137,38 @@ function buildCatalog(): CatalogRow[] {
 
 function main(): void {
   const rows = buildCatalog();
-  const byType = rows.reduce<Record<string, number>>((acc, r) => {
-    acc[r.type] = (acc[r.type] ?? 0) + 1;
+  const byTypeName = rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.typeName] = (acc[r.typeName] ?? 0) + 1;
     return acc;
   }, {});
 
   const values = rows
-    .map((r) => `  (${lit(r.id)}, ${lit(r.brand)}, ${lit(r.model)}, ${lit(r.type)}, NULL)`)
+    .map((r) => `  (${lit(r.brand)}, ${lit(r.model)}, ${lit(r.typeName)})`)
     .join(',\n');
 
-  process.stdout.write(`-- Catálogo global de vehículos: ${BRANDS.length} marcas, ${rows.length} modelos.
--- Reparto por tipo: ${Object.entries(byType)
+  process.stdout.write(`-- Plantilla del catálogo de vehículos: ${BRANDS.length} marcas, ${rows.length} modelos.
+-- Reparto por tipo sembrado: ${Object.entries(byTypeName)
     .map(([t, n]) => `${t}=${n}`)
     .join(', ')}.
 --
 -- GENERADO por scripts/gen-vehicle-catalog.ts — NO editar a mano. Para cambiar
--- el catálogo: editar scripts/data/vehicle-brands.ts y scripts/data/vehicle-types.ts,
+-- la plantilla: editar scripts/data/vehicle-brands.ts y scripts/data/vehicle-types.ts,
 -- re-correr el generador y agregar una migración NUEVA (append-only).
 --
--- \`tenant_id NULL\` = global: visible en todos los estacionamientos y read-only
--- vía API (ningún endpoint del tenant puede editarlos ni borrarlos).
+-- Esta tabla NO la ve ningún estacionamiento. La lee sólo
+-- \`bootstrap_tenant_defaults()\`, que le da a cada cuenta nueva su copia propia
+-- y editable. Cambiarla afecta a las cuentas futuras; nunca a las existentes.
 --
--- Los ids son UUIDv5 determinísticos sobre el namespace
--- ${NAMESPACE} y la clave "marca|modelo" en minúsculas,
--- salvo Toyota/Corolla, Ford/Ranger y Renault/Kangoo, que conservan los ids
--- 'aaaaaaaa-…aaa1/2/3' que ya publicaba el seed viejo.
+-- Los 10 utilitarios (Kangoo, Partner, Berlingo...) se siembran como "Otro":
+-- "Utilitario" no está entre los siete defaults a propósito, es el ejemplo
+-- canónico de la categoría que crea el dueño. El mapeo vive en
+-- TEMPLATE_TYPE_NAME (scripts/data/vehicle-types.ts), en una sola línea.
 --
--- NO se pasa \`sync_seq\`: la columna tiene DEFAULT nextval('vehicles_sync_seq').
--- Pasarlo a mano es el bug que ya tuvo que reparar 20260604024720_fix_sync_seq_zero.sql.
---
--- ON CONFLICT DO NOTHING SIN conflict target: cubre tanto la colisión por \`id\`
--- (re-corrida de la migración) como la de vehicles_scope_brand_model_uidx (una
--- fila global cargada a mano con la misma marca/modelo y otro id). Con
--- \`ON CONFLICT (id)\` ese segundo caso tiraría 23505 y voltearía la migración.
---
--- DO NOTHING y no DO UPDATE: un UPDATE dispara set_vehicles_sync_fields, que
--- bumpea sync_seq y version de las ${rows.length} filas y fuerza un re-pull completo
--- del catálogo en todos los clientes offline.
+-- Sin \`id\`: la PK es (brand, model) y cada tenant genera los suyos al copiar.
+-- Eso elimina el aparato de UUIDv5 determinísticos que necesitaba el catálogo
+-- global, donde los ids eran compartidos por todas las playas.
 
-INSERT INTO vehicles (id, brand, model, type, tenant_id) VALUES
+INSERT INTO vehicle_catalog_defaults (brand, model, type_name) VALUES
 ${values}
 ON CONFLICT DO NOTHING;
 `);
