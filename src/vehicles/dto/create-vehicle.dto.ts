@@ -1,15 +1,7 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleBodyType } from '@prisma/client';
+import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { normalizeCatalogText } from '../../utils/text/normalize-catalog-text';
-import {
-  IsEnum,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  IsUUID,
-  MaxLength,
-} from 'class-validator';
+import { IsNotEmpty, IsString, IsUUID, MaxLength } from 'class-validator';
 
 /**
  * Alias histórico de `normalizeCatalogText`. Se mantiene el nombre porque lo
@@ -39,8 +31,12 @@ export class CreateVehicleDto {
   @MaxLength(120)
   model: string;
 
-  @ApiPropertyOptional({ enum: VehicleBodyType, example: VehicleBodyType.auto })
-  @IsOptional()
-  @IsEnum(VehicleBodyType)
-  type?: VehicleBodyType;
+  @ApiProperty({
+    format: 'uuid',
+    description:
+      'Tipo de vehículo, de `GET /tenants/:tenantId/vehicle-types`. ' +
+      'Obligatorio: un vehículo nunca queda sin tipo.',
+  })
+  @IsUUID()
+  typeId: string;
 }

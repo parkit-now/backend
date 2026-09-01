@@ -44,10 +44,26 @@ type SeedVehicle = {
   tenantId: string;
   brand: string;
   model: string;
-  type: 'auto' | 'moto' | 'bici' | 'suv' | 'pickup' | 'van' | 'camion' | 'otro';
+  /** Nombre del tipo en `vehicle_types` de ESE tenant; se resuelve a `typeId`. */
+  typeName: string;
   /** Sembrado ya borrado, para ejercitar el tombstone del sync. */
   deleted?: boolean;
 };
+
+/**
+ * Tipo propio de demo. "Utilitario" NO está entre los siete defaults a
+ * propósito: es el ejemplo canónico de la categoría que crea el dueño. Que Once
+ * lo tenga hace que el seed DEMUESTRE la feature en vez de contradecirla — y le
+ * da al Iveco Daily una clasificación honesta en vez de mandarlo a "Otro".
+ */
+const TENANT_VEHICLE_TYPES = [
+  {
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaacc1',
+    tenantId: TENANTS.once,
+    name: 'Utilitario',
+    accepted: true,
+  },
+];
 
 const TENANT_VEHICLES: SeedVehicle[] = [
   {
@@ -55,30 +71,30 @@ const TENANT_VEHICLES: SeedVehicle[] = [
     tenantId: TENANTS.once,
     brand: 'Iveco',
     model: 'Daily',
-    type: 'van',
+    typeName: 'Utilitario',
   },
   {
     id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb2',
     tenantId: TENANTS.once,
     brand: 'Zanella',
     model: 'RX 150',
-    type: 'moto',
+    typeName: 'Moto',
   },
   {
     id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb3',
     tenantId: TENANTS.belgrano,
     brand: 'Agrale',
     model: 'Marruá',
-    type: 'pickup',
+    typeName: 'Pickup',
   },
   {
     // Tombstone a propósito: ejercita que una baja llegue a los clientes
-    // offline por /vehicles/catalog. Mismo criterio que las tasas borradas.
+    // offline por /vehicles/changes. Mismo criterio que las tasas borradas.
     id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb4',
     tenantId: TENANTS.once,
     brand: 'Corven',
     model: 'Energy',
-    type: 'moto',
+    typeName: 'Moto',
     deleted: true,
   },
 ];
@@ -231,17 +247,43 @@ const DEMO_DELETED_AT = new Date('2026-05-04T18:00:00.000Z');
  * camino de tombstones del sync arrancaban sin fixtures.
  *
  * `syncSeq` nunca se pasa: la columna tiene DEFAULT nextval('vehicles_sync_seq')
- * y un valor explícito caería en 0, invisible para /vehicles/catalog.
+ * y un valor explícito caería en 0, invisible para /vehicles/changes.
  */
 async function seedTenantVehicles(): Promise<void> {
   let seeded = 0;
 
+  // El tipo propio de demo va primero: los vehículos lo referencian por FK.
+  for (const type of TENANT_VEHICLE_TYPES) {
+    await prisma.vehicleType.upsert({
+      where: { id: type.id },
+      create: type,
+      update: { name: type.name, accepted: type.accepted },
+    });
+  }
+
   for (const vehicle of TENANT_VEHICLES) {
+    // Los siete tipos por defecto los siembra el trigger de `tenants`; acá se
+    // resuelve el nombre al id de ESE estacionamiento.
+    const type = await prisma.vehicleType.findFirst({
+      where: {
+        tenantId: vehicle.tenantId,
+        name: vehicle.typeName,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!type) {
+      console.warn(
+        `⚠ Skipped vehicle "${vehicle.brand} ${vehicle.model}": no existe el tipo "${vehicle.typeName}" en ese estacionamiento.`,
+      );
+      continue;
+    }
+
     const fields = {
       tenantId: vehicle.tenantId,
       brand: vehicle.brand,
       model: vehicle.model,
-      type: vehicle.type,
+      typeId: type.id,
       deletedAt: vehicle.deleted ? DEMO_DELETED_AT : null,
     };
 
@@ -253,7 +295,7 @@ async function seedTenantVehicles(): Promise<void> {
       });
       seeded += 1;
     } catch (error) {
-      // `vehicles_scope_brand_model_uidx` es parcial sobre `deleted_at IS NULL`,
+      // `vehicles_tenant_brand_model_uidx` es parcial sobre `deleted_at IS NULL`,
       // así que una fila viva cargada a mano con la misma marca/modelo colisiona.
       // Se saltea con un mensaje claro en vez de voltear todo `make seed-all`.
       const code = (error as { code?: string }).code;

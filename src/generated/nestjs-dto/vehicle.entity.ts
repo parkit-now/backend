@@ -1,19 +1,17 @@
 
-import {VehicleBodyType} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {TenantEntity} from './tenant.entity'
+import {VehicleTypeEntity} from './vehicle-type.entity'
 
 
 export class VehicleEntity {
   id: string ;
 brand: string ;
 model: string ;
-@ApiProperty({
-  enum: VehicleBodyType,
-})
-type: VehicleBodyType  | null;
-tenantId: string  | null;
-tenant?: TenantEntity  | null;
+tenantId: string ;
+typeId: string ;
+tenant?: TenantEntity ;
+type?: VehicleTypeEntity ;
 @ApiProperty({
   type: `integer`,
   format: `int32`,

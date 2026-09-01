@@ -1,9 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleBodyType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
-export class VehicleCatalogItemDto {
+export class VehicleDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
@@ -13,21 +12,17 @@ export class VehicleCatalogItemDto {
   @ApiProperty({ example: 'Corolla' })
   model: string;
 
-  @ApiPropertyOptional({
-    enum: VehicleBodyType,
-    nullable: true,
-    example: VehicleBodyType.auto,
-  })
-  type: VehicleBodyType | null;
-
-  @ApiPropertyOptional({
+  @ApiProperty({
     format: 'uuid',
-    nullable: true,
     description:
-      'null = global (admin-managed, read-only para los estacionamientos), ' +
-      'UUID = propio de ese estacionamiento.',
+      'Tipo de vehículo, de la tabla `vehicle_types` de este estacionamiento. ' +
+      'Obligatorio: borrar un tipo obliga a reasignar, así que un vehículo ' +
+      'nunca queda sin tipo.',
   })
-  tenantId: string | null;
+  typeId: string;
+
+  @ApiProperty({ format: 'uuid' })
+  tenantId: string;
 
   @ApiProperty({
     type: Number,
@@ -46,7 +41,7 @@ export class VehicleCatalogItemDto {
     nullable: true,
     description:
       'No-nulo cuando el vehículo fue borrado lógicamente. Las filas con valor ' +
-      'no-nulo solo aparecen en GET /vehicles/catalog, como tombstone del sync.',
+      'no-nulo solo aparecen en GET /vehicles/changes, como tombstone del sync.',
   })
   deletedAt: string | null;
 
@@ -57,15 +52,15 @@ export class VehicleCatalogItemDto {
   createdAt: string;
 }
 
-export class VehicleCatalogChangesResponseDto {
-  @ApiProperty({ type: [VehicleCatalogItemDto] })
-  items: VehicleCatalogItemDto[];
+export class VehicleChangesResponseDto {
+  @ApiProperty({ type: [VehicleDto] })
+  items: VehicleDto[];
 
   @ApiProperty({ type: Number })
   maxSeq: number;
 }
 
-export class VehicleCatalogChangesQueryDto {
+export class VehicleChangesQueryDto {
   @ApiPropertyOptional({
     description: 'Devuelve las filas con syncSeq mayor a este valor.',
     default: 0,

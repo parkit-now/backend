@@ -54,7 +54,7 @@ describe('VehiclesController', () => {
 
     for (const handler of [
       VehiclesController.prototype.list,
-      VehiclesController.prototype.pullCatalog,
+      VehiclesController.prototype.pullChanges,
     ]) {
       expect(reflector.get(ENTITY_ROLE_KEY, handler)).toBeUndefined();
     }

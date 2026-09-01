@@ -1,6 +1,7 @@
 
 import {ApiProperty} from '@nestjs/swagger'
 import {TenantEntity} from './tenant.entity'
+import {VehicleEntity} from './vehicle.entity'
 
 
 export class VehicleTypeEntity {
@@ -9,6 +10,7 @@ name: string ;
 accepted: boolean ;
 tenantId: string ;
 tenant?: TenantEntity ;
+vehicles?: VehicleEntity[] ;
 @ApiProperty({
   type: `integer`,
   format: `int32`,

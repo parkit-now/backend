@@ -23,8 +23,7 @@ model VehicleType {
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  // La relación inversa `vehicles Vehicle[]` llega cuando `vehicles.type_id`
-  // reemplace al enum de carrocería.
+  vehicles Vehicle[]
 
   version   Int       @default(1)
   syncSeq   Int       @default(dbgenerated("nextval('vehicle_types_sync_seq')")) @map("sync_seq")

@@ -1,11 +1,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleBodyType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
 } from 'class-validator';
 import { normalizeVehicleText } from './create-vehicle.dto';
@@ -27,8 +26,12 @@ export class UpdateVehicleDto {
   @MaxLength(120)
   model?: string;
 
-  @ApiPropertyOptional({ enum: VehicleBodyType, example: VehicleBodyType.auto })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Tipo de vehículo, de la tabla de tipos de este estacionamiento.',
+  })
   @IsOptional()
-  @IsEnum(VehicleBodyType)
-  type?: VehicleBodyType;
+  @IsUUID()
+  typeId?: string;
 }

@@ -5,82 +5,80 @@ import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
-import { VehicleScope } from './dto/list-vehicles-query.dto';
 import { VehiclesService } from './vehicles.service';
+
+/**
+ * `FormattedException` mete title/status/detail/instance/code en el BODY de la
+ * HttpException, no como propiedades de la instancia. Sin esto las aserciones
+ * comparan contra `undefined` y pasan por accidente.
+ */
+function problem(error: unknown): {
+  status: number;
+  code: string;
+  detail: string;
+} {
+  return (error as FormattedException).getResponse() as {
+    status: number;
+    code: string;
+    detail: string;
+  };
+}
+
+const TENANT = 'tenant-1';
+const TYPE_ID = '00000000-0000-4000-8000-0000000000aa';
 
 describe('VehiclesService', () => {
   let service: VehiclesService;
 
-  const mockPrisma = {
+  const mockTenant = {
     vehicle: {
       create: jest.fn(),
       findMany: jest.fn(),
-      findUnique: jest.fn(),
+      findFirst: jest.fn(),
       findUniqueOrThrow: jest.fn(),
-      update: jest.fn(),
       updateMany: jest.fn(),
-      delete: jest.fn(),
-      deleteMany: jest.fn(),
     },
-    $queryRaw: jest.fn(),
-    // Presente a propósito: los tests asertan que NO se usa. `Vehicle` está
-    // fuera de TENANT_MODELS y el cliente tenant ocultaría los globales.
-    getTenantClient: jest.fn(),
+    vehicleType: {
+      findFirst: jest.fn(),
+    },
+  };
+
+  const mockPrisma = {
+    getTenantClient: jest.fn().mockReturnValue(mockTenant),
+    // Presente a propósito: si alguien vuelve a usar el cliente base para
+    // `vehicle`, el aislamiento por tenant se pierde en silencio. Los tests
+    // asertan que NO se lo toca.
+    vehicle: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      updateMany: jest.fn(),
+    },
   };
 
   const mockTenantContext = {
-    getTenantIdOrThrow: jest.fn().mockReturnValue('tenant-1'),
+    getTenantIdOrThrow: jest.fn().mockReturnValue(TENANT),
   };
 
   const makeVehicle = (overrides: Partial<Vehicle> = {}): Vehicle => ({
     id: 'v-1',
     brand: 'Toyota',
     model: 'Corolla',
-    type: 'auto',
-    tenantId: 'tenant-1',
+    typeId: TYPE_ID,
+    tenantId: TENANT,
     version: 1,
-    syncSeq: 1,
+    syncSeq: 10,
     deletedAt: null,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
-    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-01-02T00:00:00.000Z'),
     ...overrides,
   });
 
-  const p2002 = (): Prisma.PrismaClientKnownRequestError =>
-    new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-      code: 'P2002',
-      clientVersion: 'test',
-    });
-
-  /**
-   * Lee el argumento de la N-ésima llamada de un mock, tipado. Sin esto, el
-   * acceso a `.mock.calls[0][0].where` es `any` y ESLint lo rechaza.
-   */
-  const argOf = <T>(mock: { mock: { calls: unknown[][] } }, call = 0): T =>
-    mock.mock.calls[call][0] as T;
-
-  /** Ejecuta `fn` y devuelve la FormattedException que tiró. */
-  const catchFormatted = async (
-    fn: () => Promise<unknown>,
-  ): Promise<FormattedException> => {
-    try {
-      await fn();
-    } catch (error) {
-      expect(error).toBeInstanceOf(FormattedException);
-      return error as FormattedException;
-    }
-    throw new Error('Expected the call to throw, but it resolved.');
-  };
-
-  const bodyOf = (
-    error: FormattedException,
-  ): { status: number; code: string } =>
-    error.getResponse() as { status: number; code: string };
-
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockTenantContext.getTenantIdOrThrow.mockReturnValue('tenant-1');
-    mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.getTenantClient.mockReturnValue(mockTenant);
+    mockTenantContext.getTenantIdOrThrow.mockReturnValue(TENANT);
+    mockTenant.vehicleType.findFirst.mockResolvedValue({ id: TYPE_ID });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -93,359 +91,236 @@ describe('VehiclesService', () => {
     service = module.get<VehiclesService>(VehiclesService);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-
   describe('listVehicles', () => {
-    it('devuelve los globales y los del estacionamiento, sin bajas', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([makeVehicle()]);
+    it('usa el cliente tenant y excluye las bajas lógicas', async () => {
+      mockTenant.vehicle.findMany.mockResolvedValue([makeVehicle()]);
 
-      await service.listVehicles({ scope: VehicleScope.all });
+      const result = await service.listVehicles();
 
-      expect(mockPrisma.vehicle.findMany).toHaveBeenCalledWith({
-        where: {
-          OR: [{ tenantId: null }, { tenantId: 'tenant-1' }],
-          deletedAt: null,
-        },
+      expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+      expect(mockTenant.vehicle.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null },
         orderBy: [{ brand: 'asc' }, { model: 'asc' }],
+      });
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: 'v-1',
+        typeId: TYPE_ID,
+        tenantId: TENANT,
       });
     });
 
-    it('excluye las bajas lógicas: es vista de usuario, no feed de sync', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([]);
+    it('NO toca el cliente base: el scoping por tenant se perdería', async () => {
+      mockTenant.vehicle.findMany.mockResolvedValue([]);
 
-      await service.listVehicles({ scope: VehicleScope.all });
+      await service.listVehicles();
 
-      const { where } = argOf<{ where: { deletedAt: null } }>(
-        mockPrisma.vehicle.findMany,
-      );
-      expect(where.deletedAt).toBeNull();
-    });
-
-    it('scope=tenant deja fuera los globales', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([]);
-
-      await service.listVehicles({ scope: VehicleScope.tenant });
-
-      expect(mockPrisma.vehicle.findMany).toHaveBeenCalledWith({
-        where: { tenantId: 'tenant-1', deletedAt: null },
-        orderBy: [{ brand: 'asc' }, { model: 'asc' }],
-      });
-    });
-
-    it('scope=global deja fuera los propios', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([]);
-
-      await service.listVehicles({ scope: VehicleScope.global });
-
-      expect(mockPrisma.vehicle.findMany).toHaveBeenCalledWith({
-        where: { tenantId: null, deletedAt: null },
-        orderBy: [{ brand: 'asc' }, { model: 'asc' }],
-      });
-    });
-
-    it('expone `version` para que el cliente pueda hacer optimistic locking', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([
-        makeVehicle({ version: 7 }),
-      ]);
-
-      const [row] = await service.listVehicles({ scope: VehicleScope.all });
-
-      expect(row.version).toBe(7);
-    });
-
-    it('NO usa el cliente tenant, que ocultaría los globales', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([]);
-
-      await service.listVehicles({ scope: VehicleScope.all });
-
-      expect(mockPrisma.getTenantClient).not.toHaveBeenCalled();
+      expect(mockPrisma.vehicle.findMany).not.toHaveBeenCalled();
     });
   });
 
-  describe('pullCatalogChanges', () => {
-    it('NO filtra deletedAt: el tombstone es la única señal de baja offline', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([]);
-
-      await service.pullCatalogChanges({ afterSeq: 0, limit: 1000 });
-
-      const { where } = argOf<{ where: Record<string, unknown> }>(
-        mockPrisma.vehicle.findMany,
-      );
-      expect(where).not.toHaveProperty('deletedAt');
-    });
-
-    it('devuelve el syncSeq del último item como maxSeq', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([
-        makeVehicle({ syncSeq: 5 }),
-        makeVehicle({ id: 'v-2', syncSeq: 9 }),
+  describe('pullChanges', () => {
+    it('NO filtra deletedAt: los tombstones son cómo viaja una baja', async () => {
+      mockTenant.vehicle.findMany.mockResolvedValue([
+        makeVehicle({
+          deletedAt: new Date('2026-02-01T00:00:00.000Z'),
+          syncSeq: 42,
+        }),
       ]);
 
-      const result = await service.pullCatalogChanges({
-        afterSeq: 1,
-        limit: 1000,
+      const result = await service.pullChanges({ afterSeq: 5, limit: 1000 });
+
+      expect(mockTenant.vehicle.findMany).toHaveBeenCalledWith({
+        where: { syncSeq: { gt: 5 } },
+        orderBy: { syncSeq: 'asc' },
+        take: 1000,
       });
-
-      expect(result.maxSeq).toBe(9);
-      expect(result.items).toHaveLength(2);
-    });
-
-    it('con página vacía hace echo de afterSeq, para no retroceder el cursor', async () => {
-      mockPrisma.vehicle.findMany.mockResolvedValue([]);
-
-      const result = await service.pullCatalogChanges({
-        afterSeq: 42,
-        limit: 1000,
-      });
-
+      expect(result.items[0].deletedAt).toBe('2026-02-01T00:00:00.000Z');
       expect(result.maxSeq).toBe(42);
     });
 
-    it('propaga el deletedAt del tombstone al DTO', async () => {
-      const deletedAt = new Date('2026-05-04T18:00:00.000Z');
-      mockPrisma.vehicle.findMany.mockResolvedValue([
-        makeVehicle({ deletedAt }),
-      ]);
+    it('con página vacía devuelve el mismo afterSeq, sin retroceder', async () => {
+      mockTenant.vehicle.findMany.mockResolvedValue([]);
 
-      const result = await service.pullCatalogChanges({
-        afterSeq: 0,
-        limit: 1000,
-      });
+      const result = await service.pullChanges({ afterSeq: 99, limit: 1000 });
 
-      expect(result.items[0].deletedAt).toBe(deletedAt.toISOString());
+      expect(result.items).toEqual([]);
+      expect(result.maxSeq).toBe(99);
     });
   });
 
   describe('createTenantVehicle', () => {
-    const dto = { id: 'v-new', brand: 'Fiat', model: 'Cronos' };
+    it('crea con el tenant del contexto', async () => {
+      mockTenant.vehicle.create.mockResolvedValue(makeVehicle());
 
-    it('fuerza el tenantId del contexto: no se pueden crear globales por HTTP', async () => {
-      mockPrisma.vehicle.create.mockResolvedValue(makeVehicle());
+      await service.createTenantVehicle({
+        id: 'v-1',
+        brand: 'Toyota',
+        model: 'Corolla',
+        typeId: TYPE_ID,
+      });
 
-      await service.createTenantVehicle(dto);
-
-      const { data } = argOf<{ data: { tenantId: string } }>(
-        mockPrisma.vehicle.create,
-      );
-      expect(data.tenantId).toBe('tenant-1');
+      expect(mockTenant.vehicle.create).toHaveBeenCalledWith({
+        data: {
+          id: 'v-1',
+          brand: 'Toyota',
+          model: 'Corolla',
+          typeId: TYPE_ID,
+          tenantId: TENANT,
+        },
+      });
     });
 
-    it('rechaza con VEHICLE_ALREADY_IN_GLOBAL_CATALOG si ya existe como global', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([{ id: 'g-1', tenant_id: null }]);
+    it('rechaza un typeId que no existe en este estacionamiento', async () => {
+      mockTenant.vehicleType.findFirst.mockResolvedValue(null);
 
-      const error = await catchFormatted(() =>
-        service.createTenantVehicle(dto),
-      );
+      const error = await service
+        .createTenantVehicle({
+          id: 'v-1',
+          brand: 'Toyota',
+          model: 'Corolla',
+          typeId: 'no-existe',
+        })
+        .catch((e: unknown) => e);
+      expect(problem(error).status).toBe(HttpStatus.NOT_FOUND);
 
-      expect(bodyOf(error).status).toBe(HttpStatus.CONFLICT);
-      expect(bodyOf(error).code).toBe(
-        ErrorCodes.VEHICLE_ALREADY_IN_GLOBAL_CATALOG,
-      );
-      expect(mockPrisma.vehicle.create).not.toHaveBeenCalled();
+      expect(mockTenant.vehicle.create).not.toHaveBeenCalled();
     });
 
-    it('rechaza con VEHICLE_DUPLICATE si ya existe uno propio igual', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 'v-9', tenant_id: 'tenant-1' },
-      ]);
+    it('el typeId de otro tenant es indistinguible de inexistente (anti-IDOR)', async () => {
+      // El cliente tenant inyecta el WHERE tenantId, así que la fila ajena
+      // vuelve null sin ningún chequeo explícito.
+      mockTenant.vehicleType.findFirst.mockResolvedValue(null);
 
-      const error = await catchFormatted(() =>
-        service.createTenantVehicle(dto),
-      );
+      const error = await service
+        .createTenantVehicle({
+          id: 'v-1',
+          brand: 'Toyota',
+          model: 'Corolla',
+          typeId: 'tipo-de-otro-tenant',
+        })
+        .catch((e: unknown) => e);
 
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_DUPLICATE);
-      expect(mockPrisma.vehicle.create).not.toHaveBeenCalled();
+      expect(error).toBeInstanceOf(FormattedException);
+      expect(problem(error).status).toBe(HttpStatus.NOT_FOUND);
+      expect(problem(error).code).toBe(ErrorCodes.VEHICLE_TYPE_NOT_FOUND);
     });
 
-    it('mapea el P2002 de la carrera a un 409 con code propio', async () => {
-      mockPrisma.vehicle.create.mockRejectedValue(p2002());
-
-      const error = await catchFormatted(() =>
-        service.createTenantVehicle(dto),
+    it('mapea el P2002 del índice único a VEHICLE_DUPLICATE', async () => {
+      mockTenant.vehicle.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: '7.8.0',
+        }),
       );
 
-      expect(bodyOf(error).status).toBe(HttpStatus.CONFLICT);
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_DUPLICATE);
+      const error = await service
+        .createTenantVehicle({
+          id: 'v-1',
+          brand: 'Toyota',
+          model: 'Corolla',
+          typeId: TYPE_ID,
+        })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(FormattedException);
+      expect(problem(error).status).toBe(HttpStatus.CONFLICT);
+      expect(problem(error).code).toBe(ErrorCodes.VEHICLE_DUPLICATE);
     });
   });
 
   describe('updateTenantVehicle', () => {
-    const dto = { model: 'Cronos Drive' };
-
-    it('hace un compare-and-swap atómico contra la versión esperada', async () => {
-      mockPrisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 1 });
-      mockPrisma.vehicle.findUniqueOrThrow.mockResolvedValue(makeVehicle());
-
-      await service.updateTenantVehicle('v-1', 3, dto);
-
-      expect(mockPrisma.vehicle.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            id: 'v-1',
-            tenantId: 'tenant-1',
-            version: 3,
-            deletedAt: null,
-          },
-        }),
-      );
-    });
-
-    it('nunca usa vehicle.update: el read-then-write tenía una carrera', async () => {
-      mockPrisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 1 });
-      mockPrisma.vehicle.findUniqueOrThrow.mockResolvedValue(makeVehicle());
-
-      await service.updateTenantVehicle('v-1', 1, dto);
-
-      expect(mockPrisma.vehicle.update).not.toHaveBeenCalled();
-    });
-
-    it('404 VEHICLE_NOT_FOUND cuando la fila no existe', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(null);
-
-      const error = await catchFormatted(() =>
-        service.updateTenantVehicle('v-1', 1, { type: 'auto' }),
+    it('hace compare-and-swap con tenantId, version y deletedAt en el WHERE', async () => {
+      mockTenant.vehicle.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.vehicle.findUniqueOrThrow.mockResolvedValue(
+        makeVehicle({ version: 2 }),
       );
 
-      expect(bodyOf(error).status).toBe(HttpStatus.NOT_FOUND);
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_NOT_FOUND);
-    });
+      await service.updateTenantVehicle('v-1', 1, { brand: 'Toyota' });
 
-    it('404 VEHICLE_NOT_OWNED_BY_TENANT cuando la fila es global', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(
-        makeVehicle({ tenantId: null }),
-      );
-
-      const error = await catchFormatted(() =>
-        service.updateTenantVehicle('v-1', 1, { type: 'auto' }),
-      );
-
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_NOT_OWNED_BY_TENANT);
-    });
-
-    it('una fila de OTRO estacionamiento se ve igual que "no existe" (sin oráculo IDOR)', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(
-        makeVehicle({ tenantId: 'tenant-2' }),
-      );
-
-      const error = await catchFormatted(() =>
-        service.updateTenantVehicle('v-1', 1, { type: 'auto' }),
-      );
-
-      expect(bodyOf(error).status).toBe(HttpStatus.NOT_FOUND);
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_NOT_FOUND);
-    });
-
-    it('409 CONFLICT cuando la fila ya estaba borrada', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(
-        makeVehicle({ deletedAt: new Date() }),
-      );
-
-      const error = await catchFormatted(() =>
-        service.updateTenantVehicle('v-1', 1, { type: 'auto' }),
-      );
-
-      expect(bodyOf(error).status).toBe(HttpStatus.CONFLICT);
-      expect(bodyOf(error).code).toBe(ErrorCodes.CONFLICT);
-    });
-
-    it('409 CONFLICT cuando la versión quedó vieja', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(
-        makeVehicle({ version: 5 }),
-      );
-
-      const error = await catchFormatted(() =>
-        service.updateTenantVehicle('v-1', 1, { type: 'auto' }),
-      );
-
-      expect(bodyOf(error).status).toBe(HttpStatus.CONFLICT);
-      expect(bodyOf(error).code).toBe(ErrorCodes.CONFLICT);
-    });
-
-    it('también valida duplicados al renombrar, no solo al crear', async () => {
-      mockPrisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 'otro', tenant_id: 'tenant-1' },
-      ]);
-
-      const error = await catchFormatted(() =>
-        service.updateTenantVehicle('v-1', 1, { brand: 'Fiat', model: 'Uno' }),
-      );
-
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_DUPLICATE);
-      expect(mockPrisma.vehicle.updateMany).not.toHaveBeenCalled();
-    });
-
-    it('no se choca consigo mismo al guardar sin cambiar marca ni modelo', async () => {
-      mockPrisma.vehicle.findUnique.mockResolvedValue(makeVehicle());
-      mockPrisma.$queryRaw.mockResolvedValue([
-        { id: 'v-1', tenant_id: 'tenant-1' },
-      ]);
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 1 });
-      mockPrisma.vehicle.findUniqueOrThrow.mockResolvedValue(makeVehicle());
-
-      const updated = await service.updateTenantVehicle('v-1', 1, {
-        brand: 'Toyota',
+      expect(mockTenant.vehicle.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'v-1',
+          tenantId: TENANT,
+          version: 1,
+          deletedAt: null,
+        },
+        data: { version: { increment: 1 }, brand: 'Toyota' },
       });
-      expect(updated).toBeDefined();
+    });
+
+    it('valida el typeId nuevo antes de escribir', async () => {
+      mockTenant.vehicleType.findFirst.mockResolvedValue(null);
+
+      const error = await service
+        .updateTenantVehicle('v-1', 1, { typeId: 'no-existe' })
+        .catch((e: unknown) => e);
+      expect(problem(error).status).toBe(HttpStatus.NOT_FOUND);
+
+      expect(mockTenant.vehicle.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('version vieja -> 409 CONFLICT', async () => {
+      mockTenant.vehicle.updateMany.mockResolvedValue({ count: 0 });
+      mockTenant.vehicle.findFirst.mockResolvedValue(
+        makeVehicle({ version: 7 }),
+      );
+
+      const error = await service
+        .updateTenantVehicle('v-1', 1, { brand: 'Toyota' })
+        .catch((e: unknown) => e);
+
+      expect(problem(error).status).toBe(HttpStatus.CONFLICT);
+      expect(problem(error).code).toBe(ErrorCodes.CONFLICT);
+    });
+
+    it('fila inexistente (o de otro tenant) -> 404 VEHICLE_NOT_FOUND', async () => {
+      mockTenant.vehicle.updateMany.mockResolvedValue({ count: 0 });
+      mockTenant.vehicle.findFirst.mockResolvedValue(null);
+
+      const error = await service
+        .updateTenantVehicle('v-1', 1, { brand: 'Toyota' })
+        .catch((e: unknown) => e);
+
+      expect(problem(error).status).toBe(HttpStatus.NOT_FOUND);
+      expect(problem(error).code).toBe(ErrorCodes.VEHICLE_NOT_FOUND);
+      // El diagnóstico también va por el cliente tenant: si fuera por el base,
+      // la fila de otro estacionamiento se encontraría y filtraría existencia.
+      expect(mockPrisma.vehicle.findUnique).not.toHaveBeenCalled();
     });
   });
 
   describe('deleteTenantVehicle', () => {
-    it('estampa deletedAt vía updateMany, nunca borra la fila', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 1 });
+    it('es borrado LÓGICO: estampa deletedAt, no saca la fila', async () => {
+      mockTenant.vehicle.updateMany.mockResolvedValue({ count: 1 });
 
-      await service.deleteTenantVehicle('v-1', 2);
+      await service.deleteTenantVehicle('v-1', 3);
 
-      expect(mockPrisma.vehicle.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            id: 'v-1',
-            tenantId: 'tenant-1',
-            version: 2,
-            deletedAt: null,
-          },
-        }),
-      );
-      expect(mockPrisma.vehicle.delete).not.toHaveBeenCalled();
-      expect(mockPrisma.vehicle.deleteMany).not.toHaveBeenCalled();
+      const call = mockTenant.vehicle.updateMany.mock.calls[0][0] as {
+        where: Record<string, unknown>;
+        data: { deletedAt: Date; version: unknown };
+      };
+      expect(call.where).toEqual({
+        id: 'v-1',
+        tenantId: TENANT,
+        version: 3,
+        deletedAt: null,
+      });
+      expect(call.data.deletedAt).toBeInstanceOf(Date);
     });
 
-    it('el segundo DELETE da 409 en vez de re-emitir el tombstone', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(
-        makeVehicle({ deletedAt: new Date(), version: 2 }),
+    it('un segundo DELETE da 409 en vez de re-emitir el tombstone', async () => {
+      mockTenant.vehicle.updateMany.mockResolvedValue({ count: 0 });
+      mockTenant.vehicle.findFirst.mockResolvedValue(
+        makeVehicle({ deletedAt: new Date() }),
       );
 
-      const error = await catchFormatted(() =>
-        service.deleteTenantVehicle('v-1', 2),
-      );
+      const error = await service
+        .deleteTenantVehicle('v-1', 3)
+        .catch((e: unknown) => e);
 
-      expect(bodyOf(error).status).toBe(HttpStatus.CONFLICT);
-      // Una sola llamada: la del CAS que no matcheó. Si el guard `deletedAt:
-      // null` faltara, este delete habría vuelto a estampar la marca y bumpeado
-      // sync_seq, mandando un tombstone repetido a todos los clientes.
-      expect(mockPrisma.vehicle.updateMany).toHaveBeenCalledTimes(1);
-    });
-
-    it('un global no se puede borrar', async () => {
-      mockPrisma.vehicle.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.vehicle.findUnique.mockResolvedValue(
-        makeVehicle({ tenantId: null }),
-      );
-
-      const error = await catchFormatted(() =>
-        service.deleteTenantVehicle('v-1', 1),
-      );
-
-      expect(bodyOf(error).code).toBe(ErrorCodes.VEHICLE_NOT_OWNED_BY_TENANT);
+      expect(problem(error).status).toBe(HttpStatus.CONFLICT);
+      expect(problem(error).detail).toContain('already deleted');
     });
   });
 });

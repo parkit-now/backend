@@ -38,13 +38,12 @@ import {
 } from '../utils/exceptions/dto/problem-details.dto';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { ExpectedVersionQueryDto } from './dto/expected-version-query.dto';
-import { ListVehiclesQueryDto } from './dto/list-vehicles-query.dto';
 import { UpdateVehicleDto } from './dto/update-vehicle.dto';
 import {
-  VehicleCatalogChangesQueryDto,
-  VehicleCatalogChangesResponseDto,
-  VehicleCatalogItemDto,
-} from './dto/vehicle-catalog.dto';
+  VehicleChangesQueryDto,
+  VehicleChangesResponseDto,
+  VehicleDto,
+} from './dto/vehicle.dto';
 import { VehiclesService } from './vehicles.service';
 
 @ApiTags('Vehicles')
@@ -69,7 +68,7 @@ export class VehiclesController {
   constructor(private readonly vehicles: VehiclesService) {}
 
   /**
-   * Sin `@EntityRole`: es la MISMA data que ya devuelve `/vehicles/catalog`, que
+   * Sin `@EntityRole`: es la MISMA data que ya devuelve `/vehicles/changes`, que
    * cualquier miembro puede leer porque el autocompletado del desktop la
    * necesita. Cerrar el listado plano dejando abierto el feed de sync sería
    * seguridad de utilería. Las mutaciones sí son owner-only.
@@ -77,37 +76,35 @@ export class VehiclesController {
   @Get()
   @ApiOperation({
     operationId: 'vehiclesList',
-    summary: 'List vehicles available to the entity',
+    summary: 'List the entity vehicle catalog',
     description:
-      'Globales (admin-managed, read-only) + los propios de la entidad, sin ' +
-      'bajas lógicas, ordenados por marca y modelo. `tenantId: null` marca los ' +
-      'read-only. Disponible para cualquier miembro.',
+      'Catálogo del estacionamiento, sin bajas lógicas, ordenado por marca y ' +
+      'modelo. Disponible para cualquier miembro.',
   })
-  @ApiOkResponse({ type: [VehicleCatalogItemDto] })
-  list(@Query() query: ListVehiclesQueryDto): Promise<VehicleCatalogItemDto[]> {
-    return this.vehicles.listVehicles(query);
+  @ApiOkResponse({ type: [VehicleDto] })
+  list(): Promise<VehicleDto[]> {
+    return this.vehicles.listVehicles();
   }
 
   /**
-   * `'catalog'` es un literal y no hay ningún `@Get(':vehicleId')`, así que no
+   * `'changes'` es un literal y no hay ningún `@Get(':vehicleId')`, así que no
    * hay ambigüedad de ruteo. Si algún día se agrega, este handler tiene que ir
    * declarado PRIMERO.
    */
-  @Get('catalog')
+  @Get('changes')
   @ApiOperation({
-    operationId: 'entitiesPullVehicleCatalog',
-    summary: 'Pull vehicle catalog changes',
+    operationId: 'vehiclesPullChanges',
+    summary: 'Pull incremental vehicle changes for offline sync',
     description:
-      'Returns global vehicles (admin-managed) and entity-specific vehicles ' +
-      'with syncSeq > afterSeq, INCLUDING soft-deleted rows (non-null ' +
-      'deletedAt) so offline clients can drop them. Used by the desktop for ' +
-      'offline-first autocomplete.',
+      'Returns the entity vehicles with syncSeq > afterSeq, INCLUDING ' +
+      'soft-deleted rows (non-null deletedAt) so offline clients can drop ' +
+      'them. Used by the desktop for offline-first autocomplete.',
   })
-  @ApiOkResponse({ type: VehicleCatalogChangesResponseDto })
-  pullCatalog(
-    @Query() query: VehicleCatalogChangesQueryDto,
-  ): Promise<VehicleCatalogChangesResponseDto> {
-    return this.vehicles.pullCatalogChanges(query);
+  @ApiOkResponse({ type: VehicleChangesResponseDto })
+  pullChanges(
+    @Query() query: VehicleChangesQueryDto,
+  ): Promise<VehicleChangesResponseDto> {
+    return this.vehicles.pullChanges(query);
   }
 
   @Post()
@@ -117,16 +114,19 @@ export class VehiclesController {
     operationId: 'entitiesCreateTenantVehicle',
     summary: 'Add a vehicle to the entity catalog',
     description:
-      'Creates an entity-specific vehicle entry. The global catalog is seeded ' +
-      'by the platform and cannot be written through this API. Requires owner role.',
+      'Creates a vehicle in this entity catalog. Requires owner role.',
   })
-  @ApiCreatedResponse({ type: VehicleCatalogItemDto })
+  @ApiCreatedResponse({ type: VehicleDto })
   @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
-  @ApiConflictResponse({
-    description: 'VEHICLE_DUPLICATE | VEHICLE_ALREADY_IN_GLOBAL_CATALOG',
+  @ApiNotFoundResponse({
+    description: 'VEHICLE_TYPE_NOT_FOUND',
     type: ProblemDetailsDto,
   })
-  create(@Body() dto: CreateVehicleDto): Promise<VehicleCatalogItemDto> {
+  @ApiConflictResponse({
+    description: 'VEHICLE_DUPLICATE',
+    type: ProblemDetailsDto,
+  })
+  create(@Body() dto: CreateVehicleDto): Promise<VehicleDto> {
     return this.vehicles.createTenantVehicle(dto);
   }
 
@@ -141,23 +141,23 @@ export class VehiclesController {
     operationId: 'entitiesUpdateTenantVehicle',
     summary:
       'Update an entity vehicle using optimistic locking (expectedVersion)',
-    description:
-      'Updates brand, model and/or type. Global vehicles cannot be edited. ' +
-      'Requires owner role.',
+    description: 'Updates brand, model and/or type. Requires owner role.',
   })
-  @ApiOkResponse({ type: VehicleCatalogItemDto })
+  @ApiOkResponse({ type: VehicleDto })
   @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
-  @ApiNotFoundResponse({ type: ProblemDetailsDto })
+  @ApiNotFoundResponse({
+    description: 'VEHICLE_NOT_FOUND | VEHICLE_TYPE_NOT_FOUND',
+    type: ProblemDetailsDto,
+  })
   @ApiConflictResponse({
-    description:
-      'CONFLICT | VEHICLE_DUPLICATE | VEHICLE_ALREADY_IN_GLOBAL_CATALOG',
+    description: 'CONFLICT | VEHICLE_DUPLICATE',
     type: ProblemDetailsDto,
   })
   update(
     @Param('vehicleId', ParseUUIDPipe) vehicleId: string,
     @Query() query: ExpectedVersionQueryDto,
     @Body() dto: UpdateVehicleDto,
-  ): Promise<VehicleCatalogItemDto> {
+  ): Promise<VehicleDto> {
     return this.vehicles.updateTenantVehicle(
       vehicleId,
       query.expectedVersion,
@@ -179,8 +179,8 @@ export class VehiclesController {
       'Soft-delete an entity vehicle using optimistic locking (expectedVersion)',
     description:
       'Soft-deletes the vehicle (sets deleted_at). The row keeps flowing ' +
-      'through GET /vehicles/catalog as a tombstone so offline clients can ' +
-      'remove it locally. Global vehicles cannot be deleted. Requires owner role.',
+      'through GET /vehicles/changes as a tombstone so offline clients can ' +
+      'remove it locally. Requires owner role.',
   })
   @ApiNoContentResponse({ description: 'Vehicle deleted.' })
   @ApiNotFoundResponse({ type: ProblemDetailsDto })
