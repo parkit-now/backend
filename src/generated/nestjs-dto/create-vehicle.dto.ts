@@ -1,7 +1,6 @@
 
-import {VehicleType} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsIn,IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
+import {IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty,getSchemaPath} from '@nestjs/swagger'
 
 
@@ -17,12 +16,6 @@ brand: string;
 @IsNotEmpty()
 @IsString()
 model: string;
-@ApiProperty({
-  enum: VehicleType,
-})
-@IsOptional()
-@IsIn(["auto","pickup","suv","van","moto","camioneta","otro"])
-type?: VehicleType;
 @ApiProperty({
   type: `string`,
   format: `date-time`,

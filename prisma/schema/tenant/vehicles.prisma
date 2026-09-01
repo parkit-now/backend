@@ -1,0 +1,44 @@
+/// Catálogo de vehículos de UN estacionamiento.
+///
+/// Antes había dos alcances: `tenant_id NULL` era "global, administrado por la
+/// plataforma, read-only para el dueño". Eso mentía —si el dueño no lo puede
+/// tocar es una limitación disfrazada de categoría— así que se eliminó. Cada
+/// playa tiene su copia editable de los modelos, sembrada desde
+/// `vehicle_catalog_defaults` por el trigger `bootstrap_tenant_defaults()`.
+///
+/// El tipo es una FK COMPUESTA a `vehicle_types` del mismo tenant. Compuesta y
+/// no simple porque el `id` lo manda el cliente: una FK a `vehicle_types(id)`
+/// aceptaría el tipo de OTRO tenant.
+model Vehicle {
+  // UUIDv7 provisto por el cliente para soporte offline-first.
+  id    String @id @db.Uuid
+  brand String @db.VarChar(120)
+  model String @db.VarChar(120)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  typeId   String @map("type_id") @db.Uuid
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type   VehicleType @relation(fields: [tenantId, typeId], references: [tenantId, id])
+
+  syncSeq   Int       @default(dbgenerated("nextval('vehicles_sync_seq')")) @map("sync_seq")
+  version   Int       @default(1)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Unicidad: índice único PARCIAL y de EXPRESIÓN sobre
+  // (tenant_id, lower(btrim(brand)), lower(btrim(model))) acotado a
+  // `deleted_at IS NULL`. Prisma no puede expresar ninguna de las dos cosas,
+  // así que vive solo en la migración.
+  //
+  // NO agregar `@@unique([tenantId, brand, model])` como "aproximación": sería
+  // semánticamente falso (no cubre el case-insensitive ni las bajas lógicas),
+  // generaría un findUnique engañoso y haría que `prisma migrate diff` quiera
+  // crear un índice de más.
+  @@index([tenantId], map: "vehicles_tenant_id_idx")
+  @@index([tenantId, syncSeq], map: "vehicles_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "vehicles_tenant_updated_at_idx")
+  @@index([typeId], map: "vehicles_type_id_idx")
+  @@map("vehicles")
+}

@@ -58,15 +58,12 @@ export class EntitiesService {
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.status !== undefined) data.status = dto.status;
 
-    // Capacity lives in `settings.capacity`; merge so only the supplied
-    // vehicle types change and the rest keep their current value.
+    // Capacity lives in `settings.capacity`; merge so an omitted `total` keeps
+    // the current value instead of resetting the lot to zero.
     if (dto.capacity !== undefined) {
       const current = readCapacity(tenant.settings);
       data.settings = withCapacity(tenant.settings, {
-        carSpots: dto.capacity.carSpots ?? current.carSpots,
-        motorcycleSpots:
-          dto.capacity.motorcycleSpots ?? current.motorcycleSpots,
-        bicycleSpots: dto.capacity.bicycleSpots ?? current.bicycleSpots,
+        total: dto.capacity.total ?? current.total,
       });
     }
 

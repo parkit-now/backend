@@ -61,7 +61,7 @@ export class ServicesController {
   @Patch(':code')
   @EntityRole(MembershipRole.owner)
   @ApiOperation({
-    summary: 'Update a service for the active tenant (enabled and/or spots)',
+    summary: 'Update a service for the active tenant',
   })
   @ApiOkResponse({ type: ServiceCatalogItemDto })
   @ApiParam({
@@ -72,7 +72,6 @@ export class ServicesController {
   async update(@Param('code') code: string, @Body() dto: UpdateServiceDto) {
     return this.servicesService.updateService(code, {
       enabled: dto.enabled,
-      spots: dto.spots,
     });
   }
 }

@@ -6,6 +6,7 @@ import { PrismaModule } from './database/prisma.module';
 import { HealthModule } from './health/health.module';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
+import { VehicleTypesModule } from './vehicle-types/vehicle-types.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { EntriesModule } from './entries/entries.module';
 import { PasswordRecoveryModule } from './password-recovery/password-recovery.module';
@@ -32,6 +33,7 @@ import { LprEventsModule } from './lpr-events/lpr-events.module';
     HealthModule,
     TenantsModule,
     VehiclesModule,
+    VehicleTypesModule,
     EntriesModule,
     OnboardingModule,
     ApplicationsModule,

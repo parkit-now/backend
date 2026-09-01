@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../database/prisma.service';
+import { TenantContextService } from '../database/tenant-context.service';
 import { EntriesService } from './entries.service';
 
 describe('EntriesService', () => {
@@ -25,6 +26,10 @@ describe('EntriesService', () => {
           provide: PrismaService,
           useValue: mockPrisma,
         },
+        // `EntriesService` lo inyecta para resolver el tenant activo desde el
+        // AsyncLocalStorage. Sin registrarlo, Nest no puede construir el
+        // service y el `beforeEach` explota antes del primer `it`.
+        TenantContextService,
       ],
     }).compile();
 
@@ -45,9 +50,17 @@ describe('EntriesService', () => {
 
       const result = await service.findAll();
 
-      expect(result).toEqual(mockEntries);
-      expect(mockTenant.entry.findMany).toHaveBeenCalled();
+      // `findAll` mapea por `toDto`, así que el resultado NO es la fila cruda:
+      // es el DTO completo con el resto de los campos en undefined. Se asertan
+      // los campos que sí viajan, no la identidad del objeto.
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ id: '1', plate: 'AAA111' });
+
+      // Lo que este test cuida de verdad: el aislamiento por tenant.
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+      expect(mockTenant.entry.findMany).toHaveBeenCalledWith({
+        orderBy: [{ enteredAt: 'desc' }],
+      });
     });
   });
 });

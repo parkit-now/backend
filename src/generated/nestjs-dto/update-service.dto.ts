@@ -12,6 +12,6 @@ export class UpdateServiceDto {
   enum: ServiceCode,
 })
 @IsOptional()
-@IsIn(["ADVANCE_RESERVATION","VEHICLE_CAR","VEHICLE_BICYCLE","VEHICLE_MOTORCYCLE","VEHICLE_PICKUP","VEHICLE_TRUCK"])
+@IsIn(["ADVANCE_RESERVATION"])
 code?: ServiceCode;
 }

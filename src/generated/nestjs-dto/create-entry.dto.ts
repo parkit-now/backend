@@ -1,7 +1,7 @@
 
-import {Prisma,VehicleType} from '@prisma/client'
+import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsIn,IsInt,IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
+import {IsDecimal,IsInt,IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty,getSchemaPath} from '@nestjs/swagger'
 
 
@@ -38,12 +38,9 @@ leftAt?: Date;
 @IsDecimal()
 @Type(()=>String)
 amountPaid?: Prisma.Decimal;
-@ApiProperty({
-  enum: VehicleType,
-})
 @IsOptional()
-@IsIn(["auto","pickup","suv","van","moto","camioneta","otro"])
-vehicleType?: VehicleType;
+@IsString()
+vehicleType?: string;
 @IsOptional()
 @IsString()
 entryImageUrl?: string;
