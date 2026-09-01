@@ -58,7 +58,7 @@ type SeedVehicle = {
  */
 const TENANT_VEHICLE_TYPES = [
   {
-    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaacc1',
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaacc1',
     tenantId: TENANTS.once,
     name: 'Utilitario',
     accepted: true,
@@ -67,21 +67,21 @@ const TENANT_VEHICLE_TYPES = [
 
 const TENANT_VEHICLES: SeedVehicle[] = [
   {
-    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb1',
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb1',
     tenantId: TENANTS.once,
     brand: 'Iveco',
     model: 'Daily',
     typeName: 'Utilitario',
   },
   {
-    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb2',
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb2',
     tenantId: TENANTS.once,
     brand: 'Zanella',
     model: 'RX 150',
     typeName: 'Moto',
   },
   {
-    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb3',
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb3',
     tenantId: TENANTS.belgrano,
     brand: 'Agrale',
     model: 'Marruá',
@@ -90,7 +90,7 @@ const TENANT_VEHICLES: SeedVehicle[] = [
   {
     // Tombstone a propósito: ejercita que una baja llegue a los clientes
     // offline por /vehicles/changes. Mismo criterio que las tasas borradas.
-    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaabb4',
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb4',
     tenantId: TENANTS.once,
     brand: 'Corven',
     model: 'Energy',
@@ -102,8 +102,13 @@ const TENANT_VEHICLES: SeedVehicle[] = [
 // Onboarding demo: two already-APPROVED entities (Once + Belgrano, owned by
 // owner@example.com via memberships) carry legal data + payment methods, and one
 // PENDING application under review (feeds the PARKIT Ops queue).
-const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
-const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
+// Los ids fijos del seed llevan `4` y `8` en las posiciones de versión y
+// variante (misma convención que los de TENANTS). No es cosmético: `@IsUUID()`
+// rechaza un uuid con nibble de versión fuera de 1-5, así que un id "obviamente
+// falso" tipo aaaaaaaa-aaaa-aaaa-... no se puede mandar como query param —
+// exactamente el caso de `reassignToTypeId` al borrar un tipo de vehículo.
+const PENDING_APPLICATION = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1';
+const PENDING_DOCUMENT = 'dddddddd-dddd-4ddd-8ddd-ddddddddddc1';
 
 // Rates were missing from this seed, so `make reset && make seed-all` left the
 // table empty and both the web ABM and the desktop panel came up with no
@@ -126,7 +131,7 @@ type SeedRate = {
 
 const RATES: SeedRate[] = [
   {
-    id: 'ffffffff-ffff-ffff-ffff-fffffffffff1',
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
     tenantId: TENANTS.once,
     name: 'DIA AUTO ONCE',
     hourPriceArs: '4444.44',
@@ -137,7 +142,7 @@ const RATES: SeedRate[] = [
   // Deactivated, not deleted: the owner panel still lists it and can reactivate
   // it. Keeps the isActive/deletedAt distinction visible in a fresh environment.
   {
-    id: 'ffffffff-ffff-ffff-ffff-fffffffffff2',
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff2',
     tenantId: TENANTS.once,
     name: 'NOCHE MOTO ONCE',
     hourPriceArs: '1800.50',
@@ -150,7 +155,7 @@ const RATES: SeedRate[] = [
   // GET /rates/changes as a tombstone. Its shortcut number stays reusable
   // because the unique index is scoped to `deleted_at IS NULL`.
   {
-    id: 'ffffffff-ffff-ffff-ffff-fffffffffff3',
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff3',
     tenantId: TENANTS.once,
     name: 'TASA BORRADA (DEMO)',
     hourPriceArs: '999.99',
@@ -160,7 +165,7 @@ const RATES: SeedRate[] = [
     deleted: true,
   },
   {
-    id: 'ffffffff-ffff-ffff-ffff-fffffffffff4',
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff4',
     tenantId: TENANTS.belgrano,
     name: 'TARIFA BELGRANO',
     hourPriceArs: '5000.00',
@@ -186,7 +191,7 @@ type SeedEntry = {
 
 const ENTRIES: SeedEntry[] = [
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1',
     tenantId: TENANTS.once,
     vehicleBrand: 'Toyota',
     vehicleModel: 'Corolla',
@@ -197,7 +202,7 @@ const ENTRIES: SeedEntry[] = [
     amountPaid: '3200.00',
   },
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2',
     tenantId: TENANTS.once,
     vehicleBrand: 'Ford',
     vehicleModel: 'Ranger',
@@ -206,7 +211,7 @@ const ENTRIES: SeedEntry[] = [
     enteredAt: '2026-05-02T08:15:00.000Z',
   },
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3',
     tenantId: TENANTS.belgrano,
     vehicleBrand: 'Renault',
     vehicleModel: 'Kangoo',
@@ -217,7 +222,7 @@ const ENTRIES: SeedEntry[] = [
     amountPaid: '2700.00',
   },
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4',
     tenantId: TENANTS.belgrano,
     vehicleBrand: 'Toyota',
     vehicleModel: 'Corolla',
