@@ -1,4 +1,8 @@
-/// Tipo de carrocería del vehículo.
+/// Tipo de CARROCERÍA del vehículo. TRANSITORIO: lo reemplaza la tabla
+/// `vehicle_types` (una por estacionamiento, editable por el dueño). Se
+/// renombró de `VehicleType` a `VehicleBodyType` —solo del lado de Prisma, el
+/// tipo en Postgres se sigue llamando `vehicle_type`— para liberar el nombre
+/// para el modelo nuevo. Desaparece cuando `vehicles.type` se dropee.
 ///
 /// `camioneta` se quitó en 20260831190000_vehicles_type_enum_v2.sql: se pisaba
 /// con `pickup` y con `suv` (una Hilux es las dos cosas). La taxonomía de
@@ -6,7 +10,7 @@
 /// `VEHICLE_PICKUP` ya está etiquetado "Camionetas". Mapeo:
 ///   auto -> VEHICLE_CAR · moto -> VEHICLE_MOTORCYCLE · bici -> VEHICLE_BICYCLE
 ///   suv|pickup|van -> VEHICLE_PICKUP · camion -> VEHICLE_TRUCK
-enum VehicleType {
+enum VehicleBodyType {
   auto
   moto
   bici
@@ -23,7 +27,7 @@ model Vehicle {
   id       String       @id @db.Uuid
   brand    String       @db.VarChar(120)
   model    String       @db.VarChar(120)
-  type     VehicleType?
+  type     VehicleBodyType?
 
   tenantId String? @map("tenant_id") @db.Uuid
   tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)

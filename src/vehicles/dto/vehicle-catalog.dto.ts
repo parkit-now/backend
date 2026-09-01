@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
+import { VehicleBodyType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
@@ -14,11 +14,11 @@ export class VehicleCatalogItemDto {
   model: string;
 
   @ApiPropertyOptional({
-    enum: VehicleType,
+    enum: VehicleBodyType,
     nullable: true,
-    example: VehicleType.auto,
+    example: VehicleBodyType.auto,
   })
-  type: VehicleType | null;
+  type: VehicleBodyType | null;
 
   @ApiPropertyOptional({
     format: 'uuid',

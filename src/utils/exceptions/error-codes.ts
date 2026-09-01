@@ -68,6 +68,18 @@ export const ErrorCodes = {
   // duplicaría la entrada en el autocompletado.
   VEHICLE_ALREADY_IN_GLOBAL_CATALOG: 'VEHICLE_ALREADY_IN_GLOBAL_CATALOG',
 
+  // Vehicle types (ABM por estacionamiento)
+  VEHICLE_TYPE_NOT_FOUND: 'VEHICLE_TYPE_NOT_FOUND',
+  // Ya existe otro tipo vivo con el mismo nombre en este estacionamiento
+  // (comparación case-insensitive y sin espacios sobrantes).
+  VEHICLE_TYPE_DUPLICATE: 'VEHICLE_TYPE_DUPLICATE',
+  // Se intentó borrar un tipo que todavía tienen vehículos vivos, sin indicar
+  // a qué tipo moverlos. El cliente debe reintentar con `reassignToTypeId`.
+  VEHICLE_TYPE_IN_USE: 'VEHICLE_TYPE_IN_USE',
+  // El tipo destino de la reasignación no existe, está borrado, o es el mismo
+  // que se está borrando.
+  VEHICLE_TYPE_REASSIGN_TARGET_INVALID: 'VEHICLE_TYPE_REASSIGN_TARGET_INVALID',
+
   // Payment methods
   PAYMENT_METHOD_NOT_FOUND: 'PAYMENT_METHOD_NOT_FOUND',
   PAYMENT_METHOD_SYSTEM_LOCKED: 'PAYMENT_METHOD_SYSTEM_LOCKED',

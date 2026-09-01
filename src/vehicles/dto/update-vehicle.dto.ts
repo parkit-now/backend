@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
+import { VehicleBodyType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsEnum,
@@ -27,8 +27,8 @@ export class UpdateVehicleDto {
   @MaxLength(120)
   model?: string;
 
-  @ApiPropertyOptional({ enum: VehicleType, example: VehicleType.auto })
+  @ApiPropertyOptional({ enum: VehicleBodyType, example: VehicleBodyType.auto })
   @IsOptional()
-  @IsEnum(VehicleType)
-  type?: VehicleType;
+  @IsEnum(VehicleBodyType)
+  type?: VehicleBodyType;
 }

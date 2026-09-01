@@ -1,0 +1,43 @@
+/// Tipo de vehículo, uno por estacionamiento.
+///
+/// Antes era el enum `vehicle_type` de Postgres: la plataforma decidía las
+/// categorías y el dueño las padecía. Ahora cada cuenta nace con siete propias
+/// y editables (Auto, Moto, Bici, SUV, Pickup, Camión, Otro) y agrega las que
+/// necesite. "Utilitario" NO está entre los defaults a propósito: es el ejemplo
+/// canónico de la categoría que crea el dueño.
+///
+/// `accepted` reemplaza a `ServiceCode.VEHICLE_*`: es "qué vehículos acepta la
+/// playa", que antes vivía en un enum de 5 valores fijos sin mapeo contra los 8
+/// del enum de carrocería ni contra los 3 contadores de `settings.capacity`.
+///
+/// Unicidad: índice único PARCIAL y de EXPRESIÓN sobre
+/// (tenant_id, lower(btrim(name))) acotado a `deleted_at IS NULL`. Prisma no
+/// puede expresar ninguna de las dos cosas, así que vive solo en
+/// supabase/migrations/20260901010804_vehicle_types.sql.
+model VehicleType {
+  // UUIDv7 provisto por el cliente para soporte offline-first.
+  id       String  @id @db.Uuid
+  name     String  @db.VarChar(60)
+  accepted Boolean @default(true)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // La relación inversa `vehicles Vehicle[]` llega cuando `vehicles.type_id`
+  // reemplace al enum de carrocería.
+
+  version   Int       @default(1)
+  syncSeq   Int       @default(dbgenerated("nextval('vehicle_types_sync_seq')")) @map("sync_seq")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Redundante contra la PK, pero es lo que habilita la FK COMPUESTA
+  // (tenant_id, type_id) desde Vehicle. Una FK simple a vehicle_types(id)
+  // aceptaría el id de OTRO tenant — y el id lo manda el cliente.
+  @@unique([tenantId, id], map: "vehicle_types_tenant_id_id_key")
+  @@index([tenantId], map: "vehicle_types_tenant_id_idx")
+  @@index([tenantId, syncSeq], map: "vehicle_types_tenant_sync_seq_idx")
+  @@index([tenantId, updatedAt], map: "vehicle_types_tenant_updated_at_idx")
+  @@map("vehicle_types")
+}

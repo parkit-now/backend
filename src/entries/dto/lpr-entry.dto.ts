@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
+import { VehicleBodyType } from '@prisma/client';
 import {
   IsDateString,
   IsEnum,
@@ -14,10 +14,10 @@ export class LprEntryDto {
   @MaxLength(20)
   plate: string;
 
-  @ApiPropertyOptional({ enum: VehicleType })
+  @ApiPropertyOptional({ enum: VehicleBodyType })
   @IsOptional()
-  @IsEnum(VehicleType)
-  vehicleType?: VehicleType;
+  @IsEnum(VehicleBodyType)
+  vehicleType?: VehicleBodyType;
 
   @ApiPropertyOptional({
     description: 'URL of the entry photo captured by the LPR camera',

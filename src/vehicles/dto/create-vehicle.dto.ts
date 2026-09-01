@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
+import { VehicleBodyType } from '@prisma/client';
 import { Transform } from 'class-transformer';
+import { normalizeCatalogText } from '../../utils/text/normalize-catalog-text';
 import {
   IsEnum,
   IsNotEmpty,
@@ -11,14 +12,10 @@ import {
 } from 'class-validator';
 
 /**
- * Normaliza marca y modelo acá, en un solo lugar, para que create y update
- * coincidan con la expresión de `vehicles_scope_brand_model_uidx`
- * (`lower(btrim(...))`). El `btrim()` del índice queda de backstop: sin esto,
- * ' Toyota ' y 'Toyota' entrarían como la misma clave pero se guardarían
- * distinto, y la tabla mostraría espacios sueltos.
+ * Alias histórico de `normalizeCatalogText`. Se mantiene el nombre porque lo
+ * importan `update-vehicle.dto.ts` y los tests.
  */
-export const normalizeVehicleText = ({ value }: { value: unknown }): unknown =>
-  typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value;
+export const normalizeVehicleText = normalizeCatalogText;
 
 export class CreateVehicleDto {
   @ApiProperty({
@@ -42,8 +39,8 @@ export class CreateVehicleDto {
   @MaxLength(120)
   model: string;
 
-  @ApiPropertyOptional({ enum: VehicleType, example: VehicleType.auto })
+  @ApiPropertyOptional({ enum: VehicleBodyType, example: VehicleBodyType.auto })
   @IsOptional()
-  @IsEnum(VehicleType)
-  type?: VehicleType;
+  @IsEnum(VehicleBodyType)
+  type?: VehicleBodyType;
 }

@@ -33,6 +33,7 @@ model Tenant {
   services             Service[]
   paymentMethods       PaymentMethod[]
   vehicles             Vehicle[]
+  vehicleTypes         VehicleType[]
   auditLogs            AuditLog[]
   applications         OnboardingApplication[]
   cashSessions         CashSession[]

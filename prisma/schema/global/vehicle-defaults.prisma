@@ -1,0 +1,19 @@
+/// Plantillas de la plataforma para sembrar cuentas NUEVAS.
+///
+/// NO se exponen por la API del tenant y no tienen pantalla de admin: se editan
+/// por migración. Las lee únicamente la función `bootstrap_tenant_defaults()`,
+/// disparada por el trigger `AFTER INSERT ON tenants`.
+///
+/// Su razón de ser: el modelo "cada estacionamiento tiene su copia" iba a
+/// perder el catálogo semilla de la plataforma. Con la plantilla, si sale un
+/// modelo nuevo se agrega acá y las cuentas nuevas nacen con él, pero las playas
+/// existentes no se tocan — que es exactamente lo buscado.
+///
+/// Se modelan en Prisma aunque ningún service las use: el repo mantiene 1:1
+/// entre tablas SQL y modelos Prisma, y romperlo hace ruidoso el `db:diff`.
+model VehicleTypeDefault {
+  name     String  @id @db.VarChar(60)
+  accepted Boolean @default(true)
+
+  @@map("vehicle_type_defaults")
+}

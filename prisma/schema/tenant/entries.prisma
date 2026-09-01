@@ -12,7 +12,7 @@ model Entry {
 
   // LPR fields — populated on automatic ingress; null for manual entries.
   source         String      @default("manual") @db.VarChar(10)
-  vehicleType    VehicleType? @map("vehicle_type")
+  vehicleType    VehicleBodyType? @map("vehicle_type")
   entryImageUrl  String?     @map("entry_image_url")
   entryCameraId  String?     @map("entry_camera_id") @db.VarChar(100)
   exitImageUrl   String?     @map("exit_image_url")

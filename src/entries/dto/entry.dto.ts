@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
+import { VehicleBodyType } from '@prisma/client';
 
 export class EntryDto {
   @ApiProperty({ format: 'uuid' })
@@ -17,8 +17,8 @@ export class EntryDto {
   })
   source: string;
 
-  @ApiPropertyOptional({ enum: VehicleType })
-  vehicleType: VehicleType | null;
+  @ApiPropertyOptional({ enum: VehicleBodyType })
+  vehicleType: VehicleBodyType | null;
 
   @ApiPropertyOptional({
     description: 'URL of the entry photo captured by the LPR camera',
