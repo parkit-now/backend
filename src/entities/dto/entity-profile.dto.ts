@@ -162,6 +162,16 @@ export class EntityProfileDto {
   capacity: EntityCapacityDto;
 
   @ApiProperty({
+    type: 'integer',
+    minimum: 30,
+    maximum: 365,
+    description:
+      'Days a `registered` LPR detection image is kept after the stay exit before the retention job purges it. Owner-configurable (30-365); defaults to 90. Readable by any member, editable only by an owner.',
+    example: 90,
+  })
+  lprImageRetentionDays: number;
+
+  @ApiProperty({
     type: [PaymentMethodSummaryDto],
     description: 'Payment methods configured for this entity.',
   })

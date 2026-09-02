@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -121,4 +122,19 @@ export class UpdateEntityProfileDto {
   @ValidateNested()
   @Type(() => UpdateEntityCapacityDto)
   capacity?: UpdateEntityCapacityDto;
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    minimum: 30,
+    maximum: 365,
+    description:
+      'How long (in days) a `registered` LPR detection image is kept after the stay exit before the retention job purges it. Must be between 30 and 365. Owner-only.',
+    example: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(30)
+  @Max(365)
+  lprImageRetentionDays?: number;
 }

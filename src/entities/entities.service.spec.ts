@@ -23,6 +23,7 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
     address: null,
     status: 'active',
     settings: {},
+    lprImageRetentionDays: 90,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
     ...overrides,
   };
@@ -85,6 +86,7 @@ describe('EntitiesService', () => {
 
       expect(profile.id).toBe('t-1');
       expect(profile.name).toBe('Centro');
+      expect(profile.lprImageRetentionDays).toBe(90);
       expect(profile.paymentMethods).toHaveLength(1);
       expect(profile.paymentMethods[0].name).toBe('Cash');
       expect(profile.paymentMethods[0].isSystem).toBe(true);
@@ -113,6 +115,26 @@ describe('EntitiesService', () => {
       };
       expect(updateArg.data.name).toBe('New Name');
       expect(mockAudit.record).toHaveBeenCalled();
+    });
+
+    it('persists a new LPR image retention window', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({ lprImageRetentionDays: 120 }),
+      );
+      mockPrisma.tenant.update.mockResolvedValue(
+        tenant({ lprImageRetentionDays: 120 }),
+      );
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      const profile = await service.updateProfile('t-1', owner, {
+        lprImageRetentionDays: 120,
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: { lprImageRetentionDays?: number };
+      };
+      expect(updateArg.data.lprImageRetentionDays).toBe(120);
+      expect(profile.lprImageRetentionDays).toBe(120);
     });
 
     it('merges capacity into settings and sets status', async () => {

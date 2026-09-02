@@ -33,6 +33,7 @@ export function toEntityProfileDto(
     address: tenant.address,
     status: tenant.status,
     capacity: readCapacity(tenant.settings),
+    lprImageRetentionDays: tenant.lprImageRetentionDays,
     paymentMethods: paymentMethods.map(toPaymentMethodDto),
     createdAt: tenant.createdAt.toISOString(),
   };
