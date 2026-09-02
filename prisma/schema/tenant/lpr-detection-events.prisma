@@ -42,6 +42,7 @@ model LprDetectionEvent {
   @@index([tenantId, updatedAt], map: "lpr_detection_events_tenant_updated_at_idx")
   @@index([tenantId, status], map: "lpr_detection_events_tenant_status_idx")
   @@index([tenantId, status, archivedAt], map: "lpr_detection_events_tenant_status_archived_idx")
+  @@index([tenantId, lastSeenAt], map: "lpr_detection_events_tenant_last_seen_at_idx")
   @@index([entryId], map: "lpr_detection_events_entry_id_idx")
   @@map("lpr_detection_events")
 }
