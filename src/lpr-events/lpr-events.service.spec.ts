@@ -25,6 +25,7 @@ describe('LprEventsService', () => {
       updateMany: jest.fn(),
       findFirstOrThrow: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn(),
     },
   };
   const mockPrismaService = {
@@ -252,6 +253,93 @@ describe('LprEventsService', () => {
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(promise).rejects.toBeInstanceOf(FormattedException);
       expect(mockTenant.lprDetectionEvent.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listHistory', () => {
+    it('filters by timestamp range + plate, paginates, and returns the total', async () => {
+      mockTenant.lprDetectionEvent.findMany.mockResolvedValue([
+        row({ location: 'entrada', displayPlate: 'AB 123 CD' }),
+      ]);
+      mockTenant.lprDetectionEvent.count.mockResolvedValue(37);
+
+      const result = await service.listHistory({
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-08-31T23:59:59.999Z',
+        plate: 'ab-123-cd',
+        page: 2,
+        pageSize: 10,
+      });
+
+      const findArg = mockTenant.lprDetectionEvent.findMany.mock
+        .calls[0][0] as {
+        where: {
+          lastSeenAt: { gte: Date; lte: Date };
+          normalizedText: { startsWith: string };
+        };
+        skip: number;
+        take: number;
+        orderBy: unknown;
+      };
+      expect(findArg.where.lastSeenAt.gte).toEqual(
+        new Date('2026-08-01T00:00:00.000Z'),
+      );
+      expect(findArg.where.lastSeenAt.lte).toEqual(
+        new Date('2026-08-31T23:59:59.999Z'),
+      );
+      // separators stripped + upper-cased so it matches the stored normalizedText
+      expect(findArg.where.normalizedText.startsWith).toBe('AB123CD');
+      expect(findArg.skip).toBe(10);
+      expect(findArg.take).toBe(10);
+      expect(findArg.orderBy).toEqual([{ lastSeenAt: 'desc' }]);
+
+      // count uses the same where clause
+      expect(mockTenant.lprDetectionEvent.count.mock.calls[0][0]).toEqual({
+        where: findArg.where,
+      });
+
+      expect(result.total).toBe(37);
+      expect(result.page).toBe(2);
+      expect(result.pageSize).toBe(10);
+      expect(result.items[0].direction).toBe('ingreso');
+      expect(result.items[0].plate).toBe('AB 123 CD');
+      expect(result.items[0].hasImage).toBe(false);
+    });
+
+    it('maps an exit-lane detection to an egreso and filters by direction', async () => {
+      mockTenant.lprDetectionEvent.findMany.mockResolvedValue([
+        row({
+          location: 'Salida',
+          imageStoragePath: `${tenantId}/${eventId}.jpg`,
+          imageDeletedAt: new Date('2026-07-05T00:00:00.000Z'),
+        }),
+      ]);
+      mockTenant.lprDetectionEvent.count.mockResolvedValue(1);
+
+      const result = await service.listHistory({ direction: 'egreso' });
+
+      const findArg = mockTenant.lprDetectionEvent.findMany.mock
+        .calls[0][0] as { where: { location: unknown } };
+      expect(findArg.where.location).toEqual({
+        contains: 'salid',
+        mode: 'insensitive',
+      });
+      expect(result.items[0].direction).toBe('egreso');
+      // image exists but was purged by the retention job → not available
+      expect(result.items[0].hasImage).toBe(false);
+    });
+
+    it('negates the exit-lane match when filtering for ingreso', async () => {
+      mockTenant.lprDetectionEvent.findMany.mockResolvedValue([]);
+      mockTenant.lprDetectionEvent.count.mockResolvedValue(0);
+
+      await service.listHistory({ direction: 'ingreso' });
+
+      const findArg = mockTenant.lprDetectionEvent.findMany.mock
+        .calls[0][0] as { where: { NOT: { location: unknown } } };
+      expect(findArg.where.NOT).toEqual({
+        location: { contains: 'salid', mode: 'insensitive' },
+      });
     });
   });
 

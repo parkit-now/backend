@@ -14,10 +14,17 @@ import {
 } from '../storage/storage.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import { resolvePagination } from '../utils/pagination/pagination-query.dto';
 import { LprDetectionEventChangesQueryDto } from './dto/lpr-detection-event-changes-query.dto';
 import { LprDetectionEventDto } from './dto/lpr-detection-event.dto';
 import { LprDetectionEventImageSignedUrlDto } from './dto/lpr-detection-event-image-signed-url.dto';
 import { ListLprDetectionEventsQueryDto } from './dto/list-lpr-detection-events-query.dto';
+import {
+  ListLprEventHistoryQueryDto,
+  type LprEventDirection,
+} from './dto/list-lpr-event-history-query.dto';
+import { LprEventHistoryItemDto } from './dto/lpr-event-history-item.dto';
+import { LprEventHistoryPageDto } from './dto/lpr-event-history-page.dto';
 import { UpdateLprDetectionEventDto } from './dto/update-lpr-detection-event.dto';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
 
@@ -71,6 +78,60 @@ export function toLprDetectionEventDto(
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
   };
+}
+
+/** A `location` naming an exit lane maps the event to an `egreso`. */
+function isEgresoLocation(location: string): boolean {
+  return /salid/i.test(location);
+}
+
+export function toLprEventHistoryItemDto(
+  event: LprDetectionEvent,
+): LprEventHistoryItemDto {
+  return {
+    ...toLprDetectionEventDto(event),
+    plate: event.displayPlate ?? event.normalizedText ?? event.rawText ?? null,
+    direction: isEgresoLocation(event.location) ? 'egreso' : 'ingreso',
+    hasImage: Boolean(event.imageStoragePath) && !event.imageDeletedAt,
+  };
+}
+
+/** Strips separators and upper-cases so a plate query matches `normalizedText`. */
+function normalizePlateQuery(value: string): string {
+  return value.replace(/[\s_-]/g, '').toUpperCase();
+}
+
+function directionWhere(
+  direction: LprEventDirection,
+): Prisma.LprDetectionEventWhereInput {
+  const egreso: Prisma.LprDetectionEventWhereInput = {
+    location: { contains: 'salid', mode: 'insensitive' },
+  };
+  return direction === 'egreso' ? egreso : { NOT: egreso };
+}
+
+function buildHistoryWhere(
+  query: ListLprEventHistoryQueryDto,
+): Prisma.LprDetectionEventWhereInput {
+  const where: Prisma.LprDetectionEventWhereInput = {};
+
+  if (query.from || query.to) {
+    where.lastSeenAt = {
+      ...(query.from ? { gte: new Date(query.from) } : {}),
+      ...(query.to ? { lte: new Date(query.to) } : {}),
+    };
+  }
+
+  const plate = query.plate?.trim();
+  if (plate) {
+    where.normalizedText = { startsWith: normalizePlateQuery(plate) };
+  }
+
+  if (query.direction) {
+    Object.assign(where, directionWhere(query.direction));
+  }
+
+  return where;
 }
 
 function isResolved(status: LprDetectionStatus): boolean {
@@ -358,6 +419,32 @@ export class LprEventsService {
       take: query.limit,
     });
     return items.map(toLprDetectionEventDto);
+  }
+
+  /**
+   * Owner-facing audit history: a paginated, newest-first feed of past LPR
+   * detections filtered by detection-timestamp range, plate and movement
+   * direction. Unlike `list()` (the review inbox) this spans every status and
+   * includes archived events — the point is to find any past movement.
+   */
+  async listHistory(
+    query: ListLprEventHistoryQueryDto,
+  ): Promise<LprEventHistoryPageDto> {
+    const { page, pageSize, skip, take } = resolvePagination(query);
+    const tenantPrisma = this.prisma.getTenantClient();
+    const where = buildHistoryWhere(query);
+
+    const [rows, total] = await Promise.all([
+      tenantPrisma.lprDetectionEvent.findMany({
+        where,
+        orderBy: [{ lastSeenAt: 'desc' }],
+        skip,
+        take,
+      }),
+      tenantPrisma.lprDetectionEvent.count({ where }),
+    ]);
+
+    return { items: rows.map(toLprEventHistoryItemDto), total, page, pageSize };
   }
 
   private toCreateData(

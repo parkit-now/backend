@@ -34,6 +34,8 @@ import { LprDetectionEventChangesResponseDto } from './dto/lpr-detection-event-c
 import { LprDetectionEventDto } from './dto/lpr-detection-event.dto';
 import { LprDetectionEventImageSignedUrlDto } from './dto/lpr-detection-event-image-signed-url.dto';
 import { ListLprDetectionEventsQueryDto } from './dto/list-lpr-detection-events-query.dto';
+import { ListLprEventHistoryQueryDto } from './dto/list-lpr-event-history-query.dto';
+import { LprEventHistoryPageDto } from './dto/lpr-event-history-page.dto';
 import { UpdateLprDetectionEventDto } from './dto/update-lpr-detection-event.dto';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
 import { LprEventsService } from './lpr-events.service';
@@ -65,6 +67,21 @@ export class LprEventsController {
   @ApiOkResponse({ type: LprDetectionEventChangesResponseDto })
   async pullChanges(@Query() query: LprDetectionEventChangesQueryDto) {
     return this.lprEvents.pullChanges(query);
+  }
+
+  @Get('history')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    summary: 'Search past LPR detection events with visual evidence',
+    description: [
+      'Owner-facing audit view: a paginated, newest-first feed of past camera/OCR detections.',
+      'Filter by detection-timestamp range (`from`/`to`), plate (`plate`, normalized prefix match) and movement `direction` (ingreso/egreso, derived from the camera `location`).',
+      'Each item carries the plate, timestamp, direction, OCR confidence/quality and whether an evidence image is still available; load the full-resolution photo through `GET :eventId/image-signed-url`.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: LprEventHistoryPageDto })
+  async history(@Query() query: ListLprEventHistoryQueryDto) {
+    return this.lprEvents.listHistory(query);
   }
 
   @Post()
