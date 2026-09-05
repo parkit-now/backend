@@ -1,7 +1,7 @@
 // Local-only tenant business seed.
 //
-// Creates sample `entries` rows for two tenants using global `vehicles`.
-// Idempotent — safe to run multiple times.
+// Creates sample `rates` and `entries` rows for two tenants using global
+// `vehicles`. Idempotent — safe to run multiple times.
 //
 // Guardrails:
 //   - Refuses to run unless SUPABASE_URL points to localhost / 127.0.0.1.
@@ -32,17 +32,148 @@ const TENANTS = {
   belgrano: '22222222-2222-4222-8222-222222222222',
 } as const;
 
-const VEHICLES = {
-  corolla: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
-  ranger: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2',
-  kangoo: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3',
-} as const;
+// Vehículos PROPIOS de cada estacionamiento. Los globales (244 modelos) los
+// aplica la migración 20260831190200_vehicles_global_catalog_seed.sql, no un
+// seed: `supabase/seed.sql` nunca llega a la nube y producción quedaría con el
+// catálogo vacío.
+//
+// Antes acá se re-upserteaban los 3 globales del seed viejo. Eso disparaba el
+// trigger en cada `make seed-all` y les rotaba `sync_seq`/`version` al pedo.
+type SeedVehicle = {
+  id: string;
+  tenantId: string;
+  brand: string;
+  model: string;
+  /** Nombre del tipo en `vehicle_types` de ESE tenant; se resuelve a `typeId`. */
+  typeName: string;
+  /** Sembrado ya borrado, para ejercitar el tombstone del sync. */
+  deleted?: boolean;
+};
+
+/**
+ * Tipo propio de demo. "Utilitario" NO está entre los siete defaults a
+ * propósito: es el ejemplo canónico de la categoría que crea el dueño. Que Once
+ * lo tenga hace que el seed DEMUESTRE la feature en vez de contradecirla — y le
+ * da al Iveco Daily una clasificación honesta en vez de mandarlo a "Otro".
+ */
+const TENANT_VEHICLE_TYPES = [
+  {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaacc1',
+    tenantId: TENANTS.once,
+    name: 'Utilitario',
+    accepted: true,
+  },
+];
+
+const TENANT_VEHICLES: SeedVehicle[] = [
+  {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb1',
+    tenantId: TENANTS.once,
+    brand: 'Iveco',
+    model: 'Daily',
+    typeName: 'Utilitario',
+  },
+  {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb2',
+    tenantId: TENANTS.once,
+    brand: 'Zanella',
+    model: 'RX 150',
+    typeName: 'Moto',
+  },
+  {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb3',
+    tenantId: TENANTS.belgrano,
+    brand: 'Agrale',
+    model: 'Marruá',
+    typeName: 'Pickup',
+  },
+  {
+    // Tombstone a propósito: ejercita que una baja llegue a los clientes
+    // offline por /vehicles/changes. Mismo criterio que las tasas borradas.
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaabb4',
+    tenantId: TENANTS.once,
+    brand: 'Corven',
+    model: 'Energy',
+    typeName: 'Moto',
+    deleted: true,
+  },
+];
 
 // Onboarding demo: two already-APPROVED entities (Once + Belgrano, owned by
 // owner@example.com via memberships) carry legal data + payment methods, and one
 // PENDING application under review (feeds the PARKIT Ops queue).
-const PENDING_APPLICATION = 'dddddddd-dddd-dddd-dddd-ddddddddddd1';
-const PENDING_DOCUMENT = 'dddddddd-dddd-dddd-dddd-ddddddddddc1';
+// Los ids fijos del seed llevan `4` y `8` en las posiciones de versión y
+// variante (misma convención que los de TENANTS). No es cosmético: `@IsUUID()`
+// rechaza un uuid con nibble de versión fuera de 1-5, así que un id "obviamente
+// falso" tipo aaaaaaaa-aaaa-aaaa-... no se puede mandar como query param —
+// exactamente el caso de `reassignToTypeId` al borrar un tipo de vehículo.
+const PENDING_APPLICATION = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1';
+const PENDING_DOCUMENT = 'dddddddd-dddd-4ddd-8ddd-ddddddddddc1';
+
+// Rates were missing from this seed, so `make reset && make seed-all` left the
+// table empty and both the web ABM and the desktop panel came up with no
+// tariffs — which reads as a persistence bug rather than an empty seed.
+//
+// The non-round prices are deliberate: they exercise ARS formatting and the
+// Decimal(12,2) precision path, where round numbers would hide bugs.
+type SeedRate = {
+  id: string;
+  tenantId: string;
+  name: string;
+  hourPriceArs: string;
+  stayPriceArs: string;
+  fractionPriceArs: string;
+  shortcutNumber: number;
+  isActive?: boolean;
+  /** Set to seed a soft-deleted rate (tombstone) — see RATES below. */
+  deleted?: boolean;
+};
+
+const RATES: SeedRate[] = [
+  {
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+    tenantId: TENANTS.once,
+    name: 'DIA AUTO ONCE',
+    hourPriceArs: '4444.44',
+    stayPriceArs: '8000.00',
+    fractionPriceArs: '300.00',
+    shortcutNumber: 1,
+  },
+  // Deactivated, not deleted: the owner panel still lists it and can reactivate
+  // it. Keeps the isActive/deletedAt distinction visible in a fresh environment.
+  {
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff2',
+    tenantId: TENANTS.once,
+    name: 'NOCHE MOTO ONCE',
+    hourPriceArs: '1800.50',
+    stayPriceArs: '4000.00',
+    fractionPriceArs: '150.00',
+    shortcutNumber: 2,
+    isActive: false,
+  },
+  // Soft-deleted: never returned by GET /rates, but shipped by
+  // GET /rates/changes as a tombstone. Its shortcut number stays reusable
+  // because the unique index is scoped to `deleted_at IS NULL`.
+  {
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff3',
+    tenantId: TENANTS.once,
+    name: 'TASA BORRADA (DEMO)',
+    hourPriceArs: '999.99',
+    stayPriceArs: '2500.00',
+    fractionPriceArs: '99.00',
+    shortcutNumber: 9,
+    deleted: true,
+  },
+  {
+    id: 'ffffffff-ffff-4fff-8fff-fffffffffff4',
+    tenantId: TENANTS.belgrano,
+    name: 'TARIFA BELGRANO',
+    hourPriceArs: '5000.00',
+    stayPriceArs: '12000.00',
+    fractionPriceArs: '500.00',
+    shortcutNumber: 1,
+  },
+];
 
 // Entries no longer hold a vehicle FK: the model snapshots brand/model inline
 // (offline-first denormalization). The Vehicle catalog stays for autocomplete.
@@ -60,7 +191,7 @@ type SeedEntry = {
 
 const ENTRIES: SeedEntry[] = [
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1',
     tenantId: TENANTS.once,
     vehicleBrand: 'Toyota',
     vehicleModel: 'Corolla',
@@ -71,7 +202,7 @@ const ENTRIES: SeedEntry[] = [
     amountPaid: '3200.00',
   },
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2',
     tenantId: TENANTS.once,
     vehicleBrand: 'Ford',
     vehicleModel: 'Ranger',
@@ -80,7 +211,7 @@ const ENTRIES: SeedEntry[] = [
     enteredAt: '2026-05-02T08:15:00.000Z',
   },
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3',
     tenantId: TENANTS.belgrano,
     vehicleBrand: 'Renault',
     vehicleModel: 'Kangoo',
@@ -91,7 +222,7 @@ const ENTRIES: SeedEntry[] = [
     amountPaid: '2700.00',
   },
   {
-    id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4',
     tenantId: TENANTS.belgrano,
     vehicleBrand: 'Toyota',
     vehicleModel: 'Corolla',
@@ -111,8 +242,131 @@ async function tableExists(table: string): Promise<boolean> {
   return rows[0]?.exists === true;
 }
 
+/** Fixed so re-seeding writes the same value instead of a moving timestamp. */
+const DEMO_DELETED_AT = new Date('2026-05-04T18:00:00.000Z');
+
+/**
+ * Vehículos propios de cada estacionamiento (idempotente, ids fijos).
+ *
+ * Antes ningún seed creaba vehículos de tenant ni bajas, así que el ABM y el
+ * camino de tombstones del sync arrancaban sin fixtures.
+ *
+ * `syncSeq` nunca se pasa: la columna tiene DEFAULT nextval('vehicles_sync_seq')
+ * y un valor explícito caería en 0, invisible para /vehicles/changes.
+ */
+async function seedTenantVehicles(): Promise<void> {
+  let seeded = 0;
+
+  // El tipo propio de demo va primero: los vehículos lo referencian por FK.
+  for (const type of TENANT_VEHICLE_TYPES) {
+    await prisma.vehicleType.upsert({
+      where: { id: type.id },
+      create: type,
+      update: { name: type.name, accepted: type.accepted },
+    });
+  }
+
+  for (const vehicle of TENANT_VEHICLES) {
+    // Los siete tipos por defecto los siembra el trigger de `tenants`; acá se
+    // resuelve el nombre al id de ESE estacionamiento.
+    const type = await prisma.vehicleType.findFirst({
+      where: {
+        tenantId: vehicle.tenantId,
+        name: vehicle.typeName,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!type) {
+      console.warn(
+        `⚠ Skipped vehicle "${vehicle.brand} ${vehicle.model}": no existe el tipo "${vehicle.typeName}" en ese estacionamiento.`,
+      );
+      continue;
+    }
+
+    const fields = {
+      tenantId: vehicle.tenantId,
+      brand: vehicle.brand,
+      model: vehicle.model,
+      typeId: type.id,
+      deletedAt: vehicle.deleted ? DEMO_DELETED_AT : null,
+    };
+
+    try {
+      await prisma.vehicle.upsert({
+        where: { id: vehicle.id },
+        create: { id: vehicle.id, ...fields },
+        update: fields,
+      });
+      seeded += 1;
+    } catch (error) {
+      // `vehicles_tenant_brand_model_uidx` es parcial sobre `deleted_at IS NULL`,
+      // así que una fila viva cargada a mano con la misma marca/modelo colisiona.
+      // Se saltea con un mensaje claro en vez de voltear todo `make seed-all`.
+      const code = (error as { code?: string }).code;
+      if (code !== 'P2002') throw error;
+      console.warn(
+        `⚠ Skipped vehicle "${vehicle.brand} ${vehicle.model}": already taken in this tenant.`,
+      );
+    }
+  }
+
+  const tombstones = TENANT_VEHICLES.filter((v) => v.deleted).length;
+  console.log(
+    `✓ Seeded ${seeded} tenant vehicles across 2 tenants (${tombstones} soft-deleted, for tombstone sync).`,
+  );
+}
+
+/**
+ * Rates seed (idempotent, keyed by fixed ids).
+ *
+ * `syncSeq` is never passed: the column defaults to `nextval('rates_sync_seq')`
+ * and an explicit value would land as 0, which is invisible to `/rates/changes`
+ * (that's what 20260604024720_fix_sync_seq_zero.sql had to repair).
+ */
+async function seedRates(): Promise<void> {
+  let seeded = 0;
+
+  for (const rate of RATES) {
+    const fields = {
+      tenantId: rate.tenantId,
+      name: rate.name,
+      hourPriceArs: rate.hourPriceArs,
+      stayPriceArs: rate.stayPriceArs,
+      fractionPriceArs: rate.fractionPriceArs,
+      shortcutNumber: rate.shortcutNumber,
+      isActive: rate.isActive ?? true,
+      deletedAt: rate.deleted ? DEMO_DELETED_AT : null,
+    };
+
+    try {
+      await prisma.rate.upsert({
+        where: { id: rate.id },
+        create: { id: rate.id, ...fields },
+        update: fields,
+      });
+      seeded += 1;
+    } catch (error) {
+      // The partial unique index on (tenant_id, shortcut_number) is scoped to
+      // `deleted_at IS NULL`, so a hand-made live rate holding the same
+      // shortcut collides. Skip it with a clear message instead of aborting
+      // the whole `make seed-all`.
+      const code = (error as { code?: string }).code;
+      if (code !== 'P2002') throw error;
+      console.warn(
+        `⚠ Skipped rate "${rate.name}": shortcut ${rate.shortcutNumber} is already taken in this tenant by another rate.`,
+      );
+    }
+  }
+
+  const tombstones = RATES.filter((r) => r.deleted).length;
+  console.log(
+    `✓ Seeded ${seeded} rates across 2 tenants (${tombstones} soft-deleted, for tombstone sync).`,
+  );
+}
+
 async function main(): Promise<void> {
-  const required = ['tenants', 'vehicles', 'entries'];
+  const required = ['tenants', 'vehicles', 'entries', 'rates'];
   for (const table of required) {
     const exists = await tableExists(table);
     if (!exists) {
@@ -122,36 +376,9 @@ async function main(): Promise<void> {
     }
   }
 
-  await prisma.vehicle.upsert({
-    where: { id: VEHICLES.corolla },
-    create: {
-      id: VEHICLES.corolla,
-      brand: 'Toyota',
-      model: 'Corolla',
-      type: 'auto',
-    },
-    update: { brand: 'Toyota', model: 'Corolla', type: 'auto' },
-  });
-  await prisma.vehicle.upsert({
-    where: { id: VEHICLES.ranger },
-    create: {
-      id: VEHICLES.ranger,
-      brand: 'Ford',
-      model: 'Ranger',
-      type: 'pickup',
-    },
-    update: { brand: 'Ford', model: 'Ranger', type: 'pickup' },
-  });
-  await prisma.vehicle.upsert({
-    where: { id: VEHICLES.kangoo },
-    create: {
-      id: VEHICLES.kangoo,
-      brand: 'Renault',
-      model: 'Kangoo',
-      type: 'van',
-    },
-    update: { brand: 'Renault', model: 'Kangoo', type: 'van' },
-  });
+  await seedTenantVehicles();
+
+  await seedRates();
 
   for (const entry of ENTRIES) {
     await prisma.entry.upsert({
@@ -219,8 +446,8 @@ async function seedOnboarding(): Promise<void> {
   // --- APPROVED entities: Once + Belgrano (owned by owner@example.com) ---
   // Membership is seeded by seed-auth; here we fill the relocated legal/contact
   // data and the entity-level payment methods.
-  // Per-type spot capacity now lives in `tenant.settings.capacity` (the `zones`
-  // table was removed). It feeds the owner dashboard occupancy and config.
+  // La capacidad total vive en `tenant.settings.capacity.total`: un solo
+  // número. Alimenta la ocupación del dashboard y la pantalla de config.
   await prisma.tenant.update({
     where: { id: TENANTS.once },
     data: {
@@ -230,9 +457,7 @@ async function seedOnboarding(): Promise<void> {
       phone: '+541140000000',
       address: 'Bartolomé Mitre 2500, CABA',
       status: 'active',
-      settings: {
-        capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
-      },
+      settings: { capacity: { total: 55 } },
     },
   });
   await prisma.tenant.update({
@@ -244,35 +469,27 @@ async function seedOnboarding(): Promise<void> {
       phone: '+541140000000',
       address: 'Av. Cabildo 2000, CABA',
       status: 'active',
-      settings: {
-        capacity: { carSpots: 25, motorcycleSpots: 8, bicycleSpots: 0 },
-      },
+      settings: { capacity: { total: 33 } },
     },
   });
 
-  // Services config: per-type spots now live in the `services` table (the
-  // owner edits them from the Services tab). Mirror the capacity above.
-  const demoServices: Record<
-    string,
-    { code: string; enabled: boolean; spots: number }[]
-  > = {
-    [TENANTS.once]: [
-      { code: 'VEHICLE_CAR', enabled: true, spots: 40 },
-      { code: 'VEHICLE_MOTORCYCLE', enabled: true, spots: 10 },
-      { code: 'VEHICLE_BICYCLE', enabled: true, spots: 5 },
-      { code: 'ADVANCE_RESERVATION', enabled: true, spots: 0 },
-    ],
-    [TENANTS.belgrano]: [
-      { code: 'VEHICLE_CAR', enabled: true, spots: 25 },
-      { code: 'VEHICLE_MOTORCYCLE', enabled: true, spots: 8 },
-    ],
+  // Servicios: sólo amenities. Los códigos VEHICLE_* se retiraron — "qué
+  // vehículos acepta la playa" vive en `vehicle_types.accepted`, y las plazas
+  // en `tenant.settings.capacity.total`.
+  const demoServices: Record<string, { code: string; enabled: boolean }[]> = {
+    [TENANTS.once]: [{ code: 'ADVANCE_RESERVATION', enabled: true }],
+    [TENANTS.belgrano]: [{ code: 'ADVANCE_RESERVATION', enabled: false }],
   };
   for (const [tenantId, rows] of Object.entries(demoServices)) {
     for (const r of rows) {
       await prisma.service.upsert({
         where: { tenantId_code: { tenantId, code: r.code as ServiceCode } },
-        create: { tenantId, code: r.code as ServiceCode, enabled: r.enabled, spots: r.spots },
-        update: { enabled: r.enabled, spots: r.spots },
+        create: {
+          tenantId,
+          code: r.code as ServiceCode,
+          enabled: r.enabled,
+        },
+        update: { enabled: r.enabled },
       });
     }
   }
@@ -296,7 +513,14 @@ async function seedOnboarding(): Promise<void> {
         });
       } else {
         await prisma.paymentMethod.create({
-          data: { tenantId, type, name, enabled: true, isSystem: true, isDefault },
+          data: {
+            tenantId,
+            type,
+            name,
+            enabled: true,
+            isSystem: true,
+            isDefault,
+          },
         });
       }
     }
@@ -319,9 +543,7 @@ async function seedOnboarding(): Promise<void> {
         cuit: '30700000002',
         email: 'sur@parkit.test',
         phone: '+541150000000',
-        carSpots: 30,
-        motorcycleSpots: 10,
-        bicycleSpots: 5,
+        totalSpots: 45,
       },
     },
     update: { status: 'pending_review', applicantUserId: ownerPending.id },

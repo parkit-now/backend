@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class RateDto {
   @ApiProperty({ format: 'uuid' })
@@ -36,4 +36,13 @@ export class RateDto {
 
   @ApiProperty({ format: 'date-time' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({
+    format: 'date-time',
+    description:
+      'Non-null when the rate has been soft-deleted. Rows with a non-null ' +
+      'value only ever appear in GET /rates/changes, as a tombstone telling ' +
+      'offline clients to drop the rate from their local copy.',
+  })
+  deletedAt: Date | null;
 }

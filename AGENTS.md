@@ -24,8 +24,8 @@ Antes de cambiar código, revisar siempre:
 ## 3) Contexto arquitectónico del proyecto
 
 - DB única (Supabase/PostgreSQL) con dos capas lógicas:
-  - Global (`users`, `tenants`, `vehicles`, etc)
-  - Tenant-local (`entries`, `rates` y futuros módulos operativos)
+  - Global (`users`, `tenants`, `vehicle_type_defaults`, `vehicle_catalog_defaults`, etc)
+  - Tenant-local (`entries`, `rates`, `vehicles`, `vehicle_types` y futuros módulos operativos)
 - Defensa en profundidad:
   - Capa app (`getTenantClient()`, validaciones de membership/tenant automáticas vía Guards/Interceptors)
   - Capa DB (RLS + policies SQL)
@@ -51,6 +51,28 @@ El desktop hace `pull` al reconectar y hace `push` de mutaciones encoladas mient
 - Eliminar `@default(dbgenerated("gen_random_uuid()"))` del campo `id` en Prisma para que el cliente provea UUIDv7 generado localmente.
 
 Ver `supabase/migrations/20260529093000_add_rates.sql` y `20260603225951_entries_offline_sync.sql` como referencia del patrón completo.
+
+### Cómo nace un tenant
+
+Hay **tres** caminos de creación de estacionamientos:
+
+| Camino | Archivo |
+|---|---|
+| Aprobación de solicitud | `src/admin/applications/applications.service.ts` |
+| Alta directa del admin | `src/admin/parkings/parkings.service.ts` |
+| Seed local | `supabase/seed.sql` |
+
+Los tres convergen en el trigger `AFTER INSERT ON tenants`
+(`bootstrap_tenant_defaults()`, migración `20260901013345`), que siembra los
+siete tipos de vehículo, el catálogo de 244 modelos, el servicio de reserva
+anticipada y los dos métodos de pago del sistema.
+
+**Si hay que agregar un default nuevo, va en el trigger y en ningún otro lado.**
+Antes esto se hacía a mano en `approve()` y el alta directa del admin se lo
+olvidaba: un estacionamiento creado desde el panel nacía sin servicios y sin
+métodos de pago. "Acordate de llamarlo en cada lugar" ya falló una vez acá.
+
+Precedente del patrón: `20260507042000_oauth_auto_provision_users.sql`.
 
 ### Modelo de roles y permisos (scoped roles)
 
@@ -98,7 +120,10 @@ Aplicación en este repo (estado actual):
 - DTO manual cuando el contrato HTTP no es 1:1 con la tabla. Ejemplos vigentes:
   - `src/rates/dto/` — El `CreateRateDto` acepta `id` provisto por cliente (UUIDv7 offline), `pullChanges` retorna `RateChangesResponseDto` que agrega `maxSeq`. Ninguno de estos mapea 1:1 al modelo.
   - `src/entries/dto/` — `CreateEntryDto` incluye `id` cliente + campos de snapshot de tarifa que no están en el modelo como escritura directa. `CloseEntryDto` es un subset con lógica de negocio (defaultea `leftAt` a `now()` si no se envía).
-  - `src/vehicles/dto/` — `CreateVehicleDto` agrega `id` provisto por cliente.
+  - `src/vehicles/dto/` y `src/vehicle-types/dto/` — `id` provisto por el
+    cliente (UUIDv7 offline), `expectedVersion` para el optimistic locking, y
+    `pullChanges` que agrega `maxSeq`. El listado de tipos agrega además
+    `vehicleCount`, que no existe como columna.
   - `src/auth/dto`, `src/password-recovery/dto`, `src/health/dto`, `src/utils/exceptions/dto`.
 
 Cuando hay un modelo en Prisma para auditar/persistir pero el payload del endpoint es distinto, el patrón es: **DTO manual para el contrato HTTP + Prisma client autogenerado para escribir en DB**. Ver `PasswordRecoveryService` como referencia (manual `ForgotPasswordDto` en el controller, `prisma.passwordResetRequest.create(...)` en el service).

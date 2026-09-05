@@ -24,19 +24,5 @@ BEGIN
         ON CONFLICT (id) DO NOTHING;
     END IF;
 
-    -- Seed a tiny global catalog when `vehicles` exists.
-    -- The guard keeps `make reset` safe on branches where the table is not
-    -- migrated yet.
-    IF to_regclass('public.vehicles') IS NOT NULL THEN
-        INSERT INTO vehicles (id, brand, model, type, created_at, updated_at) VALUES
-            ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', 'Toyota', 'Corolla', 'auto', now(), now()),
-            ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', 'Ford', 'Ranger', 'pickup', now(), now()),
-            ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3', 'Renault', 'Kangoo', 'van', now(), now())
-        ON CONFLICT (id) DO UPDATE
-        SET brand = EXCLUDED.brand,
-            model = EXCLUDED.model,
-            type = EXCLUDED.type,
-            updated_at = now();
-    END IF;
 END
 $seed$;

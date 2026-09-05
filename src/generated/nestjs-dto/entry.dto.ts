@@ -1,5 +1,5 @@
 
-import {Prisma,VehicleType} from '@prisma/client'
+import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -25,10 +25,7 @@ leftAt: Date  | null;
 })
 amountPaid: Prisma.Decimal  | null;
 source: string ;
-@ApiProperty({
-  enum: VehicleType,
-})
-vehicleType: VehicleType  | null;
+vehicleType: string  | null;
 entryImageUrl: string  | null;
 entryCameraId: string  | null;
 exitImageUrl: string  | null;

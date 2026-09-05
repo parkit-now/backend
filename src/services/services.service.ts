@@ -40,7 +40,6 @@ export class ServicesService {
       return {
         code,
         enabled: row?.enabled ?? false,
-        spots: row?.spots ?? 0,
       };
     });
   }
@@ -68,7 +67,7 @@ export class ServicesService {
    */
   async updateService(
     code: string,
-    data: { enabled?: boolean; spots?: number },
+    data: { enabled?: boolean },
   ): Promise<ServiceCatalogItemDto> {
     if (!this.isServiceCode(code)) {
       throw new FormattedException(
@@ -87,20 +86,18 @@ export class ServicesService {
       version: { increment: 1 },
     };
     if (data.enabled !== undefined) updateData.enabled = data.enabled;
-    if (data.spots !== undefined) updateData.spots = data.spots;
 
     const updated = await tenantPrisma.service.updateMany({
       where: { tenantId, code },
       data: updateData,
     });
 
-    let row: { enabled: boolean; spots: number };
+    let row: { enabled: boolean };
     if (updated.count === 0) {
       row = await tenantPrisma.service.create({
         data: {
           code,
           enabled: data.enabled ?? false,
-          spots: data.spots ?? 0,
           // tenantId is injected by prismaForTenant(...)
         } as Prisma.ServiceUncheckedCreateInput,
       });
@@ -108,7 +105,7 @@ export class ServicesService {
       row = await tenantPrisma.service.findFirstOrThrow({ where: { code } });
     }
 
-    return { code, enabled: row.enabled, spots: row.spots };
+    return { code, enabled: row.enabled };
   }
 
   private isServiceCode(value: string): value is ServiceCode {

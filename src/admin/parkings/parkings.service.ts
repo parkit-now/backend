@@ -45,6 +45,17 @@ export class ParkingsService {
     return toParkingDto(tenant);
   }
 
+  /**
+   * Crea el tenant y nada más. Los tipos de vehículo, el catálogo, los
+   * servicios y los métodos de pago del sistema los siembra el trigger
+   * `AFTER INSERT ON tenants` (`bootstrap_tenant_defaults()`, migración
+   * 20260901013345), que corre dentro de este mismo INSERT.
+   *
+   * Antes eso se hacía a mano en `applications.approve()` y ESTE camino se lo
+   * olvidaba: un estacionamiento dado de alta desde el panel nacía sin
+   * servicios y sin métodos de pago. Si hay que agregar un default nuevo, va en
+   * el trigger, no acá.
+   */
   async create(admin: User, dto: CreateParkingDto): Promise<ParkingDto> {
     const tenant = await this.prisma.tenant.create({
       data: {

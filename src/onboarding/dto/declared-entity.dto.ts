@@ -1,5 +1,4 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
 import {
   IsEmail,
   IsInt,
@@ -64,38 +63,12 @@ export class DeclaredEntityDto {
   @ApiPropertyOptional({
     type: 'integer',
     minimum: 0,
-    description: 'Declared car spots (stored in the tenant settings capacity).',
-    example: 80,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  carSpots?: number;
-
-  @ApiPropertyOptional({
-    type: 'integer',
-    minimum: 0,
     description:
-      'Declared motorcycle spots (stored in the tenant settings capacity).',
-    example: 20,
+      'Plazas totales declaradas (van a `tenant.settings.capacity.total`).',
+    example: 110,
   })
   @IsOptional()
-  @Type(() => Number)
   @IsInt()
   @Min(0)
-  motorcycleSpots?: number;
-
-  @ApiPropertyOptional({
-    type: 'integer',
-    minimum: 0,
-    description:
-      'Declared bicycle spots (stored in the tenant settings capacity).',
-    example: 10,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  bicycleSpots?: number;
+  totalSpots?: number;
 }
