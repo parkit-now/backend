@@ -1,35 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-/**
- * Where the occupancy denominator came from.
- *
- * The lot's spot count lives in two places that drifted apart: `services.spots`
- * (per `ServiceCode`, edited from the services config screen) and
- * `tenant.settings.capacity` (edited from the entity profile). Both are seeded
- * from the same declared numbers when an application is approved, but neither
- * write path syncs the other. Metrics prefer `services` and fall back to
- * `settings`; this field tells the client which one produced the number, so a
- * mismatch is diagnosable from the dashboard instead of silently wrong.
- */
-export type CapacitySource = 'services' | 'settings' | 'none';
-
 /** Live occupancy of the lot. Shared by `/metrics/occupancy` and `/metrics/summary`. */
 export class OccupancyDto {
   @ApiProperty({
     type: 'integer',
     description:
-      'Total spots. `0` when the lot has configured neither services nor profile capacity.',
+      'Total spots, from `tenant.settings.capacity.total` (the entity profile). `0` when the lot has not declared its capacity yet.',
     example: 100,
   })
   capacity: number;
-
-  @ApiProperty({
-    enum: ['services', 'settings', 'none'],
-    description:
-      'Which configuration produced `capacity`: enabled `services.spots`, the profile `settings.capacity` fallback, or neither.',
-    example: 'services',
-  })
-  capacitySource: CapacitySource;
 
   @ApiProperty({
     type: 'integer',
@@ -61,8 +40,8 @@ export class OccupancyDto {
 export class OccupancyByVehicleTypeDto {
   @ApiProperty({
     description:
-      'Vehicle type of the open entries, or `unknown` when the entry never declared one.',
-    example: 'auto',
+      'Vehicle type of the open entries — the name snapshotted from the tenant’s `vehicle-types` catalogue at ingress — or `unknown` when the entry never declared one.',
+    example: 'Auto',
   })
   type: string;
 
@@ -77,7 +56,9 @@ export class OccupancyResponseDto extends OccupancyDto {
     description: [
       'Open entries grouped by `vehicleType`, most occupied first. **Best effort, counts only.**',
       '',
-      'Two caveats the UI must respect: `vehicleType` is only populated on LPR ingress (`source = "auto"`), so lots working manually report almost everything under `unknown`; and `ServiceCode` does not map 1:1 to `VehicleType`, so there is no per-type capacity to turn these counts into percentages.',
+      'Two caveats the UI must respect: `vehicleType` is only populated on LPR ingress (`source = "auto"`), so lots working manually report almost everything under `unknown`; and capacity is a single lot-wide total, not a per-type quota, so these counts cannot be turned into percentages.',
+      '',
+      'The names come from the entries themselves, not from the live catalogue: a type the owner has since renamed or deleted still shows up here under the name it had at ingress.',
     ].join('\n'),
   })
   byVehicleType: OccupancyByVehicleTypeDto[];

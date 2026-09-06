@@ -156,7 +156,7 @@ export class MetricsController {
     description: [
       'Occupied spots over total capacity right now, plus a breakdown of open entries by vehicle type.',
       '',
-      'Capacity comes from the enabled `services.spots`, falling back to the profile `settings.capacity`; `capacitySource` reports which one was used. The breakdown is best effort — see `byVehicleType`.',
+      'Capacity is the lot-wide total declared on the entity profile (`settings.capacity.total`). The breakdown is best effort — see `byVehicleType`.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: OccupancyResponseDto })

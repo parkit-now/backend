@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { Prisma, VehicleType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
@@ -44,9 +44,8 @@ describe('MetricsService', () => {
       findMany: jest.fn(),
       groupBy: jest.fn(),
     },
-    service: {
-      findMany: jest.fn(),
-    },
+    // No `service` mock on purpose: capacity no longer reads `services.spots`,
+    // so a regression that brought the query back would fail loudly here.
     lprDetectionEvent: {
       count: jest.fn(),
     },
@@ -110,38 +109,33 @@ describe('MetricsService', () => {
 
     // Sensible defaults; individual tests override what they care about.
     mockPrisma.getTenantClient.mockReturnValue(mockTenant);
-    mockTenant.service.findMany.mockResolvedValue([{ spots: 100 }]);
     mockTenant.entry.groupBy.mockResolvedValue([]);
     mockTenant.entry.findMany.mockResolvedValue([]);
     mockTenant.paymentTransaction.findMany.mockResolvedValue([]);
     mockTenant.paymentTransaction.groupBy.mockResolvedValue([]);
     mockTenant.lprDetectionEvent.count.mockResolvedValue(0);
-    mockPrisma.tenant.findUnique.mockResolvedValue({ settings: {} });
+    mockPrisma.tenant.findUnique.mockResolvedValue({
+      settings: { capacity: { total: 100 } },
+    });
     seedDays({});
   });
 
   describe('getOccupancy', () => {
-    it('derives capacity from enabled services', async () => {
-      mockTenant.service.findMany.mockResolvedValue([
-        { spots: 80 },
-        { spots: 20 },
-      ]);
+    it('derives capacity from the profile total', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue({
+        settings: { capacity: { total: 100 } },
+      });
 
       const result = await service.getOccupancy();
 
       expect(result.capacity).toBe(100);
-      expect(result.capacitySource).toBe('services');
       expect(result.occupied).toBe(63);
       expect(result.free).toBe(37);
       expect(result.occupancyPct).toBe(0.63);
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
-      expect(mockTenant.service.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { enabled: true } }),
-      );
     });
 
-    it('falls back to the profile capacity when no service declares spots', async () => {
-      mockTenant.service.findMany.mockResolvedValue([]);
+    it('sums the legacy per-type capacity written before the migration', async () => {
       mockPrisma.tenant.findUnique.mockResolvedValue({
         settings: {
           capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 0 },
@@ -151,23 +145,22 @@ describe('MetricsService', () => {
       const result = await service.getOccupancy();
 
       expect(result.capacity).toBe(50);
-      expect(result.capacitySource).toBe('settings');
     });
 
     it('reports an unknown capacity rather than a fake 0%', async () => {
-      mockTenant.service.findMany.mockResolvedValue([]);
       mockPrisma.tenant.findUnique.mockResolvedValue({ settings: {} });
 
       const result = await service.getOccupancy();
 
       expect(result.capacity).toBe(0);
-      expect(result.capacitySource).toBe('none');
       expect(result.occupancyPct).toBeNull();
       expect(result.free).toBeNull();
     });
 
     it('floors free spots at zero when the lot is overbooked', async () => {
-      mockTenant.service.findMany.mockResolvedValue([{ spots: 50 }]);
+      mockPrisma.tenant.findUnique.mockResolvedValue({
+        settings: { capacity: { total: 50 } },
+      });
 
       const result = await service.getOccupancy();
 
@@ -178,17 +171,17 @@ describe('MetricsService', () => {
 
     it('labels undeclared vehicle types as unknown, most occupied first', async () => {
       mockTenant.entry.groupBy.mockResolvedValue([
-        { vehicleType: 'moto', _count: { _all: 13 } },
+        { vehicleType: 'Moto', _count: { _all: 13 } },
         { vehicleType: null, _count: { _all: 40 } },
-        { vehicleType: 'auto', _count: { _all: 10 } },
+        { vehicleType: 'Auto', _count: { _all: 10 } },
       ]);
 
       const result = await service.getOccupancy();
 
       expect(result.byVehicleType).toEqual([
         { type: 'unknown', occupied: 40 },
-        { type: 'moto', occupied: 13 },
-        { type: 'auto', occupied: 10 },
+        { type: 'Moto', occupied: 13 },
+        { type: 'Auto', occupied: 10 },
       ]);
     });
   });
@@ -322,12 +315,14 @@ describe('MetricsService', () => {
     });
 
     it('passes the vehicle type filter through to both series', async () => {
-      await service.getRevenue({ ...range, vehicleType: VehicleType.moto });
+      await service.getRevenue({ ...range, vehicleType: 'Moto' });
 
       const wheres = wheresOf(mockTenant.entry.findMany);
       expect(wheres).toHaveLength(2); // exits + arrivals
       for (const where of wheres) {
-        expect(where.vehicleType).toBe('moto');
+        // Matched verbatim against the snapshot, not resolved through the
+        // tenant's live `vehicle_types` catalogue.
+        expect(where.vehicleType).toBe('Moto');
       }
     });
 

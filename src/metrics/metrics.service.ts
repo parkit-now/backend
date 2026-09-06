@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { LprDetectionStatus, VehicleType } from '@prisma/client';
+import { LprDetectionStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { readCapacity } from '../entities/entity-settings';
@@ -8,7 +8,6 @@ import { FormattedException } from '../utils/exceptions/http-exception/formatted
 import { MetricsTzQueryDto } from './dto/metrics-tz-query.dto';
 import { MetricsWindowQueryDto } from './dto/metrics-window-query.dto';
 import {
-  CapacitySource,
   OccupancyDto,
   OccupancyResponseDto,
 } from './dto/occupancy-response.dto';
@@ -87,8 +86,20 @@ function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function vehicleTypeWhere(vehicleType?: VehicleType): {
-  vehicleType?: VehicleType;
+/**
+ * The optional vehicle-type filter, as a `where` fragment.
+ *
+ * `entries.vehicleType` is a **text snapshot** of the type name taken at
+ * ingress, not a foreign key into `vehicle_types` (see
+ * `20260901012009_entries_vehicle_type_snapshot.sql`): a stay from eight months
+ * ago must not change meaning because the owner renamed or deleted the type.
+ * So the match is a plain string equality against that snapshot, and the filter
+ * is deliberately *not* validated against the tenant's live catalogue — doing
+ * so would reject a perfectly legitimate query for a type that has since been
+ * renamed away.
+ */
+function vehicleTypeWhere(vehicleType?: string): {
+  vehicleType?: string;
 } {
   return vehicleType ? { vehicleType } : {};
 }
@@ -507,40 +518,31 @@ export class MetricsService {
   /**
    * Occupancy denominator + numerator.
    *
-   * Capacity prefers the sum of enabled `services.spots` and falls back to the
-   * profile's `settings.capacity`, reporting which one it used. The two are
-   * seeded together at onboarding but drift afterwards, since the profile and
-   * services write paths do not sync each other.
+   * Capacity has a single source: `tenant.settings.capacity.total`. It used to
+   * prefer the sum of enabled `services.spots` and fall back to the profile,
+   * reporting which one it used in a `capacitySource` field, because the two
+   * were seeded together at onboarding and drifted afterwards — neither write
+   * path synced the other. `capacity_total_and_service_code_v2` collapsed them:
+   * spots are one general capacity on the profile, and "which vehicles the lot
+   * accepts" moved to `vehicle_types.accepted`. With one source there is
+   * nothing left to disambiguate, so `capacitySource` is gone.
    */
   private async computeOccupancy(): Promise<OccupancyDto> {
     const tenantPrisma = this.prisma.getTenantClient();
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
 
-    const [services, occupied] = await Promise.all([
-      tenantPrisma.service.findMany({
-        where: { enabled: true },
-        select: { spots: true },
+    const [tenant, occupied] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { settings: true },
       }),
       tenantPrisma.entry.count({ where: { leftAt: null } }),
     ]);
 
-    let capacity = services.reduce((total, row) => total + row.spots, 0);
-    let capacitySource: CapacitySource = capacity > 0 ? 'services' : 'none';
-
-    if (capacity === 0) {
-      const tenantId = this.tenantContext.getTenantIdOrThrow();
-      const tenant = await this.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { settings: true },
-      });
-      const declared = readCapacity(tenant?.settings ?? {});
-      capacity =
-        declared.carSpots + declared.motorcycleSpots + declared.bicycleSpots;
-      if (capacity > 0) capacitySource = 'settings';
-    }
+    const capacity = readCapacity(tenant?.settings ?? {}).total;
 
     return {
       capacity,
-      capacitySource,
       occupied,
       // Floored at 0: a lot can hold more vehicles than its configured spots.
       free: capacity > 0 ? Math.max(capacity - occupied, 0) : null,

@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 import { IsOffsetDateTime } from '../../utils/validators/is-offset-date-time';
 import { MetricsTzQueryDto } from './metrics-tz-query.dto';
 
@@ -37,12 +36,18 @@ export class MetricsWindowQueryDto extends MetricsTzQueryDto {
   to: string;
 
   @ApiPropertyOptional({
-    enum: VehicleType,
-    description:
-      'Restrict to a vehicle type. **Partial data:** `entries.vehicleType` is only populated on LPR ingress (`source = "auto"`); manually registered stays leave it null and are excluded by this filter.',
-    example: 'auto',
+    maxLength: 60,
+    description: [
+      'Restrict to a vehicle type, matched **exactly** against `entries.vehicleType`.',
+      '',
+      'Free text rather than a closed enum: vehicle types are a per-tenant catalogue (`GET /tenants/:tenantId/vehicle-types`), which is where the client should populate this filter from. `entries.vehicleType` stores a *snapshot* of the type name taken at ingress, so renaming a type does not rewrite history — stays registered under the old name keep answering to the old name.',
+      '',
+      '**Partial data:** `entries.vehicleType` is only populated on LPR ingress (`source = "auto"`); manually registered stays leave it null and are excluded by this filter.',
+    ].join('\n'),
+    example: 'Auto',
   })
   @IsOptional()
-  @IsEnum(VehicleType)
-  vehicleType?: VehicleType;
+  @IsString()
+  @MaxLength(60)
+  vehicleType?: string;
 }
