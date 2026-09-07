@@ -67,26 +67,45 @@ export class EntriesService {
   ) {}
 
   async createEntry(data: CreateEntryDto): Promise<EntryDto> {
-    const tenantPrisma = this.prisma.getTenantClient();
-    const entry = await tenantPrisma.entry.create({
-      data: {
-        id: data.id,
-        plate: data.plate.toUpperCase(),
-        color: data.color,
-        cochera: data.cochera,
-        notes: data.notes,
-        enteredAt: new Date(data.enteredAt),
-        vehicleBrand: data.vehicleBrand,
-        vehicleModel: data.vehicleModel,
-        rateId: data.rateId,
-        rateSnapshotName: data.rateSnapshotName,
-        rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
-        rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
-        rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
-        cashSessionId: data.cashSessionId,
-        ticketNumber: data.ticketNumber,
-      } as Prisma.EntryUncheckedCreateInput,
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const plate = data.plate.toUpperCase();
+
+    const entry = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.entry.findFirst({
+        where: { tenantId, plate, leftAt: null },
+      });
+      if (existing) {
+        throw new FormattedException(
+          'Duplicate active stay',
+          HttpStatus.CONFLICT,
+          `Plate ${plate} already has an active stay.`,
+          `/tenants/${tenantId}/entries`,
+          ErrorCodes.ENTRY_DUPLICATE_ACTIVE_STAY,
+        );
+      }
+
+      return tx.entry.create({
+        data: {
+          id: data.id,
+          tenantId,
+          plate,
+          color: data.color,
+          cochera: data.cochera,
+          notes: data.notes,
+          enteredAt: new Date(data.enteredAt),
+          vehicleBrand: data.vehicleBrand,
+          vehicleModel: data.vehicleModel,
+          rateId: data.rateId,
+          rateSnapshotName: data.rateSnapshotName,
+          rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
+          rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
+          rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
+          cashSessionId: data.cashSessionId,
+          ticketNumber: data.ticketNumber,
+        },
+      });
     });
+
     return toDto(entry);
   }
 
