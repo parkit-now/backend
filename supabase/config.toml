@@ -181,7 +181,14 @@ jwt_expiry = 3600
 enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.
-refresh_token_reuse_interval = 10
+#
+# 60s (not the 10s default) because the desktop runs on weak Wi-Fi: supabase-js
+# retries a failed refresh with the SAME token for up to 30s (see
+# `_refreshAccessToken` / AUTO_REFRESH_TICK_DURATION_MS). If the request reaches
+# GoTrue but the response is lost, those retries hit an already-rotated token,
+# and past the reuse interval that trips reuse detection: GoTrue revokes the
+# whole token family and the operator loses the session mid-shift.
+refresh_token_reuse_interval = 60
 # Allow/disallow new user signups to your project.
 enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
