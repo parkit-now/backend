@@ -1,7 +1,7 @@
 
 import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsOptional,IsString} from 'class-validator'
+import {IsDecimal,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -22,4 +22,11 @@ paymentMethodName?: string;
 @IsDecimal()
 @Type(()=>String)
 amount?: Prisma.Decimal;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+deletedAt?: Date;
 }

@@ -10,6 +10,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { User, UserMembership } from '@prisma/client';
 import {
   ApiBearerAuth,
   ApiOkResponse,
@@ -19,8 +20,11 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentMembership } from '../auth/decorators/entity-role.decorator';
 import { TenantInterceptor } from '../database/tenant.interceptor';
 import { CloseEntryDto } from './dto/close-entry.dto';
+import { CorrectEntryDto } from './dto/correct-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
@@ -73,6 +77,29 @@ export class EntriesController {
     return this.entriesService.createEntry(dto);
   }
 
+  @Patch(':entryId/correction')
+  @ApiOperation({
+    summary:
+      'Correct an entry from history using optimistic locking and audit trail',
+  })
+  @ApiOkResponse({ type: EntryDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async correct(
+    @Param('entryId', ParseUUIDPipe) entryId: string,
+    @Query() query: ExpectedVersionQueryDto,
+    @Body() dto: CorrectEntryDto,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
+  ) {
+    return this.entriesService.correctEntry(
+      entryId,
+      query.expectedVersion,
+      dto,
+      user,
+      membership,
+    );
+  }
+
   @Patch(':entryId')
   @ApiOperation({
     summary:
@@ -84,7 +111,15 @@ export class EntriesController {
     @Param('entryId', ParseUUIDPipe) entryId: string,
     @Query() query: ExpectedVersionQueryDto,
     @Body() dto: CloseEntryDto,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
   ) {
-    return this.entriesService.closeEntry(entryId, query.expectedVersion, dto);
+    return this.entriesService.closeEntry(
+      entryId,
+      query.expectedVersion,
+      dto,
+      user,
+      membership,
+    );
   }
 }
