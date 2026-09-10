@@ -43,6 +43,15 @@ type EntryAuditSnapshot = {
   ticketNumber: number | null;
   payments: PaymentSnapshot[];
 };
+type CorrectionEconomicImpact = {
+  suggestedBefore: number | null;
+  suggestedAfter: number | null;
+  suggestedDelta: number | null;
+  chargedBefore: number | null;
+  chargedAfter: number | null;
+  chargedDelta: number | null;
+  deltaVsSuggestedAfter: number | null;
+};
 
 const MONEY_EPSILON = 0.005;
 const UNDERCHARGE_RATIO = 0.95;
@@ -122,13 +131,6 @@ function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function moneyEqual(
-  left: number | null | undefined,
-  right: number | null | undefined,
-): boolean {
-  return Math.abs((left ?? 0) - (right ?? 0)) <= MONEY_EPSILON;
-}
-
 function activePayments(entry: EntryWithAuditRelations): PaymentSnapshot[] {
   return entry.paymentTransactions
     .filter((tx) => (tx as { deletedAt?: Date | null }).deletedAt == null)
@@ -198,6 +200,59 @@ function hasPaymentAmountChange(
   const beforeTotal = before.reduce((sum, payment) => sum + payment.amount, 0);
   const afterTotal = after.reduce((sum, payment) => sum + payment.amount, 0);
   return Math.abs(beforeTotal - afterTotal) > MONEY_EPSILON;
+}
+
+function snapshotSuggestedAmount(snapshot: EntryAuditSnapshot): number | null {
+  if (!snapshot.enteredAt || !snapshot.leftAt) return null;
+  const enteredAt = new Date(snapshot.enteredAt);
+  const leftAt = new Date(snapshot.leftAt);
+  if (
+    Number.isNaN(enteredAt.getTime()) ||
+    Number.isNaN(leftAt.getTime()) ||
+    leftAt.getTime() <= enteredAt.getTime()
+  ) {
+    return null;
+  }
+  return roundMoney(
+    calcSuggestedAmount({
+      enteredAt,
+      leftAt,
+      hourPrice: snapshot.rateSnapshotHourPriceArs,
+      stayPrice: snapshot.rateSnapshotStayPriceArs,
+      fractionPrice: snapshot.rateSnapshotFractionPriceArs,
+    }),
+  );
+}
+
+function snapshotChargedAmount(snapshot: EntryAuditSnapshot): number | null {
+  if (snapshot.amountPaid !== null) return roundMoney(snapshot.amountPaid);
+  if (snapshot.payments.length === 0) return null;
+  return roundMoney(
+    snapshot.payments.reduce((sum, payment) => sum + payment.amount, 0),
+  );
+}
+
+function delta(left: number | null, right: number | null): number | null {
+  return left === null || right === null ? null : roundMoney(left - right);
+}
+
+function correctionEconomicImpact(
+  before: EntryAuditSnapshot,
+  after: EntryAuditSnapshot,
+): CorrectionEconomicImpact {
+  const suggestedBefore = snapshotSuggestedAmount(before);
+  const suggestedAfter = snapshotSuggestedAmount(after);
+  const chargedBefore = snapshotChargedAmount(before);
+  const chargedAfter = snapshotChargedAmount(after);
+  return {
+    suggestedBefore,
+    suggestedAfter,
+    suggestedDelta: delta(suggestedAfter, suggestedBefore),
+    chargedBefore,
+    chargedAfter,
+    chargedDelta: delta(chargedAfter, chargedBefore),
+    deltaVsSuggestedAfter: delta(suggestedAfter, chargedAfter),
+  };
 }
 
 function actorRole(membership?: UserMembership | null): string {
@@ -495,13 +550,13 @@ export class EntriesService {
           ? nextPayments.reduce((sum, payment) => sum + payment.amount, 0)
           : current.amountPaid;
 
-      if (nextLeftAt && nextLeftAt.getTime() < nextEnteredAt.getTime()) {
+      if (nextLeftAt && nextLeftAt.getTime() <= nextEnteredAt.getTime()) {
         throw new FormattedException(
           'Bad Request',
           HttpStatus.BAD_REQUEST,
-          'Exit time cannot be before entry time.',
+          'Exit time must be after entry time.',
           `/tenants/:tenantId/entries/${entryId}/correction`,
-          ErrorCodes.BAD_REQUEST,
+          ErrorCodes.ENTRY_EXIT_NOT_AFTER_ENTRY,
         );
       }
 
@@ -523,65 +578,6 @@ export class EntriesService {
           `/tenants/:tenantId/entries/${entryId}/correction`,
           ErrorCodes.ENTRY_CORRECTION_REASON_REQUIRED,
         );
-      }
-
-      const rateOrTimeChanged =
-        timeChanged ||
-        (data.rateId !== undefined &&
-          (data.rateId || null) !== current.rateId) ||
-        (data.rateSnapshotName !== undefined &&
-          (data.rateSnapshotName || null) !== current.rateSnapshotName) ||
-        (data.rateSnapshotHourPriceArs !== undefined &&
-          !moneyEqual(
-            data.rateSnapshotHourPriceArs,
-            toNumber(current.rateSnapshotHourPriceArs),
-          )) ||
-        (data.rateSnapshotStayPriceArs !== undefined &&
-          !moneyEqual(
-            data.rateSnapshotStayPriceArs,
-            toNumber(current.rateSnapshotStayPriceArs),
-          )) ||
-        (data.rateSnapshotFractionPriceArs !== undefined &&
-          !moneyEqual(
-            data.rateSnapshotFractionPriceArs,
-            toNumber(current.rateSnapshotFractionPriceArs),
-          ));
-      if (!isActive && rateOrTimeChanged && data.payments === undefined) {
-        throw new FormattedException(
-          'Bad Request',
-          HttpStatus.BAD_REQUEST,
-          'Payment lines are required when correcting rate or times on a closed entry.',
-          `/tenants/:tenantId/entries/${entryId}/correction`,
-          ErrorCodes.BAD_REQUEST,
-        );
-      }
-      if (!isActive && rateOrTimeChanged && nextLeftAt) {
-        const suggestedAmount = calcSuggestedAmount({
-          enteredAt: nextEnteredAt,
-          leftAt: nextLeftAt,
-          hourPrice:
-            data.rateSnapshotHourPriceArs ??
-            toNumber(current.rateSnapshotHourPriceArs),
-          stayPrice:
-            data.rateSnapshotStayPriceArs ??
-            toNumber(current.rateSnapshotStayPriceArs),
-          fractionPrice:
-            data.rateSnapshotFractionPriceArs ??
-            toNumber(current.rateSnapshotFractionPriceArs),
-        });
-        const paymentTotal = nextPayments.reduce(
-          (sum, payment) => sum + payment.amount,
-          0,
-        );
-        if (Math.abs(paymentTotal - suggestedAmount) > MONEY_EPSILON) {
-          throw new FormattedException(
-            'Bad Request',
-            HttpStatus.BAD_REQUEST,
-            'Payment total must match the suggested amount when correcting rate or times.',
-            `/tenants/:tenantId/entries/${entryId}/correction`,
-            ErrorCodes.BAD_REQUEST,
-          );
-        }
       }
 
       const updateData: Prisma.EntryUncheckedUpdateInput = {
@@ -685,6 +681,7 @@ export class EntriesService {
               before,
               after: afterSnapshot,
               changedFields,
+              economicImpact: correctionEconomicImpact(before, afterSnapshot),
               reason: data.reason?.trim() || null,
               actorRole: role,
               cashSessionId: current.cashSessionId,

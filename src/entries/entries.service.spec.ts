@@ -249,6 +249,75 @@ describe('EntriesService', () => {
       );
     });
 
+    it('rechaza egreso igual o anterior al ingreso', async () => {
+      const { service: subject } = makeService(makeEntry());
+
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { leftAt: '2026-09-08T10:00:00.000Z' },
+          USER as never,
+          { role: 'owner' } as never,
+        ),
+        'after entry',
+      );
+    });
+
+    it('permite corregir horarios o tarifa aunque el cobro no coincida con el sugerido', async () => {
+      const { service: subject, tx } = makeService(makeEntry());
+      tx.entry.findUniqueOrThrow.mockResolvedValueOnce({
+        ...makeEntry(),
+        leftAt: new Date('2026-09-08T13:00:00.000Z'),
+        rateSnapshotName: 'Auto corregida',
+        version: 3,
+      });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        {
+          leftAt: '2026-09-08T13:00:00.000Z',
+          rateSnapshotName: 'Auto corregida',
+        },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      const updateArg = tx.entry.update.mock.calls[0][0] as {
+        data: { leftAt?: Date; rateSnapshotName?: string };
+      };
+      expect(updateArg.data.leftAt?.toISOString()).toBe(
+        '2026-09-08T13:00:00.000Z',
+      );
+      expect(updateArg.data.rateSnapshotName).toBe('Auto corregida');
+
+      const auditArg = tx.auditLog.create.mock.calls[0][0] as {
+        data: {
+          metadata: {
+            economicImpact: {
+              suggestedBefore: number;
+              suggestedAfter: number;
+              suggestedDelta: number;
+              chargedBefore: number;
+              chargedAfter: number;
+              chargedDelta: number;
+              deltaVsSuggestedAfter: number;
+            };
+          };
+        };
+      };
+      expect(auditArg.data.metadata.economicImpact).toMatchObject({
+        suggestedBefore: 2000,
+        suggestedAfter: 3000,
+        suggestedDelta: 1000,
+        chargedBefore: 2000,
+        chargedAfter: 2000,
+        chargedDelta: 0,
+        deltaVsSuggestedAfter: 1000,
+      });
+    });
+
     it('exige razon si un operador cambia horarios o montos', async () => {
       const { service: subject } = makeService(makeEntry());
 
