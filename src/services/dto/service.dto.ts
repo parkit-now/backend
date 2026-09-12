@@ -14,13 +14,6 @@ export class ServiceDto {
   @ApiProperty()
   enabled: boolean;
 
-  @ApiProperty({
-    type: Number,
-    description:
-      'Spots assigned to this vehicle type (0 for non-vehicle codes).',
-  })
-  spots: number;
-
   @ApiProperty({ type: Number })
   version: number;
 

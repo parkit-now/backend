@@ -27,14 +27,16 @@ import { PrismaClient } from '@prisma/client';
  * lot this user belongs to", which an owner with several lots needs)
  * require reading across tenants under explicit admin control.
  *
- * Right now there are no business tables with `tenant_id` yet, so
- * `TENANT_MODELS` is empty and this extension is a passthrough. Add new
- * tenant-scoped business models to the list as they appear.
+ * Add every new tenant-scoped business model to `TENANT_MODELS` below. A model
+ * that has a `tenant_id` column but is missing from the list silently loses the
+ * application-layer half of the isolation.
  */
 
 const TENANT_MODELS: readonly string[] = [
   'entry',
   'rate',
+  'vehicle',
+  'vehicletype',
   'schedule',
   'service',
   'cashsession',

@@ -18,8 +18,10 @@ import { LprDetectionEventChangesQueryDto } from './dto/lpr-detection-event-chan
 import { LprDetectionEventDto } from './dto/lpr-detection-event.dto';
 import { LprDetectionEventImageSignedUrlDto } from './dto/lpr-detection-event-image-signed-url.dto';
 import { ListLprDetectionEventsQueryDto } from './dto/list-lpr-detection-events-query.dto';
+import { PaginatedLprDetectionEventsDto } from './dto/paginated-lpr-detection-events.dto';
 import { UpdateLprDetectionEventDto } from './dto/update-lpr-detection-event.dto';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
+import { resolvePagination } from '../utils/pagination/pagination-query.dto';
 
 /** Validity window of an image signed URL, in seconds (5 minutes). */
 const IMAGE_SIGNED_URL_TTL = 300;
@@ -40,6 +42,7 @@ function jsonArray(value: Prisma.JsonValue): unknown[] {
 
 export function toLprDetectionEventDto(
   event: LprDetectionEvent,
+  reviewedByUser?: Pick<User, 'name' | 'email'> | null,
 ): LprDetectionEventDto {
   return {
     id: event.id,
@@ -59,6 +62,9 @@ export function toLprDetectionEventDto(
     entryId: event.entryId,
     reviewedAt: event.reviewedAt,
     reviewedByUserId: event.reviewedByUserId,
+    reviewedByName: reviewedByUser
+      ? (reviewedByUser.name ?? reviewedByUser.email)
+      : null,
     archivedAt: event.archivedAt,
     archivedByUserId: event.archivedByUserId,
     imageStoragePath: event.imageStoragePath,
@@ -342,22 +348,50 @@ export class LprEventsService {
     });
     const maxSeq =
       items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
-    return { items: items.map(toLprDetectionEventDto), maxSeq };
+    return { items: items.map((item) => toLprDetectionEventDto(item)), maxSeq };
   }
 
   async list(
     query: ListLprDetectionEventsQueryDto,
-  ): Promise<LprDetectionEventDto[]> {
+  ): Promise<PaginatedLprDetectionEventsDto> {
     const tenantPrisma = this.prisma.getTenantClient();
-    const items = await tenantPrisma.lprDetectionEvent.findMany({
-      where: {
-        ...(query.status ? { status: query.status } : {}),
-        archivedAt: query.archived ? { not: null } : null,
-      },
-      orderBy: [{ lastSeenAt: 'desc' }],
-      take: query.limit,
-    });
-    return items.map(toLprDetectionEventDto);
+    const { page, pageSize, skip, take } = resolvePagination(query);
+    const where: Prisma.LprDetectionEventWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      archivedAt: query.archived ? { not: null } : null,
+      ...(query.firstSeenFrom || query.firstSeenTo
+        ? {
+            firstSeenAt: {
+              ...(query.firstSeenFrom
+                ? { gte: new Date(query.firstSeenFrom) }
+                : {}),
+              ...(query.firstSeenTo
+                ? { lte: new Date(query.firstSeenTo) }
+                : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      tenantPrisma.lprDetectionEvent.findMany({
+        where,
+        orderBy: [{ lastSeenAt: 'desc' }],
+        skip,
+        take,
+        include: { reviewedByUser: { select: { name: true, email: true } } },
+      }),
+      tenantPrisma.lprDetectionEvent.count({ where }),
+    ]);
+
+    return {
+      items: items.map((item) =>
+        toLprDetectionEventDto(item, item.reviewedByUser),
+      ),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   private toCreateData(

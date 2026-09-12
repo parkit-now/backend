@@ -40,7 +40,6 @@ import {
   ValidationProblemDetailsDto,
 } from '../utils/exceptions/dto/problem-details.dto';
 import { EntitiesService } from './entities.service';
-import { VehiclesService } from '../vehicles/vehicles.service';
 import { EntityAuditQueryDto } from './dto/entity-audit-query.dto';
 import {
   EntityCapacityDto,
@@ -52,13 +51,6 @@ import { PaymentMethodChangesQueryDto } from './dto/payment-method-changes-query
 import { PaymentMethodChangesResponseDto } from './dto/payment-method-changes-response.dto';
 import { TogglePaymentMethodDto } from './dto/toggle-payment-method.dto';
 import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
-import { CreateVehicleDto } from '../vehicles/dto/create-vehicle.dto';
-import { UpdateVehicleDto } from '../vehicles/dto/update-vehicle.dto';
-import {
-  VehicleCatalogChangesQueryDto,
-  VehicleCatalogChangesResponseDto,
-  VehicleCatalogItemDto,
-} from '../vehicles/dto/vehicle-catalog.dto';
 
 @ApiTags('Entities')
 @ApiExtraModels(
@@ -90,10 +82,7 @@ import {
   type: ProblemDetailsDto,
 })
 export class EntitiesController {
-  constructor(
-    private readonly entities: EntitiesService,
-    private readonly vehicles: VehiclesService,
-  ) {}
+  constructor(private readonly entities: EntitiesService) {}
 
   @Get()
   @ApiOperation({
@@ -140,87 +129,6 @@ export class EntitiesController {
     @Body() dto: UpdateEntityProfileDto,
   ): Promise<EntityProfileDto> {
     return this.entities.updateProfile(tenantId, user, dto);
-  }
-
-  // ── Vehicle catalog ────────────────────────────────────────────────────────
-
-  @Get('vehicles/catalog')
-  @ApiOperation({
-    operationId: 'entitiesPullVehicleCatalog',
-    summary: 'Pull vehicle catalog changes',
-    description:
-      'Returns global vehicles (admin-managed) and tenant-specific vehicles with syncSeq > afterSeq. Used by the desktop for offline-first autocomplete.',
-  })
-  @ApiOkResponse({ type: VehicleCatalogChangesResponseDto })
-  pullVehicleCatalog(
-    @Param('tenantId') tenantId: string,
-    @Query() query: VehicleCatalogChangesQueryDto,
-  ): Promise<VehicleCatalogChangesResponseDto> {
-    return this.vehicles.pullCatalogChanges(tenantId, query);
-  }
-
-  @Post('vehicles')
-  @EntityRole(MembershipRole.owner)
-  @ApiOperation({
-    operationId: 'entitiesCreateTenantVehicle',
-    summary: 'Add a vehicle to the tenant catalog',
-    description:
-      'Creates a tenant-specific vehicle entry in the catalog. Requires owner role.',
-  })
-  @ApiCreatedResponse({ type: VehicleCatalogItemDto })
-  @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
-  createTenantVehicle(
-    @Param('tenantId') tenantId: string,
-    @Body() dto: CreateVehicleDto,
-  ): Promise<VehicleCatalogItemDto> {
-    return this.vehicles.createTenantVehicle(tenantId, dto);
-  }
-
-  @Patch('vehicles/:vehicleId')
-  @EntityRole(MembershipRole.owner)
-  @ApiParam({
-    name: 'vehicleId',
-    format: 'uuid',
-    description: 'ID of the tenant vehicle to update.',
-  })
-  @ApiOperation({
-    operationId: 'entitiesUpdateTenantVehicle',
-    summary: 'Update a tenant vehicle',
-    description:
-      'Updates brand, model, and/or type of a tenant-specific vehicle. Global vehicles cannot be edited. Requires owner role.',
-  })
-  @ApiOkResponse({ type: VehicleCatalogItemDto })
-  @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
-  @ApiNotFoundResponse({ type: ProblemDetailsDto })
-  updateTenantVehicle(
-    @Param('tenantId') tenantId: string,
-    @Param('vehicleId') vehicleId: string,
-    @Body() dto: UpdateVehicleDto,
-  ): Promise<VehicleCatalogItemDto> {
-    return this.vehicles.updateTenantVehicle(vehicleId, tenantId, dto);
-  }
-
-  @Delete('vehicles/:vehicleId')
-  @EntityRole(MembershipRole.owner)
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiParam({
-    name: 'vehicleId',
-    format: 'uuid',
-    description: 'ID of the tenant vehicle to delete.',
-  })
-  @ApiOperation({
-    operationId: 'entitiesDeleteTenantVehicle',
-    summary: 'Soft-delete a tenant vehicle',
-    description:
-      'Soft-deletes a tenant-specific vehicle (sets deleted_at). Global vehicles cannot be deleted. Requires owner role.',
-  })
-  @ApiNoContentResponse({ description: 'Vehicle deleted.' })
-  @ApiNotFoundResponse({ type: ProblemDetailsDto })
-  deleteTenantVehicle(
-    @Param('tenantId') tenantId: string,
-    @Param('vehicleId') vehicleId: string,
-  ): Promise<void> {
-    return this.vehicles.deleteTenantVehicle(vehicleId, tenantId);
   }
 
   // ── Payment methods ─────────────────────────────────────────────────────────

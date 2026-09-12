@@ -57,6 +57,13 @@ export class LprDetectionEventDto {
   @ApiPropertyOptional({ format: 'uuid', nullable: true })
   reviewedByUserId: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      "The reviewing operator's display name (falls back to email). Only resolved by the list endpoint — null elsewhere.",
+  })
+  reviewedByName: string | null;
+
   @ApiPropertyOptional({ format: 'date-time', nullable: true })
   archivedAt: Date | null;
 

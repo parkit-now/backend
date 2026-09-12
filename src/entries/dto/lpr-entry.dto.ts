@@ -1,12 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleType } from '@prisma/client';
-import {
-  IsDateString,
-  IsEnum,
-  IsOptional,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class LprEntryDto {
   @ApiProperty({ example: 'ABC123', maxLength: 20 })
@@ -14,10 +7,14 @@ export class LprEntryDto {
   @MaxLength(20)
   plate: string;
 
-  @ApiPropertyOptional({ enum: VehicleType })
+  @ApiPropertyOptional({
+    maxLength: 60,
+    description: 'Snapshot del nombre del tipo al momento del ingreso.',
+  })
   @IsOptional()
-  @IsEnum(VehicleType)
-  vehicleType?: VehicleType;
+  @IsString()
+  @MaxLength(60)
+  vehicleType?: string;
 
   @ApiPropertyOptional({
     description: 'URL of the entry photo captured by the LPR camera',

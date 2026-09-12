@@ -1,5 +1,4 @@
 
-import {VehicleType} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -7,10 +6,6 @@ export class VehicleDto {
   id: string ;
 brand: string ;
 model: string ;
-@ApiProperty({
-  enum: VehicleType,
-})
-type: VehicleType  | null;
 @ApiProperty({
   type: `integer`,
   format: `int32`,

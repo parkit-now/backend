@@ -1,16 +1,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { LprDetectionStatus } from '@prisma/client';
-import { Transform, Type } from 'class-transformer';
-import {
-  IsBoolean,
-  IsEnum,
-  IsInt,
-  IsOptional,
-  Max,
-  Min,
-} from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsDateString, IsEnum, IsOptional } from 'class-validator';
+import { PaginationQueryDto } from '../../utils/pagination/pagination-query.dto';
 
-export class ListLprDetectionEventsQueryDto {
+export class ListLprDetectionEventsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: LprDetectionStatus })
   @IsOptional()
   @IsEnum(LprDetectionStatus)
@@ -33,15 +27,20 @@ export class ListLprDetectionEventsQueryDto {
   archived = false;
 
   @ApiPropertyOptional({
-    type: Number,
-    default: 100,
-    minimum: 1,
-    maximum: 500,
+    format: 'date-time',
+    description:
+      'Only include events first detected at or after this timestamp (ISO 8601, inclusive).',
   })
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(500)
-  limit = 100;
+  @IsDateString()
+  firstSeenFrom?: string;
+
+  @ApiPropertyOptional({
+    format: 'date-time',
+    description:
+      'Only include events first detected at or before this timestamp (ISO 8601, inclusive).',
+  })
+  @IsOptional()
+  @IsDateString()
+  firstSeenTo?: string;
 }

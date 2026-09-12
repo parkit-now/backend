@@ -14,6 +14,11 @@
 // enabled but no policies are declared, so no anon/authenticated role can
 // touch this table.
 
+/// OJO: un INSERT en `tenants` dispara `bootstrap_tenant_defaults()`
+/// (trigger AFTER INSERT, migración 20260901013345), que siembra los siete
+/// tipos de vehículo, el catálogo de 244 modelos, el servicio de reserva
+/// anticipada y los dos métodos de pago del sistema. Está en la base y no en
+/// NestJS porque hay tres caminos de alta de tenants y ya habían divergido.
 model Tenant {
   id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String
@@ -36,6 +41,7 @@ model Tenant {
   services             Service[]
   paymentMethods       PaymentMethod[]
   vehicles             Vehicle[]
+  vehicleTypes         VehicleType[]
   auditLogs            AuditLog[]
   applications         OnboardingApplication[]
   cashSessions         CashSession[]

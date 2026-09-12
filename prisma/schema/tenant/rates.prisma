@@ -13,6 +13,12 @@ model Rate {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Soft delete: the row survives marked so the deletion travels through
+  // /rates/changes as a tombstone. The partial unique index on
+  // (tenant_id, shortcut_number) is scoped to deleted_at IS NULL in SQL —
+  // Prisma cannot express a partial index, so it lives only in the migration.
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
   entries Entry[]
 
   tenantId String @map("tenant_id") @db.Uuid

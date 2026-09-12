@@ -27,38 +27,13 @@ export class UpdateEntityCapacityDto {
   @ApiPropertyOptional({
     type: 'integer',
     minimum: 0,
-    description: 'Number of car spots.',
-    example: 80,
+    description: 'Plazas totales del estacionamiento.',
+    example: 110,
   })
   @IsOptional()
-  @Type(() => Number)
   @IsInt()
   @Min(0)
-  carSpots?: number;
-
-  @ApiPropertyOptional({
-    type: 'integer',
-    minimum: 0,
-    description: 'Number of motorcycle spots.',
-    example: 20,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  motorcycleSpots?: number;
-
-  @ApiPropertyOptional({
-    type: 'integer',
-    minimum: 0,
-    description: 'Number of bicycle spots.',
-    example: 10,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  bicycleSpots?: number;
+  total?: number;
 }
 
 /** Editable fields of an entity (tenant) profile. */

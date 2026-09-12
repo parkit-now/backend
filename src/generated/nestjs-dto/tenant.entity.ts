@@ -8,6 +8,7 @@ import {ScheduleEntity} from './schedule.entity'
 import {ServiceEntity} from './service.entity'
 import {PaymentMethodEntity} from './payment-method.entity'
 import {VehicleEntity} from './vehicle.entity'
+import {VehicleTypeEntity} from './vehicle-type.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {CashSessionEntity} from './cash-session.entity'
@@ -46,6 +47,7 @@ schedules?: ScheduleEntity[] ;
 services?: ServiceEntity[] ;
 paymentMethods?: PaymentMethodEntity[] ;
 vehicles?: VehicleEntity[] ;
+vehicleTypes?: VehicleTypeEntity[] ;
 auditLogs?: AuditLogEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
 cashSessions?: CashSessionEntity[] ;

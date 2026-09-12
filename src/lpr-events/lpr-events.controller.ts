@@ -34,6 +34,7 @@ import { LprDetectionEventChangesResponseDto } from './dto/lpr-detection-event-c
 import { LprDetectionEventDto } from './dto/lpr-detection-event.dto';
 import { LprDetectionEventImageSignedUrlDto } from './dto/lpr-detection-event-image-signed-url.dto';
 import { ListLprDetectionEventsQueryDto } from './dto/list-lpr-detection-events-query.dto';
+import { PaginatedLprDetectionEventsDto } from './dto/paginated-lpr-detection-events.dto';
 import { UpdateLprDetectionEventDto } from './dto/update-lpr-detection-event.dto';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
 import { LprEventsService } from './lpr-events.service';
@@ -53,7 +54,7 @@ export class LprEventsController {
   @ApiOperation({
     summary: 'List LPR detection events for owner/operator review',
   })
-  @ApiOkResponse({ type: [LprDetectionEventDto] })
+  @ApiOkResponse({ type: PaginatedLprDetectionEventsDto })
   async list(@Query() query: ListLprDetectionEventsQueryDto) {
     return this.lprEvents.list(query);
   }
