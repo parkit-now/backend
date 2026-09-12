@@ -5,9 +5,10 @@ import type { Granularity } from '../metrics-tz';
  * Which table the `revenue` figures were summed from.
  *
  * `entries` is the default and the authoritative total per stay. Filtering by
- * payment method forces `paymentTransactions`, the only place the per-method
- * split lives — and a narrower source, since stays closed through the offline
- * `amountPaid` fallback never produced transaction rows.
+ * payment method or by cash session forces `paymentTransactions`, the only
+ * place the per-method split and the collecting drawer live — and a narrower
+ * source, since stays closed through the offline `amountPaid` fallback never
+ * produced transaction rows.
  */
 export type RevenueSource = 'entries' | 'paymentTransactions';
 
@@ -89,7 +90,7 @@ export class RevenueResponseDto {
   @ApiProperty({
     enum: ['entries', 'paymentTransactions'],
     description:
-      'Table the revenue was summed from. Switches to `paymentTransactions` when `paymentMethod` is set.',
+      'Table the revenue was summed from. Switches to `paymentTransactions` when `paymentMethod` or `cashSessionId` is set.',
     example: 'entries',
   })
   revenueSource: RevenueSource;

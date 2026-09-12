@@ -9,6 +9,7 @@ import { CashSessionDto } from './dto/cash-session.dto';
 import { CloseCashSessionDto } from './dto/close-cash-session.dto';
 import { CloseCashSessionResponseDto } from './dto/close-cash-session-response.dto';
 import { CreateCashSessionDto } from './dto/create-cash-session.dto';
+import { ListCashSessionsQueryDto } from './dto/list-cash-sessions-query.dto';
 
 type PrismaCashSession = Prisma.CashSessionGetPayload<Record<string, never>>;
 
@@ -70,10 +71,40 @@ export class CashSessionsService {
     return session ? toDto(session) : null;
   }
 
-  async listSessions(): Promise<CashSessionDto[]> {
+  /**
+   * Shifts, most recent first, optionally only those overlapping `[from, to)`.
+   *
+   * Overlap rather than containment: a shift that opened before `from` but was
+   * still running then belongs to the window. `closedAt` is compared strictly
+   * for the same reason `to` is exclusive — a shift that closed exactly at
+   * `from` did not run inside it.
+   */
+  async listSessions(
+    query: ListCashSessionsQueryDto,
+  ): Promise<CashSessionDto[]> {
     const tenantPrisma = this.prisma.getTenantClient();
+    const from = query.from !== undefined ? new Date(query.from) : undefined;
+    const to = query.to !== undefined ? new Date(query.to) : undefined;
+
+    if (from && to && from >= to) {
+      throw new FormattedException(
+        'Bad Request',
+        HttpStatus.BAD_REQUEST,
+        '`from` must be earlier than `to`.',
+        '/tenants/:tenantId/cash-sessions',
+        ErrorCodes.VALIDATION_FAILED,
+      );
+    }
+
     const sessions = await tenantPrisma.cashSession.findMany({
+      where: {
+        ...(to ? { openedAt: { lt: to } } : {}),
+        ...(from
+          ? { OR: [{ closedAt: null }, { closedAt: { gt: from } }] }
+          : {}),
+      },
       orderBy: [{ openedAt: 'desc' }],
+      take: query.limit,
     });
     return sessions.map(toDto);
   }

@@ -49,6 +49,9 @@ describe('MetricsService', () => {
     lprDetectionEvent: {
       count: jest.fn(),
     },
+    cashSession: {
+      findFirst: jest.fn(),
+    },
   };
 
   const mockPrisma = {
@@ -658,6 +661,267 @@ describe('MetricsService', () => {
         expect(where).not.toHaveProperty('tenantId');
       }
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+    });
+  });
+
+  describe('cash session filter', () => {
+    /** UUIDv7, the version the desktop generates for its cash sessions. */
+    const SESSION_ID = '0198f2a4-7c3e-7a1b-9d2e-4f5a6b7c8d9e';
+    /** 06:00–14:00 in Argentina: one full shift. */
+    const OPENED = new Date('2026-09-07T09:00:00.000Z');
+    const CLOSED = new Date('2026-09-07T17:00:00.000Z');
+
+    /** The Problem Details body a `FormattedException` carries. */
+    const problem = (error: unknown) =>
+      (error as FormattedException).getResponse() as {
+        code: string;
+        status: number;
+      };
+
+    /** `where` clauses seen loosely: these filters go beyond `MetricsWhere`. */
+    type AnyWhere = Record<string, unknown>;
+    const loose = (fn: RecordedMock): AnyWhere[] =>
+      fn.mock.calls.map((call) => (call[0] as { where: AnyWhere }).where);
+
+    /** The payment filter every entries-rooted query must use for a session. */
+    const COLLECTED_BY_SESSION = {
+      some: { cashSessionId: SESSION_ID, tenantId: 'tenant-1' },
+    };
+
+    /**
+     * Answers the span query with the first and last payment of the session,
+     * and any other aggregate with zeros.
+     */
+    const paidBetween = (first: Date | null, last: Date | null): void => {
+      mockTenant.entry.aggregate.mockImplementation(
+        (args: { _min?: unknown }) =>
+          Promise.resolve(
+            args._min
+              ? { _min: { leftAt: first }, _max: { leftAt: last } }
+              : { _sum: { amountPaid: new Prisma.Decimal(0) }, _count: 0 },
+          ),
+      );
+    };
+
+    beforeEach(() => {
+      mockTenant.cashSession.findFirst.mockResolvedValue({
+        id: SESSION_ID,
+        openedAt: OPENED,
+        closedAt: CLOSED,
+      });
+      paidBetween(null, null);
+    });
+
+    describe('window', () => {
+      it('answers 404 CASH_SESSION_NOT_FOUND for a session this lot does not have', async () => {
+        // The tenant-scoped client returns null for another lot's session too,
+        // so both cases get the same answer.
+        mockTenant.cashSession.findFirst.mockResolvedValue(null);
+
+        const failure = await service
+          .getRevenue({ cashSessionId: SESSION_ID })
+          .catch((error: unknown) => error);
+
+        expect(failure).toBeInstanceOf(FormattedException);
+        expect(problem(failure).status).toBe(404);
+        expect(problem(failure).code).toBe('CASH_SESSION_NOT_FOUND');
+      });
+
+      it('checks the session exists even when the window is explicit', async () => {
+        // Otherwise a mistyped id would chart a shift of zeros.
+        mockTenant.cashSession.findFirst.mockResolvedValue(null);
+
+        const failure = await service
+          .getPaymentMethodBreakdown({
+            from: '2026-09-07T06:00:00-03:00',
+            to: '2026-09-07T14:00:00-03:00',
+            cashSessionId: SESSION_ID,
+          })
+          .catch((error: unknown) => error);
+
+        expect(problem(failure).code).toBe('CASH_SESSION_NOT_FOUND');
+      });
+
+      it('looks the session up through the tenant-scoped client', async () => {
+        await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        expect(mockTenant.cashSession.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: SESSION_ID } }),
+        );
+      });
+
+      it('derives the window from a closed shift', async () => {
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        expect(result.from).toEqual(OPENED);
+        expect(result.to).toEqual(CLOSED);
+        expect(result.buckets).toHaveLength(8);
+      });
+
+      it('runs a shift that is still open until now', async () => {
+        mockTenant.cashSession.findFirst.mockResolvedValue({
+          id: SESSION_ID,
+          openedAt: new Date(Date.now() - 2 * 3_600_000),
+          closedAt: null,
+        });
+        const before = Date.now();
+
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        expect(result.to.getTime()).toBeGreaterThanOrEqual(before);
+      });
+
+      it('widens the window to a payment synced after its shift closed', async () => {
+        // Collected by this session, but stamped ten minutes after it closed —
+        // the offline case that approximating by clock window gets wrong.
+        const late = new Date(CLOSED.getTime() + 10 * 60_000);
+        paidBetween(new Date(OPENED.getTime() + 3_600_000), late);
+        mockTenant.paymentTransaction.findMany.mockResolvedValue([
+          {
+            amount: new Prisma.Decimal(5000),
+            entryId: 'late-entry',
+            entry: { leftAt: late },
+          },
+        ]);
+
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        // `to` is exclusive, hence the extra millisecond.
+        expect(result.to.getTime()).toBe(late.getTime() + 1);
+        expect(result.totals.revenue).toBe(5000);
+        expect(result.totals.vehiclesOut).toBe(1);
+      });
+
+      it('widens backwards for a payment stamped before the shift opened', async () => {
+        const early = new Date(OPENED.getTime() - 15 * 60_000);
+        paidBetween(early, null);
+
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        expect(result.from).toEqual(early);
+        expect(result.to).toEqual(CLOSED);
+      });
+
+      it('uses explicit bounds verbatim, without widening', async () => {
+        paidBetween(
+          new Date('2026-09-01T00:00:00.000Z'),
+          new Date('2026-09-30T00:00:00.000Z'),
+        );
+
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          from: '2026-09-07T10:00:00Z',
+          to: '2026-09-07T12:00:00Z',
+          granularity: 'hour',
+        });
+
+        expect(result.from).toEqual(new Date('2026-09-07T10:00:00.000Z'));
+        expect(result.to).toEqual(new Date('2026-09-07T12:00:00.000Z'));
+        // Both bounds came, so the span is never even queried.
+        expect(mockTenant.entry.aggregate).not.toHaveBeenCalled();
+      });
+
+      it('derives only the bound that is missing', async () => {
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          from: '2026-09-07T10:00:00Z',
+          granularity: 'hour',
+        });
+
+        expect(result.from).toEqual(new Date('2026-09-07T10:00:00.000Z'));
+        expect(result.to).toEqual(CLOSED);
+      });
+
+      it('rejects an explicit window that ends before it starts', async () => {
+        const failure = await service
+          .getRevenue({
+            cashSessionId: SESSION_ID,
+            from: '2026-09-07T12:00:00Z',
+            to: '2026-09-07T10:00:00Z',
+          })
+          .catch((error: unknown) => error);
+
+        expect(problem(failure).status).toBe(400);
+      });
+    });
+
+    describe('source', () => {
+      it('sums what the session collected, from the transactions', async () => {
+        const result = await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        expect(result.revenueSource).toBe('paymentTransactions');
+        const [where] = loose(mockTenant.paymentTransaction.findMany);
+        // Top-level on the transaction, so the tenant scope covers it.
+        expect(where.cashSessionId).toBe(SESSION_ID);
+        expect(where).not.toHaveProperty('paymentMethodName');
+        expect(where.entry).toMatchObject({ tenantId: 'tenant-1' });
+      });
+
+      it('never matches the drawer a car entered under', async () => {
+        await service.getTopPlates({ cashSessionId: SESSION_ID });
+
+        const [where] = loose(mockTenant.entry.findMany);
+        // `entries.cashSessionId` follows a car into every later shift while
+        // it stays parked; only the transaction knows who took the money.
+        expect(where).not.toHaveProperty('cashSessionId');
+        expect(where.paymentTransactions).toEqual(COLLECTED_BY_SESSION);
+      });
+
+      it('matches method and session on the same transaction', async () => {
+        await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          paymentMethod: 'cash',
+          granularity: 'hour',
+        });
+
+        const [exits] = loose(mockTenant.paymentTransaction.findMany);
+        expect(exits).toMatchObject({
+          paymentMethodName: 'cash',
+          cashSessionId: SESSION_ID,
+        });
+        // Arrivals: stays with one transaction that is both cash AND this
+        // session — not one of each.
+        const [arrivals] = loose(mockTenant.entry.findMany);
+        expect(arrivals.paymentTransactions).toEqual({
+          some: {
+            paymentMethodName: 'cash',
+            cashSessionId: SESSION_ID,
+            tenantId: 'tenant-1',
+          },
+        });
+      });
+
+      it('scopes both halves of the pie to the session', async () => {
+        await service.getPaymentMethodBreakdown({ cashSessionId: SESSION_ID });
+
+        const [slices] = loose(mockTenant.paymentTransaction.groupBy);
+        expect(slices.cashSessionId).toBe(SESSION_ID);
+
+        // The authoritative total is the aggregate with `_sum`; the other one
+        // is the span query.
+        const totals = mockTenant.entry.aggregate.mock.calls
+          .map((call) => call[0] as { _sum?: unknown; where: AnyWhere })
+          .find((args) => args._sum !== undefined);
+        expect(totals?.where.paymentTransactions).toEqual(COLLECTED_BY_SESSION);
+      });
     });
   });
 });

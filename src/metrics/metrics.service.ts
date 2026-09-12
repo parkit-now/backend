@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { LprDetectionStatus } from '@prisma/client';
+import { LprDetectionStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { readCapacity } from '../entities/entity-settings';
@@ -57,6 +57,9 @@ const DEFAULT_TOP_PLATES = 10;
 
 const MS_PER_MINUTE = 60_000;
 
+/** The part of a cash session that defines its window. */
+type SessionBounds = { id: string; openedAt: Date; closedAt: Date | null };
+
 /** Whole minutes a stay lasted. Defensive against a null or inverted exit. */
 function minutesBetween(enteredAt: Date, leftAt: Date | null): number {
   if (!leftAt) return 0;
@@ -102,6 +105,17 @@ function vehicleTypeWhere(vehicleType?: string): {
   vehicleType?: string;
 } {
   return vehicleType ? { vehicleType } : {};
+}
+
+/**
+ * The optional cash-session filter, for queries rooted at
+ * `payment_transactions`. Top-level on the transaction, so the tenant scope
+ * already covers it and the `(tenant_id, cash_session_id)` index applies.
+ */
+function transactionSessionWhere(cashSessionId?: string): {
+  cashSessionId?: string;
+} {
+  return cashSessionId ? { cashSessionId } : {};
 }
 
 /**
@@ -188,7 +202,7 @@ export class MetricsService {
   async getRevenue(query: RevenueQueryDto): Promise<RevenueResponseDto> {
     const tz = query.tz ?? DEFAULT_TIME_ZONE;
     const granularity: Granularity = query.granularity ?? 'day';
-    const { from, to } = this.resolveWindow(query, REVENUE_INSTANCE);
+    const { from, to } = await this.resolveWindow(query, REVENUE_INSTANCE);
 
     if (exceedsBucketLimit(from, to, granularity)) {
       throw this.badWindow(
@@ -198,9 +212,12 @@ export class MetricsService {
     }
 
     const buckets = bucketRange(from, to, granularity, tz);
-    const revenueSource: RevenueSource = query.paymentMethod
-      ? 'paymentTransactions'
-      : 'entries';
+    // The per-method split and the collecting drawer both exist only on the
+    // transactions, so either filter moves revenue off `entries.amountPaid`.
+    const revenueSource: RevenueSource =
+      query.paymentMethod || query.cashSessionId
+        ? 'paymentTransactions'
+        : 'entries';
 
     const [exits, arrivals] = await Promise.all([
       this.loadExits(from, to, query),
@@ -271,19 +288,28 @@ export class MetricsService {
     query: MetricsWindowQueryDto,
   ): Promise<PaymentMethodBreakdownDto> {
     const tenantPrisma = this.prisma.getTenantClient();
-    const { from, to } = this.resolveWindow(query, BREAKDOWN_INSTANCE);
+    const { from, to } = await this.resolveWindow(query, BREAKDOWN_INSTANCE);
     const leftAt = { gte: from, lt: to };
 
     const [authoritative, groups] = await Promise.all([
       tenantPrisma.entry.aggregate({
         _sum: { amountPaid: true },
-        where: { leftAt, ...vehicleTypeWhere(query.vehicleType) },
+        where: {
+          leftAt,
+          ...vehicleTypeWhere(query.vehicleType),
+          // With a session: the stays it collected. A close writes all of its
+          // payments under one session, so their `amountPaid` equals the
+          // transactions' sum, `unallocated` comes out 0, and the pie
+          // reconciles with the revenue chart for the same shift.
+          ...this.paymentsWhere({ cashSessionId: query.cashSessionId }),
+        },
       }),
       tenantPrisma.paymentTransaction.groupBy({
         by: ['paymentMethodName'],
         _sum: { amount: true },
         _count: { _all: true },
         where: {
+          ...transactionSessionWhere(query.cashSessionId),
           entry: {
             // See `loadExits`: the tenant scope does not reach into a nested
             // relation filter, and without it the range cannot use the index.
@@ -335,7 +361,7 @@ export class MetricsService {
    */
   async getTopPlates(query: TopPlatesQueryDto): Promise<TopPlatesResponseDto> {
     const tenantPrisma = this.prisma.getTenantClient();
-    const { from, to } = this.resolveWindow(query, TOP_PLATES_INSTANCE);
+    const { from, to } = await this.resolveWindow(query, TOP_PLATES_INSTANCE);
     const orderBy: TopPlatesOrder = query.orderBy ?? 'revenue';
     const limit = query.limit ?? DEFAULT_TOP_PLATES;
 
@@ -343,6 +369,7 @@ export class MetricsService {
       where: {
         leftAt: { gte: from, lt: to },
         ...vehicleTypeWhere(query.vehicleType),
+        ...this.paymentsWhere({ cashSessionId: query.cashSessionId }),
       },
       select: { plate: true, enteredAt: true, leftAt: true, amountPaid: true },
     });
@@ -382,16 +409,40 @@ export class MetricsService {
   }
 
   /**
-   * Parses and validates the `from`/`to` pair shared by every analytical
-   * endpoint. The offset is already enforced by `@IsOffsetDateTime`, so all
-   * that is left is ordering.
+   * The effective `[from, to)` of an analytical query.
+   *
+   * Without a cash session it is the `from`/`to` pair, whose offset
+   * `@IsOffsetDateTime` already enforced — all that is left is ordering.
+   *
+   * With one, the session must exist in this tenant, even when `from`/`to`
+   * came too: a mistyped id should fail loudly rather than chart a shift of
+   * zeros. A bound the caller sent is used verbatim; a missing one is derived
+   * from the session, see `sessionSpan`.
    */
-  private resolveWindow(
+  private async resolveWindow(
     query: MetricsWindowQueryDto,
     instance: string,
-  ): { from: Date; to: Date } {
-    const from = new Date(query.from);
-    const to = new Date(query.to);
+  ): Promise<{ from: Date; to: Date }> {
+    let from = query.from !== undefined ? new Date(query.from) : undefined;
+    let to = query.to !== undefined ? new Date(query.to) : undefined;
+
+    if (query.cashSessionId) {
+      const session = await this.findCashSession(query.cashSessionId, instance);
+      if (!from || !to) {
+        const span = await this.sessionSpan(session);
+        from = from ?? span.from;
+        to = to ?? span.to;
+      }
+    }
+
+    // Unreachable over HTTP — the DTO requires both bounds without a session —
+    // but it keeps the contract honest for direct callers.
+    if (!from || !to) {
+      throw this.badWindow(
+        instance,
+        '`from` and `to` are required unless `cashSessionId` is given.',
+      );
+    }
     if (from >= to) {
       throw this.badWindow(instance, '`from` must be earlier than `to`.');
     }
@@ -399,13 +450,105 @@ export class MetricsService {
   }
 
   /**
+   * A cash session of this tenant, or a 404.
+   *
+   * The read is tenant-scoped, so another lot's session is simply not found:
+   * the same answer as a nonexistent id, which tells a caller nothing about
+   * what exists elsewhere.
+   */
+  private async findCashSession(
+    id: string,
+    instance: string,
+  ): Promise<SessionBounds> {
+    const session = await this.prisma.getTenantClient().cashSession.findFirst({
+      where: { id },
+      select: { id: true, openedAt: true, closedAt: true },
+    });
+    if (!session) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        'Cash session not found.',
+        instance,
+        ErrorCodes.CASH_SESSION_NOT_FOUND,
+      );
+    }
+    return session;
+  }
+
+  /**
+   * The window a cash session's figures live in: the shift itself, widened to
+   * cover every payment the session collected. An open shift runs until now.
+   *
+   * The widening is the reason to filter by session at all. The desktop is
+   * offline-first and syncs closes later with an explicit `cashSessionId`, so
+   * a payment's `leftAt` can fall outside the `openedAt`–`closedAt` of the very
+   * session that collected it. Clipping to the shift would drop it from the
+   * buckets — exactly the error of approximating a session by its clock
+   * window. Widened, the totals are the exact sum of the session's payments.
+   */
+  private async sessionSpan(
+    session: SessionBounds,
+  ): Promise<{ from: Date; to: Date }> {
+    const paid = await this.prisma.getTenantClient().entry.aggregate({
+      _min: { leftAt: true },
+      _max: { leftAt: true },
+      where: this.paymentsWhere({ cashSessionId: session.id }),
+    });
+    const firstPaid = paid._min?.leftAt ?? null;
+    const lastPaid = paid._max?.leftAt ?? null;
+    const end = session.closedAt ?? new Date();
+
+    const from =
+      firstPaid && firstPaid < session.openedAt ? firstPaid : session.openedAt;
+    // `to` is exclusive, so the last payment needs one millisecond of room to
+    // land inside the final bucket.
+    const pastLastPaid = lastPaid ? new Date(lastPaid.getTime() + 1) : null;
+    const to = pastLastPaid && pastLastPaid > end ? pastLastPaid : end;
+    return { from, to };
+  }
+
+  /**
+   * A filter on the stay's payments, for queries rooted at `entries`.
+   *
+   * The session match is on `payment_transactions.cash_session_id` — the
+   * drawer that **collected** the money. Never `entries.cash_session_id`: that
+   * one records the drawer a car entered under, and closing a shift moves it to
+   * the next one for every car still inside
+   * (`CashSessionsService.closeSession`). Summing a shift by it would put
+   * carried-over cars in the wrong drawer.
+   *
+   * Method and session share one `some`, so "paid in cash during this shift"
+   * means a single transaction satisfying both, not two unrelated ones.
+   */
+  private paymentsWhere(filters: {
+    paymentMethod?: string;
+    cashSessionId?: string;
+  }): Prisma.EntryWhereInput {
+    const some: Prisma.PaymentTransactionWhereInput = {};
+    if (filters.paymentMethod) some.paymentMethodName = filters.paymentMethod;
+    if (filters.cashSessionId) {
+      some.cashSessionId = filters.cashSessionId;
+      // The tenant scope does not reach into a nested filter (see
+      // `loadExits`); restated, the `(tenant_id, cash_session_id)` index
+      // applies.
+      some.tenantId = this.tenantContext.getTenantIdOrThrow();
+    }
+    return Object.keys(some).length > 0
+      ? { paymentTransactions: { some } }
+      : {};
+  }
+
+  /**
    * Stays that ended in the window, as `{ at: leftAt, amount }` pairs.
    *
-   * Without a payment-method filter the amount is the stay's own `amountPaid`.
-   * With one, it comes from the matching `payment_transactions` instead —
-   * a stay can split a single exit across cash and transfer, so charging the
-   * whole `amountPaid` to one method would overstate it. Each transaction is
-   * counted as its own exit row, then de-duplicated per bucket by entry id.
+   * Without a payment-method or cash-session filter the amount is the stay's
+   * own `amountPaid`. With either, it comes from the matching
+   * `payment_transactions` instead — a stay can split a single exit across
+   * cash and transfer, so charging the whole `amountPaid` to one method would
+   * overstate it, and the collecting drawer is recorded only there. Each
+   * transaction is counted as its own exit row, then de-duplicated per bucket
+   * by entry id.
    */
   private async loadExits(
     from: Date,
@@ -415,7 +558,7 @@ export class MetricsService {
     const tenantPrisma = this.prisma.getTenantClient();
     const leftAt = { gte: from, lt: to };
 
-    if (!query.paymentMethod) {
+    if (!query.paymentMethod && !query.cashSessionId) {
       const entries = await tenantPrisma.entry.findMany({
         where: { leftAt, ...vehicleTypeWhere(query.vehicleType) },
         select: { id: true, leftAt: true, amountPaid: true },
@@ -429,7 +572,10 @@ export class MetricsService {
 
     const transactions = await tenantPrisma.paymentTransaction.findMany({
       where: {
-        paymentMethodName: query.paymentMethod,
+        ...(query.paymentMethod
+          ? { paymentMethodName: query.paymentMethod }
+          : {}),
+        ...transactionSessionWhere(query.cashSessionId),
         entry: {
           // `prismaForTenant` injects `tenantId` at the top level only, so a
           // nested relation filter reaches `entries` without one. Correctness
@@ -466,16 +612,10 @@ export class MetricsService {
       where: {
         enteredAt: { gte: from, lt: to },
         ...vehicleTypeWhere(query.vehicleType),
-        // With a method filter, "vehicles in" means the stays that ended up
-        // paying with it — otherwise the two series would answer different
-        // questions on the same chart.
-        ...(query.paymentMethod
-          ? {
-              paymentTransactions: {
-                some: { paymentMethodName: query.paymentMethod },
-              },
-            }
-          : {}),
+        // With a method or session filter, "vehicles in" means the stays that
+        // ended up paying that way — otherwise the two series would answer
+        // different questions on the same chart.
+        ...this.paymentsWhere(query),
       },
       select: { enteredAt: true },
     });

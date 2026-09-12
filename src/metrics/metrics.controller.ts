@@ -9,6 +9,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -33,6 +34,17 @@ import { TopPlatesQueryDto } from './dto/top-plates-query.dto';
 import { TopPlatesResponseDto } from './dto/top-plates-response.dto';
 import { MetricsSummaryDto } from './dto/summary-response.dto';
 import { MetricsService } from './metrics.service';
+
+/** Shared by every endpoint that takes a window and so a `cashSessionId`. */
+const CASH_SESSION_NOT_FOUND_RESPONSE = {
+  description:
+    '`cashSessionId` does not exist in this parking lot (`CASH_SESSION_NOT_FOUND`). A session of another lot gets the same answer.',
+  type: ProblemDetailsDto,
+};
+
+/** Shared 400 wording for the window, now that `from`/`to` are conditional. */
+const WINDOW_BAD_REQUEST =
+  '`from`/`to` missing without a `cashSessionId`, `from` not before `to`, a date-time without an explicit offset, or a malformed `cashSessionId`.';
 
 /**
  * Owner dashboard metrics for a single parking lot.
@@ -87,15 +99,17 @@ export class MetricsController {
       '',
       'Both the money series and the vehicle-count series come back together, so the dashboard’s $/cars toggle needs no second request. Note they use different time anchors — see `totals`.',
       '',
-      'Optional filters narrow to a payment method or a vehicle type; `paymentMethod` switches the revenue source, reported in `revenueSource`.',
+      'Optional filters narrow to a payment method, a vehicle type or a cash session; `paymentMethod` and `cashSessionId` switch the revenue source, reported in `revenueSource`.',
+      '',
+      'With `cashSessionId` the window may be omitted: it is derived from the shift and widened to cover every payment the shift collected, so the totals are exactly what that drawer took. The window used comes back in `from`/`to`. See the parameter for details.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: RevenueResponseDto })
   @ApiBadRequestResponse({
-    description:
-      '`from` is not before `to`, a date-time lacks an explicit offset, or the range and granularity together exceed the bucket limit.',
+    description: `${WINDOW_BAD_REQUEST} Also when the range and granularity together exceed the bucket limit.`,
     type: ValidationProblemDetailsDto,
   })
+  @ApiNotFoundResponse(CASH_SESSION_NOT_FOUND_RESPONSE)
   async getRevenue(
     @Query() query: RevenueQueryDto,
   ): Promise<RevenueResponseDto> {
@@ -111,14 +125,16 @@ export class MetricsController {
       'One slice per payment method over the window, largest first.',
       '',
       'Also returns `unallocated`: revenue with no itemised transactions behind it, because the stay was closed through the offline `amountPaid` fallback. Slices plus `unallocated` add up to `total`, so the chart reconciles with the revenue KPI instead of quietly falling short of it.',
+      '',
+      'With `cashSessionId`: what that shift collected, cash vs. transfer. Every stay of the shift has its payments itemised by construction, so `unallocated` is 0 and `total` matches the revenue series for the same shift.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: PaymentMethodBreakdownDto })
   @ApiBadRequestResponse({
-    description:
-      '`from` is not before `to`, or a date-time lacks an explicit offset.',
+    description: WINDOW_BAD_REQUEST,
     type: ValidationProblemDetailsDto,
   })
+  @ApiNotFoundResponse(CASH_SESSION_NOT_FOUND_RESPONSE)
   async getPaymentMethodBreakdown(
     @Query() query: MetricsWindowQueryDto,
   ): Promise<PaymentMethodBreakdownDto> {
@@ -133,15 +149,15 @@ export class MetricsController {
     description: [
       'Ranks plates by revenue, visit count or time parked — every metric comes back regardless, so switching the ranking is a re-sort rather than another request.',
       '',
-      'Counts only stays that ended inside the window: a vehicle still parked has no final amount or duration yet.',
+      'Counts only stays that ended inside the window: a vehicle still parked has no final amount or duration yet. With `cashSessionId`, only the stays that shift collected.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: TopPlatesResponseDto })
   @ApiBadRequestResponse({
-    description:
-      '`from` is not before `to`, or a date-time lacks an explicit offset.',
+    description: WINDOW_BAD_REQUEST,
     type: ValidationProblemDetailsDto,
   })
+  @ApiNotFoundResponse(CASH_SESSION_NOT_FOUND_RESPONSE)
   async getTopPlates(
     @Query() query: TopPlatesQueryDto,
   ): Promise<TopPlatesResponseDto> {

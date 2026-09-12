@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
@@ -23,12 +24,14 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
+import { ValidationProblemDetailsDto } from '../utils/exceptions/dto/problem-details.dto';
 import { CashSessionChangesQueryDto } from './dto/cash-session-changes-query.dto';
 import { CashSessionChangesResponseDto } from './dto/cash-session-changes-response.dto';
 import { CashSessionDto } from './dto/cash-session.dto';
 import { CloseCashSessionDto } from './dto/close-cash-session.dto';
 import { CloseCashSessionResponseDto } from './dto/close-cash-session-response.dto';
 import { CreateCashSessionDto } from './dto/create-cash-session.dto';
+import { ListCashSessionsQueryDto } from './dto/list-cash-sessions-query.dto';
 import { CashSessionsService } from './cash-sessions.service';
 
 @ApiTags('Cash Sessions')
@@ -58,11 +61,23 @@ export class CashSessionsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List all cash sessions (most recent first)' })
+  @ApiOperation({
+    summary: 'List cash sessions (most recent first)',
+    description: [
+      'Optionally only the shifts overlapping `[from, to)`: a shift that opened before `from` but was still running at `from` is included.',
+      '',
+      '**Capped at `limit` (default 100).** It used to return every shift the lot ever had — about a thousand rows a year to fill a picker. Offline clients should keep syncing through `/changes`, which pages by `syncSeq`.',
+    ].join('\n'),
+  })
   @ApiOkResponse({ type: [CashSessionDto] })
+  @ApiBadRequestResponse({
+    description:
+      '`from` is not before `to`, a date-time lacks an explicit offset, or `limit` is out of range.',
+    type: ValidationProblemDetailsDto,
+  })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
-  async findAll() {
-    return this.cashSessionsService.listSessions();
+  async findAll(@Query() query: ListCashSessionsQueryDto) {
+    return this.cashSessionsService.listSessions(query);
   }
 
   @Post()
