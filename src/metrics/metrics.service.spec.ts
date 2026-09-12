@@ -685,7 +685,13 @@ describe('MetricsService', () => {
 
     /** The payment filter every entries-rooted query must use for a session. */
     const COLLECTED_BY_SESSION = {
-      some: { cashSessionId: SESSION_ID, tenantId: 'tenant-1' },
+      // `deletedAt: null` is not decoration: correcting a payment leaves a
+      // tombstone row, and matching it would count the corrected stay twice.
+      some: {
+        cashSessionId: SESSION_ID,
+        tenantId: 'tenant-1',
+        deletedAt: null,
+      },
     };
 
     /**
@@ -873,6 +879,9 @@ describe('MetricsService', () => {
         expect(where.cashSessionId).toBe(SESSION_ID);
         expect(where).not.toHaveProperty('paymentMethodName');
         expect(where.entry).toMatchObject({ tenantId: 'tenant-1' });
+        // A corrected payment leaves a tombstone; summing it would count the
+        // corrected stay twice.
+        expect(where.deletedAt).toBeNull();
       });
 
       it('never matches the drawer a car entered under', async () => {
@@ -905,6 +914,7 @@ describe('MetricsService', () => {
             paymentMethodName: 'cash',
             cashSessionId: SESSION_ID,
             tenantId: 'tenant-1',
+            deletedAt: null,
           },
         });
       });

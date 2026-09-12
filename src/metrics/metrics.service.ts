@@ -119,6 +119,19 @@ function transactionSessionWhere(cashSessionId?: string): {
 }
 
 /**
+ * Every read of `payment_transactions` has to exclude tombstones.
+ *
+ * Correcting a stay's payment breakdown does not rewrite the rows: it marks the
+ * old ones `deleted_at` and inserts the new ones, so incremental sync can tell
+ * each desktop to drop its stale copies
+ * (`20260908090000_soft_delete_payment_transactions.sql`). Summing without this
+ * filter counts a corrected payment twice — once at the old amount and once at
+ * the new — and the pie stops reconciling with `entries.amountPaid`, which the
+ * correction *does* overwrite.
+ */
+const LIVE_PAYMENT = { deletedAt: null } as const;
+
+/**
  * Index of the bucket containing `instant`, or `-1`.
  *
  * Binary search rather than a linear scan: buckets are sorted, contiguous and
@@ -309,6 +322,7 @@ export class MetricsService {
         _sum: { amount: true },
         _count: { _all: true },
         where: {
+          ...LIVE_PAYMENT,
           ...transactionSessionWhere(query.cashSessionId),
           entry: {
             // See `loadExits`: the tenant scope does not reach into a nested
@@ -534,8 +548,11 @@ export class MetricsService {
       // applies.
       some.tenantId = this.tenantContext.getTenantIdOrThrow();
     }
+    // The tombstone clause goes in last, and only once something else is
+    // filtering: an empty `some` means "no payment filter at all", and adding
+    // `deletedAt` up front would make every query look filtered.
     return Object.keys(some).length > 0
-      ? { paymentTransactions: { some } }
+      ? { paymentTransactions: { some: { ...some, ...LIVE_PAYMENT } } }
       : {};
   }
 
@@ -572,6 +589,7 @@ export class MetricsService {
 
     const transactions = await tenantPrisma.paymentTransaction.findMany({
       where: {
+        ...LIVE_PAYMENT,
         ...(query.paymentMethod
           ? { paymentMethodName: query.paymentMethod }
           : {}),

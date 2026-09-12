@@ -10,6 +10,7 @@ import { CloseCashSessionDto } from './dto/close-cash-session.dto';
 import { CloseCashSessionResponseDto } from './dto/close-cash-session-response.dto';
 import { CreateCashSessionDto } from './dto/create-cash-session.dto';
 import { ListCashSessionsQueryDto } from './dto/list-cash-sessions-query.dto';
+import { UpdateCashSessionDto } from './dto/update-cash-session.dto';
 
 type PrismaCashSession = Prisma.CashSessionGetPayload<Record<string, never>>;
 
@@ -121,6 +122,56 @@ export class CashSessionsService {
     const maxSeq =
       items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
     return { items: items.map(toDto), maxSeq };
+  }
+
+  async updateSession(
+    sessionId: string,
+    expectedVersion: number,
+    data: UpdateCashSessionDto,
+  ): Promise<CashSessionDto> {
+    const tenantPrisma = this.prisma.getTenantClient();
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const instance = `/tenants/${tenantId}/cash-sessions/${sessionId}`;
+
+    // `version: { increment: 1 }` no es redundante: el trigger de sync sólo
+    // toca updated_at y sync_seq. La app es lo único que bumpea la versión.
+    const updateData: Prisma.CashSessionUpdateManyMutationInput = {
+      version: { increment: 1 },
+    };
+    if (data.notes !== undefined) updateData.notes = data.notes;
+
+    const result = await tenantPrisma.cashSession.updateMany({
+      where: { id: sessionId, tenantId, version: expectedVersion },
+      data: updateData,
+    });
+
+    if (result.count === 0) {
+      const existing = await tenantPrisma.cashSession.findFirst({
+        where: { id: sessionId, tenantId },
+      });
+      if (!existing) {
+        throw new FormattedException(
+          'Not Found',
+          HttpStatus.NOT_FOUND,
+          'Cash session not found.',
+          instance,
+          ErrorCodes.NOT_FOUND,
+        );
+      }
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'Cash session was changed by another write. Refresh and retry.',
+        instance,
+        ErrorCodes.CONFLICT,
+      );
+    }
+
+    return toDto(
+      await tenantPrisma.cashSession.findUniqueOrThrow({
+        where: { id: sessionId },
+      }),
+    );
   }
 
   async closeSession(

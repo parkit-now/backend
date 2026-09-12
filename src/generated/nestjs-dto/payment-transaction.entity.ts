@@ -30,6 +30,11 @@ syncSeq: number ;
   format: `date-time`,
 })
 updatedAt: Date ;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+deletedAt: Date  | null;
 entryId: string ;
 entry?: EntryEntity ;
 cashSessionId: string  | null;

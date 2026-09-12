@@ -9,6 +9,7 @@ model PaymentTransaction {
   version   Int      @default(1)
   syncSeq   Int      @default(dbgenerated("nextval('payment_transactions_sync_seq')")) @map("sync_seq")
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   entryId       String  @map("entry_id") @db.Uuid
   entry         Entry   @relation(fields: [entryId], references: [id])

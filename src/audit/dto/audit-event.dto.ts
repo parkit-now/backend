@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import type { AuditSeverity } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 /**
  * Public projection of an `audit_log` row for the portals.
@@ -27,6 +28,9 @@ export class AuditEventDto {
 
   @ApiProperty({ enum: ['info', 'warn', 'crit'] })
   severity: AuditSeverity;
+
+  @ApiProperty({ type: Object })
+  metadata: Prisma.JsonValue;
 
   @ApiProperty({ description: 'ISO-8601 UTC' })
   createdAt: string;

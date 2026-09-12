@@ -82,6 +82,10 @@ export const ErrorCodes = {
 
   // Entries (vehicle stays)
   ENTRY_DUPLICATE_ACTIVE_STAY: 'ENTRY_DUPLICATE_ACTIVE_STAY',
+  ENTRY_CLOSED_SESSION_LOCKED: 'ENTRY_CLOSED_SESSION_LOCKED',
+  ENTRY_ACTIVE_PAYMENT_LOCKED: 'ENTRY_ACTIVE_PAYMENT_LOCKED',
+  ENTRY_CORRECTION_REASON_REQUIRED: 'ENTRY_CORRECTION_REASON_REQUIRED',
+  ENTRY_EXIT_NOT_AFTER_ENTRY: 'ENTRY_EXIT_NOT_AFTER_ENTRY',
 
   // Cash sessions (turnos de caja)
   // La caja pedida no existe o es de otro estacionamiento (mismo code para

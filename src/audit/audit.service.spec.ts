@@ -191,6 +191,7 @@ describe('AuditService', () => {
         entityType: 'application',
         entityId: 'app-1',
         severity: 'info',
+        metadata: {},
         createdAt: '2026-05-01T10:00:00.000Z',
       });
     });
