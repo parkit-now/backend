@@ -9,6 +9,7 @@ const owner: User = {
   id: 'u-owner',
   role: 'user',
   email: 'owner@once.test',
+  name: null,
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };
 

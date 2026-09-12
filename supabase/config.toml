@@ -286,10 +286,22 @@ max_frequency = "5s"
 # 4152127777 = "123456"
 
 # Configure logged in session timeouts.
-# [auth.sessions]
+[auth.sessions]
 # Force log out after the specified duration.
-# timebox = "24h"
+#
+# 30 días. Sin esto la sesión es INFINITA: el refresh token no expira nunca y
+# un token robado sirve para siempre (viven sin cifrar en el localStorage del
+# desktop). Es además la contraparte de haber subido
+# `refresh_token_reuse_interval` a 60s: acotamos la vida de la sesión en vez de
+# la ventana de detección de reuso.
+#
+# 30 días no molesta a un operador que trabaja a diario, y le deja margen a la
+# ventana de gracia offline del desktop (7 días sin poder validar contra el
+# servidor, ver `front-desktop` -> `judgeCachedSession`).
+timebox = "720h"
 # Force log out if the user has been inactive longer than the specified duration.
+# Deliberadamente APAGADO: en una playa la app se usa todos los días, y en
+# temporada baja un timeout por inactividad desloguearía sin necesidad.
 # inactivity_timeout = "8h"
 
 # This hook runs before a new user is created and allows developers to reject the request based on the incoming user object.

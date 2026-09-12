@@ -10,6 +10,7 @@ const admin: User = {
   id: 'admin-1',
   role: 'admin',
   email: 'admin@once.test',
+  name: null,
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };
 

@@ -110,6 +110,7 @@ describe('AuditService', () => {
           id: 'u-1',
           email: 'owner@once.test',
           role: 'user',
+          name: null,
           createdAt,
         },
       });

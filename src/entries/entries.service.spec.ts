@@ -84,9 +84,14 @@ describe('EntriesService', () => {
     it('should call prisma with the correct tenant isolation', async () => {
       const mockEntries = [{ id: '1', plate: 'AAA111' }];
 
-      // Mockeamos el valor de retorno del findMany dentro de tenant
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      (mockTenant.entry.findMany as jest.Mock).mockResolvedValue(mockEntries);
+      // Mockeamos el valor de retorno del findMany dentro de tenant.
+      //
+      // Antes esto casteaba a `jest.Mock`, que no existe: acá corre
+      // `bun test`. Bun shimea `jest` como VALOR (por eso `jest.fn()` anda
+      // más arriba), pero no publica el namespace de TIPOS. Era un error de
+      // TS invisible, porque `nest build` excluye los specs y `bun test` no
+      // chequea tipos. Sin el cast, `jest.fn()` ya tipa bien el mock.
+      mockTenant.entry.findMany.mockResolvedValue(mockEntries);
 
       const result = await service.findAll();
 
