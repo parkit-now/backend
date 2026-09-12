@@ -120,7 +120,7 @@ export class EntitiesController {
     operationId: 'entitiesUpdateProfile',
     summary: 'Update the entity profile',
     description: [
-      'Edits the editable fields of the entity profile (`name`, `legalName`, `cuit`, `email`, `phone`, `address`, `status`), its per-vehicle-type spot `capacity` and its `lprImageRetentionDays` (LPR image retention window, 30-365 days).',
+      'Edits the editable fields of the entity profile (`name`, `legalName`, `cuit`, `email`, `phone`, `address`, `status`), its per-vehicle-type spot `capacity` and its `lprImageRetentionDays` (LPR image retention window, one of 30/60/90 days).',
       '',
       'Use `status: maintenance` to take the lot offline. `capacity` is merged: only the supplied vehicle types change. Every change is written to the audit trail. Requires the caller to be an `owner` of the entity (platform admins bypass the role check).',
     ].join('\n'),

@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import type { BranchStatus } from '@prisma/client';
+import { LPR_IMAGE_RETENTION_DAYS_OPTIONS } from './update-entity-profile.dto';
 
 /**
  * Per-vehicle-type spot capacity of an entity (parking lot). Stored in
@@ -163,11 +164,10 @@ export class EntityProfileDto {
 
   @ApiProperty({
     type: 'integer',
-    minimum: 30,
-    maximum: 365,
+    enum: LPR_IMAGE_RETENTION_DAYS_OPTIONS,
     description:
-      'Days a `registered` LPR detection image is kept after the stay exit before the retention job purges it. Owner-configurable (30-365); defaults to 90. Readable by any member, editable only by an owner.',
-    example: 90,
+      'Days a `registered` LPR detection image is kept after the stay exit before the retention job purges it. Owner-configurable, one of 30/60/90; defaults to 30. Readable by any member, editable only by an owner.',
+    example: 30,
   })
   lprImageRetentionDays: number;
 

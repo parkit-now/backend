@@ -37,7 +37,7 @@ type Tier = 'registered' | 'noise' | 'archived';
  * they've stopped having audit/billing value, per tier:
  *
  *  - `registered` (became a real paid stay): kept until the owner-configured
- *    `Tenant.lprImageRetentionDays` (30-365, default 90) have passed since
+ *    `Tenant.lprImageRetentionDays` (30/60/90, default 30) have passed since
  *    exit, and never before the entry's cash session closes (an open session
  *    may still need the evidence).
  *  - noise (`dismissed`/`suppressed_*`, never billed): kept only until the
