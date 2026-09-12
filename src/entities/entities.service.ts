@@ -57,6 +57,9 @@ export class EntitiesService {
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.status !== undefined) data.status = dto.status;
+    if (dto.lprImageRetentionDays !== undefined) {
+      data.lprImageRetentionDays = dto.lprImageRetentionDays;
+    }
 
     // Capacity lives in `settings.capacity`; merge so an omitted `total` keeps
     // the current value instead of resetting the lot to zero.

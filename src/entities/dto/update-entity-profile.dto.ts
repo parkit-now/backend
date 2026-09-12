@@ -12,6 +12,16 @@ import {
 } from 'class-validator';
 import type { BranchStatus } from '@prisma/client';
 
+/**
+ * Allowed values for `lprImageRetentionDays`. A closed set instead of a free
+ * 30-365 range on purpose: privacy-by-design calls for a short, defensible
+ * default plus a handful of vetted options, not a knob any owner can push to
+ * the ceiling with no documented reason. A per-event legal-hold exception
+ * (for a specific plate under dispute) is a separate, not-yet-built
+ * mechanism — it should never be "raise the whole tenant's window".
+ */
+export const LPR_IMAGE_RETENTION_DAYS_OPTIONS = [30, 60, 90] as const;
+
 /** Editable per-vehicle-type spot capacity of the lot (stored in settings). */
 export class UpdateEntityCapacityDto {
   @ApiPropertyOptional({
@@ -96,4 +106,16 @@ export class UpdateEntityProfileDto {
   @ValidateNested()
   @Type(() => UpdateEntityCapacityDto)
   capacity?: UpdateEntityCapacityDto;
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    enum: LPR_IMAGE_RETENTION_DAYS_OPTIONS,
+    description:
+      'How long (in days) a `registered` LPR detection image is kept after the stay exit before the retention job purges it. One of 30/60/90. Owner-only.',
+    example: 30,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn(LPR_IMAGE_RETENTION_DAYS_OPTIONS)
+  lprImageRetentionDays?: number;
 }

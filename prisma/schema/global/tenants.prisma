@@ -29,6 +29,9 @@ model Tenant {
   address   String?
   status    BranchStatus @default(active)
   settings  Json         @default("{}")
+  // Owner-configurable retention for `registered` LPR detection images
+  // (days after the stay exit). One of 30/60/90 by a DB CHECK; default 30.
+  lprImageRetentionDays Int @default(30) @map("lpr_image_retention_days") @db.SmallInt
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
   memberships          UserMembership[]

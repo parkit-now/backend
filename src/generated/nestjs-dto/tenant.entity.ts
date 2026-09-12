@@ -31,6 +31,11 @@ address: string  | null;
 status: BranchStatus ;
 settings: Prisma.JsonValue ;
 @ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+lprImageRetentionDays: number ;
+@ApiProperty({
   type: `string`,
   format: `date-time`,
 })
