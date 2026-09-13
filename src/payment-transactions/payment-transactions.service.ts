@@ -19,6 +19,7 @@ export function toPaymentTransactionDto(
     cashSessionId: pt.cashSessionId,
     paymentMethodId: pt.paymentMethodId,
     paymentMethodName: pt.paymentMethodName,
+    paymentMethodType: pt.paymentMethodType,
     amount: Number(pt.amount),
     version: pt.version,
     syncSeq: pt.syncSeq,

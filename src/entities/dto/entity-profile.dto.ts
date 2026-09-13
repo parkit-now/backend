@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PaymentMethodType } from '@prisma/client';
 import type { BranchStatus } from '@prisma/client';
 import { EntityAddressDto } from './entity-address.dto';
 import { LPR_IMAGE_RETENTION_DAYS_OPTIONS } from './update-entity-profile.dto';
@@ -32,6 +33,23 @@ export class PaymentMethodSummaryDto {
     example: '2a1b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d',
   })
   id: string;
+
+  /**
+   * Lo que el medio ES, contra `name`, que es cómo el dueño decidió llamarlo.
+   *
+   * Sin este campo el desktop no puede snapshotear el tipo al cobrar y el
+   * arqueo de caja no tiene más remedio que adivinar buscando "efectivo" en el
+   * nombre — que es exactamente el bug que rompía el arqueo de cualquiera que
+   * renombrara su método a "Caja".
+   */
+  @ApiProperty({
+    description:
+      'What the method IS, as opposed to `name` (what the owner calls it). The desktop snapshots this on every charge so the cash count never has to guess from the name.',
+    enum: PaymentMethodType,
+    enumName: 'PaymentMethodType',
+    example: PaymentMethodType.cash,
+  })
+  type: PaymentMethodType;
 
   @ApiProperty({
     description: 'Display name of the payment method.',

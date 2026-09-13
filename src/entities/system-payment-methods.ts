@@ -1,4 +1,5 @@
 import type { PaymentMethodType } from '@prisma/client';
+import { inferPaymentMethodTypeFromName } from '../payment-transactions/payment-method-type';
 
 /**
  * Los métodos de pago DEL SISTEMA: los dos que toda entidad nueva trae puesta
@@ -49,25 +50,34 @@ export const SYSTEM_PAYMENT_METHOD_DEFAULTS: readonly SystemPaymentMethodDefault
   ] as const;
 
 /**
- * Espejo EXACTO de `isCashMethod()` del desktop
- * (`front-desktop/src/features/entries/entryUtils.ts`):
+ * Si la heurística por nombre daría 'cash'.
  *
- *     export function isCashMethod(name: string): boolean {
- *       return name.toLowerCase().includes('efectivo');
- *     }
+ * OJO CON LO QUE ESTO SIGNIFICA HOY, QUE YA NO ES LO DE ANTES
  *
- * El arqueo de caja decide qué cobro es efectivo con ESTA regla, aplicada
- * sobre `payment_transactions.payment_method_name` (el snapshot copiado al
- * cobrar), no sobre el `type`. Por eso el nombre del default no es cosmética:
- * un método de efectivo llamado `'cash'` hace que el esperado en caja dé de
- * menos y que el cobro aparezca como "otros medios".
+ * Hasta `20260913200901_payment_transactions_method_type_snapshot.sql` esta
+ * regla ERA el arqueo de caja: el desktop decidía qué cobro entró al cajón
+ * buscando "efectivo" en `payment_transactions.payment_method_name`. Por eso
+ * el nombre del default no era cosmética — un método de efectivo llamado
+ * `'cash'` hacía que el esperado en caja diera de menos.
  *
- * Se duplica acá a propósito, y no se importa del desktop: son dos paquetes
- * distintos sin código compartido. Lo que ata las dos copias es el test, que
- * falla si el backend deja de sembrar un nombre que el desktop reconozca.
+ * Ya no. El cobro ahora snapshotea el TIPO (`payment_method_type`) y el arqueo
+ * mira eso. La regla por nombre quedó relegada a último recurso, para filas
+ * sin tipo y sin método vivo que consultar (ver
+ * `inferPaymentMethodTypeFromName`, que es de dónde sale esta función: una
+ * sola fuente de verdad para la heurística).
+ *
+ * Entonces, ¿por qué los defaults siguen teniendo que llamarse "Efectivo" y
+ * "Transferencia", y por qué el spec lo sigue atando? Por dos razones, las dos
+ * vigentes:
+ *
+ *   1. Es lo que el usuario VE — en pantalla, en el ticket y en el arqueo. Un
+ *      método que dice "cash" en una app en español es un default mal elegido.
+ *   2. Es el único salvavidas que le queda a una fila legacy: un cobro viejo,
+ *      sin tipo, cuyo método ya no existe. Si el default vuelve a llamarse
+ *      'cash', esas filas se backfillean como 'other' y la plata desaparece.
  */
 export function isCashMethodName(name: string): boolean {
-  return name.toLowerCase().includes('efectivo');
+  return inferPaymentMethodTypeFromName(name) === 'cash';
 }
 
 /** El default de efectivo, el que el arqueo tiene que reconocer. */

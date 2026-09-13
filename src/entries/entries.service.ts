@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { MembershipRole, Prisma } from '@prisma/client';
-import type { User, UserMembership } from '@prisma/client';
+import type { PaymentMethodType, User, UserMembership } from '@prisma/client';
 import { AuditActions } from '../audit/audit.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
@@ -12,6 +12,8 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
+import { PaymentLineDto } from '../payment-transactions/dto/payment-line.dto';
+import { inferPaymentMethodTypeFromName } from '../payment-transactions/payment-method-type';
 
 type PrismaEntry = Prisma.EntryGetPayload<Record<string, never>>;
 type EntryWithAuditRelations = Prisma.EntryGetPayload<{
@@ -129,6 +131,68 @@ function calcSuggestedAmount(input: {
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/**
+ * Resuelve el `payment_method_type` de cada línea de pago: el snapshot del que
+ * depende el arqueo de caja del desktop.
+ *
+ * La columna es NOT NULL y sin DEFAULT (ver
+ * 20260913200901_payment_transactions_method_type_snapshot.sql), así que esto
+ * corre en TODOS los caminos que insertan pagos. Deliberadamente no hay
+ * DEFAULT: un 'other' por omisión sobre un cobro en efectivo haría desaparecer
+ * la plata del arqueo en silencio, que es el bug que estamos matando.
+ *
+ * Precedencia, de mejor a peor:
+ *
+ *   1. `line.paymentMethodType` — lo que mandó el cliente. Gana porque esto es
+ *      un SNAPSHOT: vale lo que el operador tenía en pantalla al cobrar, no lo
+ *      que la tabla diga después. Mismo criterio que `paymentMethodName`, que
+ *      tampoco se pisa con el nombre actual del método.
+ *   2. `payment_methods.type` por id. Exacto, y es lo que salva a los desktops
+ *      viejos: todavía no mandan el tipo, pero sí mandan el id.
+ *   3. Inferir del nombre. Último recurso, sólo para un cliente viejo cobrando
+ *      con un método ya borrado. Ver `inferPaymentMethodTypeFromName`.
+ *
+ * Una sola query para todas las líneas, no una por línea.
+ */
+async function resolvePaymentLineTypes(
+  tx: Pick<Prisma.TransactionClient, 'paymentMethod'>,
+  tenantId: string,
+  lines: PaymentLineDto[],
+): Promise<Map<string, PaymentMethodType>> {
+  const resolved = new Map<string, PaymentMethodType>();
+
+  const idsToLookUp = [
+    ...new Set(
+      lines
+        .filter((line) => line.paymentMethodType === undefined)
+        .map((line) => line.paymentMethodId)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+
+  const typeById = new Map<string, PaymentMethodType>();
+  if (idsToLookUp.length > 0) {
+    const methods = await tx.paymentMethod.findMany({
+      where: { tenantId, id: { in: idsToLookUp } },
+      select: { id: true, type: true },
+    });
+    for (const method of methods) typeById.set(method.id, method.type);
+  }
+
+  for (const line of lines) {
+    resolved.set(
+      line.id,
+      line.paymentMethodType ??
+        (line.paymentMethodId
+          ? typeById.get(line.paymentMethodId)
+          : undefined) ??
+        inferPaymentMethodTypeFromName(line.paymentMethodName),
+    );
+  }
+
+  return resolved;
 }
 
 function activePayments(entry: EntryWithAuditRelations): PaymentSnapshot[] {
@@ -407,6 +471,12 @@ export class EntriesService {
           )?.id ??
           null;
 
+        const typeByLineId = await resolvePaymentLineTypes(
+          tx,
+          tenantId,
+          data.payments,
+        );
+
         await tx.paymentTransaction.createMany({
           data: data.payments.map((p) => ({
             id: p.id,
@@ -415,6 +485,7 @@ export class EntriesService {
             cashSessionId,
             paymentMethodId: p.paymentMethodId ?? null,
             paymentMethodName: p.paymentMethodName,
+            paymentMethodType: typeByLineId.get(p.id)!,
             amount: p.amount,
           })),
         });
@@ -634,6 +705,12 @@ export class EntriesService {
           data: { deletedAt },
         });
         if (data.payments.length > 0) {
+          const typeByLineId = await resolvePaymentLineTypes(
+            tx,
+            tenantId,
+            data.payments,
+          );
+
           await tx.paymentTransaction.createMany({
             data: data.payments.map((payment) => ({
               id: payment.id,
@@ -642,6 +719,7 @@ export class EntriesService {
               cashSessionId: current.cashSessionId,
               paymentMethodId: payment.paymentMethodId ?? null,
               paymentMethodName: payment.paymentMethodName,
+              paymentMethodType: typeByLineId.get(payment.id)!,
               amount: payment.amount,
             })),
           });
