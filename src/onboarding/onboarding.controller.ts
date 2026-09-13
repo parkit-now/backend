@@ -22,6 +22,7 @@ import {
   ApiParam,
   ApiTags,
   ApiUnauthorizedResponse,
+  ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import type { User } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -234,6 +235,8 @@ export class OnboardingController {
       'Transitions the application from `draft` or `rejected` to `pending_review` and stamps `submittedAt`, handing it over to PARKIT Ops for review.',
       '',
       'Resubmitting a previously rejected application clears its `rejectionReason`.',
+      '',
+      'The declared entity must carry a complete address to be submitted: either normalized by Georef (`location.geocodingSource = "georef"` plus `location.formatted`) or manually filled with `streetName`, `streetNumber`, `cityName` and `stateName`. A draft may stay incomplete — the requirement applies to this transition only, so applications already in `pending_review` are unaffected.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: OnboardingApplicationDto })
@@ -253,6 +256,11 @@ export class OnboardingController {
   @ApiConflictResponse({
     description:
       'The application is not in a submittable state (`ONBOARDING_INVALID_STATE`).',
+    type: ProblemDetailsDto,
+  })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'The declared entity has no usable address (`ONBOARDING_NOT_SUBMITTABLE`). `validationsErrors` lists the missing `declaredEntity.location.*` fields.',
     type: ProblemDetailsDto,
   })
   submit(
