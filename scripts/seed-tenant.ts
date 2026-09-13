@@ -1425,14 +1425,14 @@ async function seedCustomPaymentMethods(): Promise<void> {
 async function resolvePaymentMethod(
   tenantId: string,
   ref: SeedPaymentMethodRef,
-): Promise<{ id: string; name: string } | null> {
+): Promise<{ id: string; name: string; type: PaymentMethodType } | null> {
   const where =
     'system' in ref
       ? { tenantId, type: ref.system, isSystem: true }
       : { tenantId, name: ref.custom };
   return prisma.paymentMethod.findFirst({
     where,
-    select: { id: true, name: true },
+    select: { id: true, name: true, type: true },
   });
 }
 
@@ -1513,6 +1513,10 @@ async function seedEntries(): Promise<void> {
         // dueño renombró el método, el snapshot guarda el nombre de ese
         // momento — que es exactamente lo que la columna significa.
         paymentMethodName: method.name,
+        // Y el tipo también: es el hermano del nombre y lo que el arqueo de
+        // caja realmente mira. Se copia de la fila, no se infiere del nombre:
+        // el seed tiene el método a mano, así que acá el dato es exacto.
+        paymentMethodType: method.type,
         amount: payment.amountArs,
       };
 

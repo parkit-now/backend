@@ -102,6 +102,13 @@ describe('EntitiesService', () => {
       expect(profile.paymentMethods).toHaveLength(1);
       expect(profile.paymentMethods[0].name).toBe('Cash');
       expect(profile.paymentMethods[0].isSystem).toBe(true);
+      // El `type` tiene que viajar, y viajar SEPARADO del nombre. Sin este
+      // campo el desktop no puede snapshotearlo al cobrar y el arqueo de caja
+      // vuelve a tener que adivinar buscando "efectivo" en el nombre — que es
+      // el bug que rompía la caja de cualquiera que renombrara su método.
+      // Ojo al fixture: el método se llama 'Cash' y es `type: 'cash'`; el
+      // nombre no dice "efectivo" y aun así el tipo llega bien.
+      expect(profile.paymentMethods[0].type).toBe('cash');
     });
 
     it('throws ENTITY_NOT_FOUND when the tenant does not exist', async () => {
