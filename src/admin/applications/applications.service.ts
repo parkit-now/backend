@@ -3,6 +3,12 @@ import { MembershipRole } from '@prisma/client';
 import type { ApplicationStatus, User } from '@prisma/client';
 import { AuditActions } from '../../audit/audit.service';
 import { PrismaService } from '../../database/prisma.service';
+import type { UpdateEntityAddressDto } from '../../entities/dto/entity-address.dto';
+import { withCapacity } from '../../entities/entity-settings';
+import {
+  addressCreateData,
+  readDeclaredAddress,
+} from '../../entities/tenant-address';
 import { declaredEntityOf } from '../../onboarding/onboarding.mappers';
 import {
   APPLICATION_DOCUMENTS_BUCKET,
@@ -26,9 +32,18 @@ import { RejectApplicationDto } from './dto/reject-application.dto';
 /** Validity window of a document signed URL, in seconds (5 minutes). */
 const DOCUMENT_SIGNED_URL_TTL = 300;
 
+/**
+ * Vista tipada del JSON `onboarding_applications.declared_entity`.
+ *
+ * No hay columnas tipadas atrás: es una columna JSON libre, así que conviven
+ * la forma vieja (sólo `address` como string) y la nueva (`location` con los
+ * campos separados). Todo opcional por eso mismo. La dirección NO se lee de
+ * acá a mano: se lee con `readDeclaredAddress()`, que tolera las dos formas.
+ */
 interface DeclaredEntity {
   name?: string;
   address?: string;
+  location?: UpdateEntityAddressDto;
   legalName?: string;
   cuit?: string;
   email?: string;
@@ -121,24 +136,38 @@ export class ApplicationsService {
     const application = await this.loadApplication(id);
     this.assertPendingReview(application.status);
 
-    const entity = declaredEntityOf(application) as DeclaredEntity;
+    const declared = declaredEntityOf(application);
+    const entity = declared as DeclaredEntity;
     const applicant = application.applicant;
+
+    // La dirección declarada se materializa en las COLUMNAS de `tenants`, no
+    // en `settings`. Si esto no está, los campos estructurados del wizard se
+    // pierden en silencio al aprobar y el dueño no puede vincular Mercado
+    // Pago. `readDeclaredAddress` tolera además la forma vieja del JSON (sólo
+    // `address` plano), que es lo que tienen los borradores en vuelo.
+    const address = readDeclaredAddress(declared);
 
     await this.prisma.$transaction(async (tx) => {
       // La capacidad declarada se materializa en `tenant.settings.capacity`.
       // Es UN número: las plazas no dependen de la carrocería. Qué vehículos
       // acepta la playa vive en `vehicle_types.accepted`.
-      const capacity = { total: entity.totalSpots ?? 0 };
+      //
+      // Se arma con `withCapacity()` y no con el literal `{ capacity }`: el
+      // literal PISA el objeto `settings` entero. Hoy no rompe nada porque
+      // `capacity` es la única clave, pero el día que haya una segunda este
+      // camino la borraría sin avisar. Mismo helper que usa `updateProfile`.
+      const settings = withCapacity({}, { total: entity.totalSpots ?? 0 });
       const tenant = await tx.tenant.create({
         data: {
           name: entity.name ?? 'Untitled',
-          address: entity.address ?? null,
+          address: address.formatted,
+          ...addressCreateData(address),
           legalName: entity.legalName ?? null,
           cuit: entity.cuit ?? null,
           email: entity.email ?? null,
           phone: entity.phone ?? null,
           status: 'active',
-          settings: { capacity },
+          settings,
         },
       });
 

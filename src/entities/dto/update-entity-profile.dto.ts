@@ -11,6 +11,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import type { BranchStatus } from '@prisma/client';
+import { UpdateEntityAddressDto } from './entity-address.dto';
 
 /**
  * Allowed values for `lprImageRetentionDays`. A closed set instead of a free
@@ -80,12 +81,23 @@ export class UpdateEntityProfileDto {
   phone?: string;
 
   @ApiPropertyOptional({
-    description: 'New address of the entity.',
+    description:
+      'Nueva dirección en una línea (campo de display, legacy). Si también se manda `location.formatted`, gana ese.',
     example: 'Av. Corrientes 1000, Buenos Aires',
   })
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiPropertyOptional({
+    type: UpdateEntityAddressDto,
+    description:
+      'Dirección estructurada. Sólo se actualizan los campos presentes; mandar `null` explícito borra ese campo. Las coordenadas van completas (lat + lng) o ninguna: la base rechaza media coordenada.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateEntityAddressDto)
+  location?: UpdateEntityAddressDto;
 
   @ApiPropertyOptional({
     enum: ['active', 'maintenance'],

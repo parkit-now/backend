@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { BranchStatus } from '@prisma/client';
+import { EntityAddressDto } from '../../../entities/dto/entity-address.dto';
 
 /**
  * Public representation of a parking lot (the `Tenant` model) as exposed by the
@@ -31,8 +32,19 @@ export class ParkingDto {
   @ApiProperty({ nullable: true, description: 'Contact phone, if any.' })
   phone: string | null;
 
-  @ApiProperty({ nullable: true, description: 'Street address, if any.' })
+  @ApiProperty({
+    nullable: true,
+    description:
+      'Dirección en una línea, para mostrar. Mismo valor que `location.formatted`; se conserva por retrocompatibilidad.',
+  })
   address: string | null;
+
+  @ApiProperty({
+    type: EntityAddressDto,
+    description:
+      'Dirección estructurada (calle, altura, localidad, provincia, coordenadas). Campos en `null` cuando el estacionamiento es anterior a la migración 20260913164617: no hubo backfill.',
+  })
+  location: EntityAddressDto;
 
   @ApiProperty({
     enum: BranchStatus,

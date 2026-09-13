@@ -2,6 +2,12 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import type { Prisma, Tenant, User } from '@prisma/client';
 import { AuditActions, AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../database/prisma.service';
+import {
+  addressCreateData,
+  addressUpdateData,
+  resolveAddressLine,
+  toEntityAddressDto,
+} from '../../entities/tenant-address';
 import { ErrorCodes } from '../../utils/exceptions/error-codes';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import { resolvePagination } from '../../utils/pagination/pagination-query.dto';
@@ -64,7 +70,9 @@ export class ParkingsService {
         cuit: dto.cuit ?? null,
         email: dto.email ?? null,
         phone: dto.phone ?? null,
-        address: dto.address ?? null,
+        // `location.formatted` gana sobre el `address` plano (legacy).
+        address: resolveAddressLine(dto.address, dto.location),
+        ...addressCreateData(dto.location),
         ...(dto.status ? { status: dto.status } : {}),
       },
     });
@@ -96,6 +104,11 @@ export class ParkingsService {
         ...(dto.email !== undefined ? { email: dto.email } : {}),
         ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
         ...(dto.address !== undefined ? { address: dto.address } : {}),
+        // Después del `address` plano: si vienen los dos, gana `formatted`.
+        ...(dto.location !== undefined ? addressUpdateData(dto.location) : {}),
+        ...(dto.location?.formatted !== undefined
+          ? { address: dto.location.formatted }
+          : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
       },
     });
@@ -168,6 +181,7 @@ function toParkingDto(tenant: Tenant): ParkingDto {
     email: tenant.email,
     phone: tenant.phone,
     address: tenant.address,
+    location: toEntityAddressDto(tenant),
     status: tenant.status,
     createdAt: tenant.createdAt,
   };
