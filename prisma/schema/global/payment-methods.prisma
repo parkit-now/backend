@@ -1,7 +1,14 @@
 // PaymentMethod — entity-level (tenant) payment methods.
 //
-// On entity approval, 'transfer' and 'cash' are created automatically with
-// `isSystem=true` (not deletable; can be disabled via `enabled`).
+// Every new tenant gets the two system methods automatically, seeded by the
+// `bootstrap_tenant_defaults()` trigger (AFTER INSERT ON tenants): type
+// 'transfer' named "Transferencia" and type 'cash' named "Efectivo". They are
+// `isSystem=true` (not deletable; can be disabled via `enabled`) and the owner
+// can rename them.
+//
+// `name` is user-facing and NOT the type: the desktop cash count keys off the
+// name (isCashMethod), which is why the defaults are in Spanish. See
+// 20260913163737_payment_methods_spanish_default_names.sql.
 //
 // Custom methods use type='other' and can be created/deleted freely by owners.
 //
