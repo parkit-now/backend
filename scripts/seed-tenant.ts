@@ -681,15 +681,23 @@ const CASH_SESSIONS: SeedCashSession[] = [
 // ---------------------------------------------------------------------------
 
 /**
- * A qué método de pago apunta un cobro. El NOMBRE no se escribe acá: se copia
- * de la fila real de `payment_methods` al sembrar, igual que hace el desktop al
- * cobrar (`paymentMethodName: pm.name`).
+ * A qué método de pago apunta un cobro. Ni el NOMBRE ni el TIPO se escriben
+ * acá: los dos se copian de la fila real de `payment_methods` al sembrar,
+ * igual que hace el desktop al cobrar (`paymentMethodName: pm.name`,
+ * `paymentMethodType: pm.type`).
  *
- * Es la parte que más importa de todo este archivo:
- * `payment_transactions.payment_method_name` es un SNAPSHOT, y el arqueo de
- * caja decide qué cobro es efectivo mirando ESE texto
- * (`isCashMethod(name) = name.toLowerCase().includes('efectivo')`), no el
- * `type`. Un snapshot en inglés hace que el efectivo desaparezca del arqueo.
+ * Es la parte que más importa de todo este archivo, porque esas dos columnas
+ * de `payment_transactions` son un SNAPSHOT: se congelan al cobrar y después
+ * nadie las vuelve a comparar contra el método.
+ *
+ * El arqueo de caja decide qué cobro entró al cajón por el TIPO
+ * (`payment_method_type`, desde
+ * 20260913200901_payment_transactions_method_type_snapshot.sql); el nombre
+ * quedó de último recurso, para filas viejas sin tipo. Consecuencia directa
+ * para el fixture: un cobro con un método propio del dueño —"Tarjeta de
+ * crédito", `type='other'`— NO puede sumar al efectivo esperado. Si acá se
+ * inventara el tipo en vez de copiarlo, el seed produciría un arqueo que el
+ * desktop nunca produciría.
  */
 type SeedPaymentMethodRef =
   | { system: Extract<PaymentMethodType, 'cash' | 'transfer'> }
@@ -738,8 +746,8 @@ const LPR_ENTRY_ID = '7c1f1f4e-26b1-4a6a-9a1d-2f8f0f9a1b31';
 /**
  * Patentes con los DOS formatos argentinos que conviven en la calle:
  *   - viejo `AAA000` (hasta 2016): RKL482, SVT915, MQR318
- *   - Mercosur `AA000AA` (autos): AF412XZ, AD836MK, AB512CD, AG456HI, AH902KT,
- *     AE773LP
+ *   - Mercosur `AA000AA` (autos): AF412XZ, AD836MK, AB512CD, AC733PN, AG456HI,
+ *     AH902KT, AE773LP
  *   - Mercosur `A000AAA` (motos): A054HRT
  *
  * Importa más de lo que parece: el buscador por patente, la detección de
@@ -874,6 +882,43 @@ const ENTRIES: SeedEntry[] = [
     ticketNumber: 3,
   },
   {
+    // El cobro PARTIDO entre efectivo y un método PROPIO del dueño, en el mismo
+    // ticket y en la misma caja. Es el caso que prueba de punta a punta lo que
+    // cambió con el snapshot del tipo: el arqueo tiene que mandar los 10.000 al
+    // cajón y dejar los 6.200 de la tarjeta afuera. Mirando el NOMBRE no se
+    // puede — "Tarjeta de crédito" no dice nada—; mirando el `type` sí.
+    //
+    // El `seq` es 11 y no 7 a propósito: los números del 1 al 10 ya están
+    // tomados y el `seq` ES el id de la fila (`seedUuidV7`). Renumerar para que
+    // quede prolijo le cambiaría el id a ingresos ya sembrados, que es
+    // exactamente lo que el fixture no puede hacer.
+    seq: SEQ.entry + 11,
+    tenantId: TENANTS.once,
+    plate: 'AC733PN',
+    vehicleBrand: 'Chevrolet',
+    vehicleModel: 'Onix',
+    color: 'Gris',
+    enteredAt: at(0, 10, 10),
+    leftAt: at(0, 13, 50),
+    // 3 h 40 → 3 × 4500 + 2700 = 16.200 (techo 21.000, no se alcanza).
+    amountPaidArs: '16200.00',
+    rateKey: 'once-auto',
+    cashSessionKey: 'once-hoy',
+    ticketNumber: 4,
+    payments: [
+      {
+        seq: SEQ.payment + 6,
+        method: { system: 'cash' },
+        amountArs: '10000.00',
+      },
+      {
+        seq: SEQ.payment + 7,
+        method: { custom: 'Tarjeta de crédito' },
+        amountArs: '6200.00',
+      },
+    ],
+  },
+  {
     // Ingreso AUTOMÁTICO por cámara: `source='auto'`, con el tipo de vehículo
     // snapshoteado (el alta manual no lo manda: `CreateEntryDto` ni siquiera
     // tiene el campo) y enganchado al abonado por patente. Sin tarifa ni
@@ -934,12 +979,50 @@ const ENTRIES: SeedEntry[] = [
 
 /**
  * Métodos de pago PROPIOS del dueño (`type='other'`, `is_system=false`): los
- * que puede crear y borrar libremente. El id lo genera la base
- * (`gen_random_uuid()`), así que la idempotencia va por (tenant, nombre) y no
- * por un id inventado.
+ * que puede crear, renombrar y BORRAR libremente. El id lo genera la base
+ * (`gen_random_uuid()`), así que la identidad del fixture va por
+ * (tenant, nombre) y no por un id inventado.
+ *
+ * CÓMO SE REPARTEN, Y POR QUÉ NO TIENEN LAS TRES LO MISMO
+ *
+ * Un fixture donde las tres playas están configuradas igual no prueba nada.
+ * Las tres formas que se ven en la calle están cada una en una playa:
+ *
+ *   - Once (la piloto, 55 plazas, con caja y arqueo): TRES propios. Es la que
+ *     ejercita la lista larga en el modal de egreso y, sobre todo, el AGRUPADO
+ *     del arqueo: `computeSessionSummary` junta por `paymentMethodId`
+ *     (front-desktop/src/features/cash-session/cashSessionUtils.ts), así que
+ *     con un solo método propio nunca hay más de un grupo "que no es
+ *     efectivo" y la pantalla se ve igual que si el agrupado no existiera.
+ *   - Palermo: UNO, y a propósito sin ningún cobro que lo use. Ese hueco es el
+ *     punto: es el único método de todo el seed que se puede BORRAR de verdad,
+ *     sin transacciones colgando. Sin él, el camino de baja no se prueba en
+ *     local.
+ *   - Belgrano: NINGUNO — sólo "Efectivo" y "Transferencia". Es el caso más
+ *     común de una playa chica (la misma que acá cobra a mano, sin caja) y el
+ *     que prueba que la UI no asume que siempre hay algo debajo de los dos del
+ *     sistema.
+ *
+ * QUÉ MÉTODOS, Y POR QUÉ ESTOS Y NO MÁS
+ *
+ * Los que escribiría un dueño argentino hoy, no un catálogo: débito y crédito
+ * —el posnet, que no son lo mismo ni para el arqueo ni para la comisión que le
+ * cobran— y Mercado Pago, el QR. "Transferencia" NO se repite acá: ya es uno de
+ * los dos del sistema, y para el dueño pasarle el CBU y que le escaneen el QR
+ * son dos cosas distintas.
+ *
+ * Lo que NO se agrega, y es una regla, no un gusto: ningún nombre propio que
+ * contenga "efectivo" o "transferencia". `inferPaymentMethodTypeFromName`
+ * —el último recurso para filas viejas sin tipo— busca esas dos palabras
+ * adentro del nombre, así que un método propio llamado "Efectivo Mercado Pago"
+ * se backfillearía como `cash` y entraría al arqueo como plata en el cajón. El
+ * fixture no tiene por qué meter esa trampa.
  */
 const CUSTOM_PAYMENT_METHODS = [
   { tenantId: TENANTS.once, name: 'Tarjeta de débito' },
+  { tenantId: TENANTS.once, name: 'Tarjeta de crédito' },
+  { tenantId: TENANTS.once, name: 'Mercado Pago' },
+  { tenantId: TENANTS.palermo, name: 'Tarjeta de débito' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1399,15 +1482,32 @@ async function seedCashSessions(): Promise<void> {
 }
 
 /**
- * Métodos de pago propios del dueño (`type='other'`). Se identifican por
- * (tenant, nombre) porque el id lo pone la base, igual que en el alta real.
+ * Métodos de pago propios del dueño (`type='other'`, `is_system=false`). Se
+ * identifican por (tenant, nombre) porque el id lo pone la base, igual que en
+ * el alta real.
+ *
+ * SÓLO CREA: NUNCA ACTUALIZA UNA FILA QUE YA ESTÁ. Un método propio es del
+ * dueño de punta a punta —lo creó él y lo puede editar y borrar—, así que si ya
+ * existe, el seed no le toca ni el nombre, ni `enabled`, ni `is_default`. Es el
+ * mismo criterio que `seedSystemPaymentMethods`, donde está explicado largo.
+ *
+ * El límite conocido de identificar por nombre: si alguien renombra a mano
+ * "Mercado Pago" a "QR MP", la próxima corrida crea "Mercado Pago" de nuevo al
+ * lado. No hay forma de distinguir eso de un alta legítima sin un id fijo, y un
+ * id fijo es justo lo que estas filas no tienen (lo genera la base). Se
+ * prefiere duplicar visiblemente antes que pisar lo que escribió una persona.
  */
 async function seedCustomPaymentMethods(): Promise<void> {
+  const t = tally();
+
   for (const method of CUSTOM_PAYMENT_METHODS) {
     const existing = await prisma.paymentMethod.findFirst({
       where: { tenantId: method.tenantId, name: method.name },
     });
-    if (existing) continue;
+    if (existing) {
+      t.unchanged += 1;
+      continue;
+    }
     await prisma.paymentMethod.create({
       data: {
         tenantId: method.tenantId,
@@ -1418,7 +1518,10 @@ async function seedCustomPaymentMethods(): Promise<void> {
         isDefault: false,
       },
     });
+    t.created += 1;
   }
+
+  console.log(describe('Métodos de pago propios del dueño', t));
 }
 
 /** Resuelve un cobro del fixture a la fila real de `payment_methods`. */
