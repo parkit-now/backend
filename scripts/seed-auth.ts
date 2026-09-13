@@ -46,6 +46,7 @@ if (!SERVICE_ROLE_KEY || !DATABASE_URL) {
 const TENANTS = {
   once: '11111111-1111-4111-8111-111111111111',
   belgrano: '22222222-2222-4222-8222-222222222222',
+  palermo: '33333333-3333-4333-8333-333333333333',
 } as const;
 
 type SeedMembership = { tenantId: string; role: MembershipRole };
@@ -92,6 +93,15 @@ const USERS: SeedUser[] = [
     password: DEMO_PASSWORD,
     role: 'user',
     memberships: [{ tenantId: TENANTS.once, role: 'operator' }],
+  },
+  // Dueño de OTRA sociedad (Cocheras Palermo SRL), con una sola playa. Existe
+  // para que el aislamiento entre entidades se pueda probar de verdad: si
+  // entra acá y ve Once o Belgrano, hay un bug de membresías.
+  {
+    email: 'owner-palermo@example.com',
+    password: DEMO_PASSWORD,
+    role: 'user',
+    memberships: [{ tenantId: TENANTS.palermo, role: 'owner' }],
   },
   { email: 'driver@example.com', password: DEMO_PASSWORD, role: 'user' },
   // Applicant of the "pending" onboarding application (no lots yet; its entity
@@ -173,7 +183,9 @@ async function main(): Promise<void> {
   console.log(
     `\n✓ Seeded ${USERS.length} users across ${Object.keys(TENANTS).length} tenants.`,
   );
-  console.log(`  All accounts share the password "${DEMO_PASSWORD}" (local dev only).`);
+  console.log(
+    `  All accounts share the password "${DEMO_PASSWORD}" (local dev only).`,
+  );
 }
 
 main()

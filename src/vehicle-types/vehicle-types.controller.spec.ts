@@ -51,7 +51,9 @@ describe('VehicleTypesController', () => {
       VehicleTypesController.prototype.list,
       VehicleTypesController.prototype.pullChanges,
     ]) {
-      expect(reflector.get(ENTITY_ROLE_KEY, handler)).toBeUndefined();
+      expect(
+        reflector.get<MembershipRole>(ENTITY_ROLE_KEY, handler),
+      ).toBeUndefined();
     }
 
     for (const handler of [
@@ -59,7 +61,7 @@ describe('VehicleTypesController', () => {
       VehicleTypesController.prototype.update,
       VehicleTypesController.prototype.remove,
     ]) {
-      expect(reflector.get(ENTITY_ROLE_KEY, handler)).toBe(
+      expect(reflector.get<MembershipRole>(ENTITY_ROLE_KEY, handler)).toBe(
         MembershipRole.owner,
       );
     }

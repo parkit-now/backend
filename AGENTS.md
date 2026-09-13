@@ -43,11 +43,13 @@ GET /tenants/:tenantId/<modelo>/changes?afterSeq=N
 El desktop hace `pull` al reconectar y hace `push` de mutaciones encoladas mientras estuvo offline.
 
 **Campos obligatorios en modelos syncables** (tenant-local):
+
 - `syncSeq INTEGER DEFAULT nextval('<modelo>_sync_seq')` — asignado en INSERT por DEFAULT, incrementado en UPDATE por trigger
 - `version INTEGER DEFAULT 1` — optimistic locking; se incrementa en cada UPDATE
 - `updated_at TIMESTAMPTZ DEFAULT now()` — actualizado por trigger en UPDATE
 
 **Campos obligatorios en modelos con UUID cliente** (global + tenant-local):
+
 - Eliminar `@default(dbgenerated("gen_random_uuid()"))` del campo `id` en Prisma para que el cliente provea UUIDv7 generado localmente.
 
 Ver `supabase/migrations/20260529093000_add_rates.sql` y `20260603225951_entries_offline_sync.sql` como referencia del patrón completo.
@@ -56,11 +58,11 @@ Ver `supabase/migrations/20260529093000_add_rates.sql` y `20260603225951_entries
 
 Hay **tres** caminos de creación de estacionamientos:
 
-| Camino | Archivo |
-|---|---|
+| Camino                  | Archivo                                          |
+| ----------------------- | ------------------------------------------------ |
 | Aprobación de solicitud | `src/admin/applications/applications.service.ts` |
-| Alta directa del admin | `src/admin/parkings/parkings.service.ts` |
-| Seed local | `supabase/seed.sql` |
+| Alta directa del admin  | `src/admin/parkings/parkings.service.ts`         |
+| Seed local              | `supabase/seed.sql`                              |
 
 Los tres convergen en el trigger `AFTER INSERT ON tenants`
 (`bootstrap_tenant_defaults()`, migración `20260901013345`), que siembra los
@@ -116,6 +118,7 @@ Precedente del patrón: `20260507042000_oauth_auto_provision_users.sql`.
 Objetivo: DRY en CRUD estándar, control estricto de contratos en APIs críticas.
 
 Aplicación en este repo (estado actual):
+
 - CRUD de dominio estándar importa desde `src/generated/nestjs-dto/`.
 - DTO manual cuando el contrato HTTP no es 1:1 con la tabla. Ejemplos vigentes:
   - `src/rates/dto/` — El `CreateRateDto` acepta `id` provisto por cliente (UUIDv7 offline), `pullChanges` retorna `RateChangesResponseDto` que agrega `maxSeq`. Ninguno de estos mapea 1:1 al modelo.
@@ -222,6 +225,7 @@ make generate
 > **Workaround Node 18**: Prisma 7.8.0 requiere Node ≥ 20. Si el sistema tiene Node 18 (sistema),
 > `make migration-apply` aplica la migración SQL correctamente pero falla en el paso `prisma generate`.
 > Solución: regenerar manualmente con nvm:
+>
 > ```bash
 > PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH" bun run db:generate
 > ```
@@ -242,11 +246,43 @@ bun test
 
 ## 8) Pipeline CI/CD (qué no romper)
 
-PRs ejecutan una cadena que debe permanecer verde:
+PRs y pushes a `develop`/`main` ejecutan una cadena encadenada por `needs:`
+que debe permanecer verde (`.github/workflows/pipeline.yml`):
 
-- `lint -> typecheck -> test -> migration-smoke -> build-verify`
+- `lint -> typecheck -> test -> build`
 
-Smoke de migraciones en PR:
+| Job         | Corre                                     | Por qué                                                                                      |
+| ----------- | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `lint`      | `bun run lint:check` + `prettier --check` | `lint:check` NO lleva `--fix`: en CI auto-corregir deja el job verde escondiendo el problema |
+| `typecheck` | `bun run typecheck`                       | `tsc --noEmit` sobre TODO, specs incluidos                                                   |
+| `test`      | `bun test`                                | La suite mockea Prisma, no necesita base                                                     |
+| `build`     | `bun run build`                           | El artefacto tiene que compilar de verdad                                                    |
+
+Todos hacen `bun install --frozen-lockfile` primero, cuyo `postinstall` corre
+`prisma generate`. **Ese paso no es opcional**: sin el cliente al día, `tsc`
+tira errores fantasma del tipo "Property X does not exist on type".
+
+Reproducir el pipeline completo en local:
+
+```bash
+bun install
+bun run lint:check
+bun run typecheck
+bun test
+bun run build
+```
+
+### Por qué `build` y `typecheck` corren `prisma generate`
+
+`nest build` y `tsc` compilan contra el `@prisma/client` de `node_modules`. Si
+alguien hace `git pull` con una migración nueva y no reinstala, compila contra
+un cliente viejo y aparecen errores de tipo que no existen en el código. Pasó
+de verdad con `lprImageRetentionDays`. Por eso ambos scripts generan primero.
+
+### Pendiente: smoke de migraciones
+
+El pipeline **todavía no** valida migraciones: haría falta levantar Supabase en
+CI. Hasta entonces, correr a mano antes de mergear un cambio de schema:
 
 ```bash
 make reset
@@ -255,8 +291,6 @@ make generate
 bun run build
 bun test
 ```
-
-Todo cambio de agente debe ser compatible con ese smoke.
 
 ## 9) Workflow Git para agentes
 

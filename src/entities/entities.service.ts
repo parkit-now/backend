@@ -17,6 +17,7 @@ import { TogglePaymentMethodDto } from './dto/toggle-payment-method.dto';
 import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
 import { toEntityProfileDto, toPaymentMethodDto } from './entities.mappers';
 import { readCapacity, withCapacity } from './entity-settings';
+import { addressUpdateData } from './tenant-address';
 
 /**
  * Manages the entity (tenant) profile, its payment methods and audit trail.
@@ -57,6 +58,20 @@ export class EntitiesService {
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.address !== undefined) data.address = dto.address;
     if (dto.status !== undefined) data.status = dto.status;
+    if (dto.lprImageRetentionDays !== undefined) {
+      data.lprImageRetentionDays = dto.lprImageRetentionDays;
+    }
+
+    // Dirección estructurada: columnas planas de `tenants`, no `settings`.
+    // `location.formatted` se aplica DESPUÉS del `address` plano a propósito:
+    // el plano es el contrato viejo, `formatted` trae la `nomenclatura`
+    // normalizada. Si el cliente manda los dos distintos, gana el nuevo.
+    if (dto.location !== undefined) {
+      Object.assign(data, addressUpdateData(dto.location));
+      if (dto.location.formatted !== undefined) {
+        data.address = dto.location.formatted;
+      }
+    }
 
     // Capacity lives in `settings.capacity`; merge so an omitted `total` keeps
     // the current value instead of resetting the lot to zero.

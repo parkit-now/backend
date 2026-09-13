@@ -181,7 +181,14 @@ jwt_expiry = 3600
 enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.
-refresh_token_reuse_interval = 10
+#
+# 60s (not the 10s default) because the desktop runs on weak Wi-Fi: supabase-js
+# retries a failed refresh with the SAME token for up to 30s (see
+# `_refreshAccessToken` / AUTO_REFRESH_TICK_DURATION_MS). If the request reaches
+# GoTrue but the response is lost, those retries hit an already-rotated token,
+# and past the reuse interval that trips reuse detection: GoTrue revokes the
+# whole token family and the operator loses the session mid-shift.
+refresh_token_reuse_interval = 60
 # Allow/disallow new user signups to your project.
 enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
@@ -279,10 +286,22 @@ max_frequency = "5s"
 # 4152127777 = "123456"
 
 # Configure logged in session timeouts.
-# [auth.sessions]
+[auth.sessions]
 # Force log out after the specified duration.
-# timebox = "24h"
+#
+# 30 días. Sin esto la sesión es INFINITA: el refresh token no expira nunca y
+# un token robado sirve para siempre (viven sin cifrar en el localStorage del
+# desktop). Es además la contraparte de haber subido
+# `refresh_token_reuse_interval` a 60s: acotamos la vida de la sesión en vez de
+# la ventana de detección de reuso.
+#
+# 30 días no molesta a un operador que trabaja a diario, y le deja margen a la
+# ventana de gracia offline del desktop (7 días sin poder validar contra el
+# servidor, ver `front-desktop` -> `judgeCachedSession`).
+timebox = "720h"
 # Force log out if the user has been inactive longer than the specified duration.
+# Deliberadamente APAGADO: en una playa la app se usa todos los días, y en
+# temporada baja un timeout por inactividad desloguearía sin necesidad.
 # inactivity_timeout = "8h"
 
 # This hook runs before a new user is created and allows developers to reject the request based on the incoming user object.

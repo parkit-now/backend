@@ -1,16 +1,62 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { MembershipRole, Prisma } from '@prisma/client';
+import type { PaymentMethodType, User, UserMembership } from '@prisma/client';
+import { AuditActions } from '../audit/audit.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { CloseEntryDto } from './dto/close-entry.dto';
+import { CorrectEntryDto } from './dto/correct-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
+import { PaymentLineDto } from '../payment-transactions/dto/payment-line.dto';
+import { inferPaymentMethodTypeFromName } from '../payment-transactions/payment-method-type';
 
 type PrismaEntry = Prisma.EntryGetPayload<Record<string, never>>;
+type EntryWithAuditRelations = Prisma.EntryGetPayload<{
+  include: { cashSession: true; paymentTransactions: true };
+}>;
+type PaymentSnapshot = {
+  id: string;
+  paymentMethodId: string | null;
+  paymentMethodName: string;
+  amount: number;
+};
+type EntryAuditSnapshot = {
+  id: string;
+  plate: string;
+  color: string | null;
+  cochera: string | null;
+  notes: string | null;
+  enteredAt: string;
+  leftAt: string | null;
+  amountPaid: number | null;
+  vehicleBrand: string | null;
+  vehicleModel: string | null;
+  rateId: string | null;
+  rateSnapshotName: string | null;
+  rateSnapshotHourPriceArs: number | null;
+  rateSnapshotStayPriceArs: number | null;
+  rateSnapshotFractionPriceArs: number | null;
+  cashSessionId: string | null;
+  ticketNumber: number | null;
+  payments: PaymentSnapshot[];
+};
+type CorrectionEconomicImpact = {
+  suggestedBefore: number | null;
+  suggestedAfter: number | null;
+  suggestedDelta: number | null;
+  chargedBefore: number | null;
+  chargedAfter: number | null;
+  chargedDelta: number | null;
+  deltaVsSuggestedAfter: number | null;
+};
+
+const MONEY_EPSILON = 0.005;
+const UNDERCHARGE_RATIO = 0.95;
 
 function toDto(entry: PrismaEntry): EntryDto {
   return {
@@ -54,6 +100,229 @@ function toDto(entry: PrismaEntry): EntryDto {
   };
 }
 
+function toNumber(
+  value: Prisma.Decimal | number | null | undefined,
+): number | null {
+  if (value === null || value === undefined) return null;
+  return Number(value);
+}
+
+function calcSuggestedAmount(input: {
+  enteredAt: Date;
+  leftAt: Date;
+  hourPrice: number | null;
+  stayPrice: number | null;
+  fractionPrice: number | null;
+}): number {
+  const hourPrice = input.hourPrice ?? 0;
+  const stayPrice = input.stayPrice ?? 0;
+  const fractionPrice = input.fractionPrice ?? 0;
+  const totalMinutes =
+    (input.leftAt.getTime() - input.enteredAt.getTime()) / 60000;
+
+  if (totalMinutes <= 0) return 0;
+
+  const hours = Math.floor(totalMinutes / 60);
+  const remainingMinutes = totalMinutes % 60;
+  const fullHoursAmount = hours * hourPrice;
+  const fractionAmount = remainingMinutes > 0 ? fractionPrice : 0;
+  return Math.min(fullHoursAmount + fractionAmount, stayPrice);
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * Resuelve el `payment_method_type` de cada línea de pago: el snapshot del que
+ * depende el arqueo de caja del desktop.
+ *
+ * La columna es NOT NULL y sin DEFAULT (ver
+ * 20260913200901_payment_transactions_method_type_snapshot.sql), así que esto
+ * corre en TODOS los caminos que insertan pagos. Deliberadamente no hay
+ * DEFAULT: un 'other' por omisión sobre un cobro en efectivo haría desaparecer
+ * la plata del arqueo en silencio, que es el bug que estamos matando.
+ *
+ * Precedencia, de mejor a peor:
+ *
+ *   1. `line.paymentMethodType` — lo que mandó el cliente. Gana porque esto es
+ *      un SNAPSHOT: vale lo que el operador tenía en pantalla al cobrar, no lo
+ *      que la tabla diga después. Mismo criterio que `paymentMethodName`, que
+ *      tampoco se pisa con el nombre actual del método.
+ *   2. `payment_methods.type` por id. Exacto, y es lo que salva a los desktops
+ *      viejos: todavía no mandan el tipo, pero sí mandan el id.
+ *   3. Inferir del nombre. Último recurso, sólo para un cliente viejo cobrando
+ *      con un método ya borrado. Ver `inferPaymentMethodTypeFromName`.
+ *
+ * Una sola query para todas las líneas, no una por línea.
+ */
+async function resolvePaymentLineTypes(
+  tx: Pick<Prisma.TransactionClient, 'paymentMethod'>,
+  tenantId: string,
+  lines: PaymentLineDto[],
+): Promise<Map<string, PaymentMethodType>> {
+  const resolved = new Map<string, PaymentMethodType>();
+
+  const idsToLookUp = [
+    ...new Set(
+      lines
+        .filter((line) => line.paymentMethodType === undefined)
+        .map((line) => line.paymentMethodId)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+
+  const typeById = new Map<string, PaymentMethodType>();
+  if (idsToLookUp.length > 0) {
+    const methods = await tx.paymentMethod.findMany({
+      where: { tenantId, id: { in: idsToLookUp } },
+      select: { id: true, type: true },
+    });
+    for (const method of methods) typeById.set(method.id, method.type);
+  }
+
+  for (const line of lines) {
+    resolved.set(
+      line.id,
+      line.paymentMethodType ??
+        (line.paymentMethodId
+          ? typeById.get(line.paymentMethodId)
+          : undefined) ??
+        inferPaymentMethodTypeFromName(line.paymentMethodName),
+    );
+  }
+
+  return resolved;
+}
+
+function activePayments(entry: EntryWithAuditRelations): PaymentSnapshot[] {
+  return entry.paymentTransactions
+    .filter((tx) => (tx as { deletedAt?: Date | null }).deletedAt == null)
+    .map((tx) => ({
+      id: tx.id,
+      paymentMethodId: tx.paymentMethodId,
+      paymentMethodName: tx.paymentMethodName,
+      amount: Number(tx.amount),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
+  return {
+    id: entry.id,
+    plate: entry.plate,
+    color: entry.color,
+    cochera: entry.cochera,
+    notes: entry.notes,
+    enteredAt: entry.enteredAt.toISOString(),
+    leftAt: entry.leftAt ? entry.leftAt.toISOString() : null,
+    amountPaid: toNumber(entry.amountPaid),
+    vehicleBrand: entry.vehicleBrand,
+    vehicleModel: entry.vehicleModel,
+    rateId: entry.rateId,
+    rateSnapshotName: entry.rateSnapshotName,
+    rateSnapshotHourPriceArs: toNumber(entry.rateSnapshotHourPriceArs),
+    rateSnapshotStayPriceArs: toNumber(entry.rateSnapshotStayPriceArs),
+    rateSnapshotFractionPriceArs: toNumber(entry.rateSnapshotFractionPriceArs),
+    cashSessionId: entry.cashSessionId,
+    ticketNumber: entry.ticketNumber,
+    payments: activePayments(entry),
+  };
+}
+
+function diffSnapshots(
+  before: EntryAuditSnapshot,
+  after: EntryAuditSnapshot,
+): string[] {
+  const fields: Array<keyof EntryAuditSnapshot> = [
+    'plate',
+    'color',
+    'cochera',
+    'notes',
+    'enteredAt',
+    'leftAt',
+    'amountPaid',
+    'vehicleBrand',
+    'vehicleModel',
+    'rateId',
+    'rateSnapshotName',
+    'rateSnapshotHourPriceArs',
+    'rateSnapshotStayPriceArs',
+    'rateSnapshotFractionPriceArs',
+    'payments',
+  ];
+
+  return fields.filter(
+    (field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]),
+  );
+}
+
+function hasPaymentAmountChange(
+  before: PaymentSnapshot[],
+  after: PaymentSnapshot[],
+): boolean {
+  const beforeTotal = before.reduce((sum, payment) => sum + payment.amount, 0);
+  const afterTotal = after.reduce((sum, payment) => sum + payment.amount, 0);
+  return Math.abs(beforeTotal - afterTotal) > MONEY_EPSILON;
+}
+
+function snapshotSuggestedAmount(snapshot: EntryAuditSnapshot): number | null {
+  if (!snapshot.enteredAt || !snapshot.leftAt) return null;
+  const enteredAt = new Date(snapshot.enteredAt);
+  const leftAt = new Date(snapshot.leftAt);
+  if (
+    Number.isNaN(enteredAt.getTime()) ||
+    Number.isNaN(leftAt.getTime()) ||
+    leftAt.getTime() <= enteredAt.getTime()
+  ) {
+    return null;
+  }
+  return roundMoney(
+    calcSuggestedAmount({
+      enteredAt,
+      leftAt,
+      hourPrice: snapshot.rateSnapshotHourPriceArs,
+      stayPrice: snapshot.rateSnapshotStayPriceArs,
+      fractionPrice: snapshot.rateSnapshotFractionPriceArs,
+    }),
+  );
+}
+
+function snapshotChargedAmount(snapshot: EntryAuditSnapshot): number | null {
+  if (snapshot.amountPaid !== null) return roundMoney(snapshot.amountPaid);
+  if (snapshot.payments.length === 0) return null;
+  return roundMoney(
+    snapshot.payments.reduce((sum, payment) => sum + payment.amount, 0),
+  );
+}
+
+function delta(left: number | null, right: number | null): number | null {
+  return left === null || right === null ? null : roundMoney(left - right);
+}
+
+function correctionEconomicImpact(
+  before: EntryAuditSnapshot,
+  after: EntryAuditSnapshot,
+): CorrectionEconomicImpact {
+  const suggestedBefore = snapshotSuggestedAmount(before);
+  const suggestedAfter = snapshotSuggestedAmount(after);
+  const chargedBefore = snapshotChargedAmount(before);
+  const chargedAfter = snapshotChargedAmount(after);
+  return {
+    suggestedBefore,
+    suggestedAfter,
+    suggestedDelta: delta(suggestedAfter, suggestedBefore),
+    chargedBefore,
+    chargedAfter,
+    chargedDelta: delta(chargedAfter, chargedBefore),
+    deltaVsSuggestedAfter: delta(suggestedAfter, chargedAfter),
+  };
+}
+
+function actorRole(membership?: UserMembership | null): string {
+  return membership?.role ?? 'admin';
+}
+
 type EntryChangesResponse = {
   items: EntryDto[];
   maxSeq: number;
@@ -67,26 +336,45 @@ export class EntriesService {
   ) {}
 
   async createEntry(data: CreateEntryDto): Promise<EntryDto> {
-    const tenantPrisma = this.prisma.getTenantClient();
-    const entry = await tenantPrisma.entry.create({
-      data: {
-        id: data.id,
-        plate: data.plate.toUpperCase(),
-        color: data.color,
-        cochera: data.cochera,
-        notes: data.notes,
-        enteredAt: new Date(data.enteredAt),
-        vehicleBrand: data.vehicleBrand,
-        vehicleModel: data.vehicleModel,
-        rateId: data.rateId,
-        rateSnapshotName: data.rateSnapshotName,
-        rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
-        rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
-        rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
-        cashSessionId: data.cashSessionId,
-        ticketNumber: data.ticketNumber,
-      } as Prisma.EntryUncheckedCreateInput,
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const plate = data.plate.toUpperCase();
+
+    const entry = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.entry.findFirst({
+        where: { tenantId, plate, leftAt: null },
+      });
+      if (existing) {
+        throw new FormattedException(
+          'Duplicate active stay',
+          HttpStatus.CONFLICT,
+          `Plate ${plate} already has an active stay.`,
+          `/tenants/${tenantId}/entries`,
+          ErrorCodes.ENTRY_DUPLICATE_ACTIVE_STAY,
+        );
+      }
+
+      return tx.entry.create({
+        data: {
+          id: data.id,
+          tenantId,
+          plate,
+          color: data.color,
+          cochera: data.cochera,
+          notes: data.notes,
+          enteredAt: new Date(data.enteredAt),
+          vehicleBrand: data.vehicleBrand,
+          vehicleModel: data.vehicleModel,
+          rateId: data.rateId,
+          rateSnapshotName: data.rateSnapshotName,
+          rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
+          rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
+          rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
+          cashSessionId: data.cashSessionId,
+          ticketNumber: data.ticketNumber,
+        },
+      });
     });
+
     return toDto(entry);
   }
 
@@ -116,6 +404,8 @@ export class EntriesService {
     entryId: string,
     expectedVersion: number,
     data: CloseEntryDto,
+    user?: User,
+    membership?: UserMembership | null,
   ): Promise<EntryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const leftAt = data.leftAt ? new Date(data.leftAt) : new Date();
@@ -128,7 +418,20 @@ export class EntriesService {
         : data.amountPaid;
 
     const entry = await this.prisma.$transaction(async (tx) => {
-      const updateData: Prisma.EntryUpdateInput = {
+      const current = await tx.entry.findFirst({
+        where: { tenantId, id: entryId },
+      });
+      if (!current) {
+        throw new FormattedException(
+          'Not Found',
+          HttpStatus.NOT_FOUND,
+          `Entry ${entryId} not found in this entity.`,
+          `/tenants/:tenantId/entries/${entryId}`,
+          ErrorCodes.NOT_FOUND,
+        );
+      }
+
+      const updateData: Prisma.EntryUncheckedUpdateInput = {
         version: { increment: 1 },
         leftAt,
         amountPaid: computedAmount,
@@ -168,6 +471,12 @@ export class EntriesService {
           )?.id ??
           null;
 
+        const typeByLineId = await resolvePaymentLineTypes(
+          tx,
+          tenantId,
+          data.payments,
+        );
+
         await tx.paymentTransaction.createMany({
           data: data.payments.map((p) => ({
             id: p.id,
@@ -176,15 +485,331 @@ export class EntriesService {
             cashSessionId,
             paymentMethodId: p.paymentMethodId ?? null,
             paymentMethodName: p.paymentMethodName,
+            paymentMethodType: typeByLineId.get(p.id)!,
             amount: p.amount,
           })),
         });
+      }
+
+      if (computedAmount !== undefined) {
+        const suggestedAmount = calcSuggestedAmount({
+          enteredAt: current.enteredAt,
+          leftAt,
+          hourPrice: toNumber(current.rateSnapshotHourPriceArs),
+          stayPrice: toNumber(current.rateSnapshotStayPriceArs),
+          fractionPrice: toNumber(current.rateSnapshotFractionPriceArs),
+        });
+        if (
+          suggestedAmount > 0 &&
+          computedAmount < suggestedAmount * UNDERCHARGE_RATIO - MONEY_EPSILON
+        ) {
+          await tx.auditLog.create({
+            data: {
+              action: AuditActions.ENTRY_UNDERCHARGED,
+              entityType: 'entry',
+              entityId: entryId,
+              actorUserId: user?.id ?? null,
+              tenantId,
+              severity: 'warn',
+              metadata: {
+                origin: 'operational_exit',
+                plate: current.plate,
+                cashSessionId: data.cashSessionId ?? current.cashSessionId,
+                ticketNumber: current.ticketNumber,
+                suggestedAmount: roundMoney(suggestedAmount),
+                chargedAmount: roundMoney(computedAmount),
+                delta: roundMoney(suggestedAmount - computedAmount),
+                actorRole: actorRole(membership),
+                rate: {
+                  id: current.rateId,
+                  name: current.rateSnapshotName,
+                  hourPriceArs: toNumber(current.rateSnapshotHourPriceArs),
+                  stayPriceArs: toNumber(current.rateSnapshotStayPriceArs),
+                  fractionPriceArs: toNumber(
+                    current.rateSnapshotFractionPriceArs,
+                  ),
+                },
+              },
+            },
+          });
+        }
       }
 
       return tx.entry.findUniqueOrThrow({ where: { id: entryId } });
     });
 
     return toDto(entry);
+  }
+
+  async correctEntry(
+    entryId: string,
+    expectedVersion: number,
+    data: CorrectEntryDto,
+    user: User,
+    membership?: UserMembership | null,
+  ): Promise<EntryDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const role = actorRole(membership);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.entry.findFirst({
+        where: { tenantId, id: entryId },
+        include: { cashSession: true, paymentTransactions: true },
+      });
+
+      if (!current) {
+        throw new FormattedException(
+          'Not Found',
+          HttpStatus.NOT_FOUND,
+          `Entry ${entryId} not found in this entity.`,
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.NOT_FOUND,
+        );
+      }
+
+      if (current.version !== expectedVersion) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'Entry was changed by another write. Refresh and retry.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.CONFLICT,
+        );
+      }
+
+      if (current.cashSession?.closedAt) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'Entries from a closed cash session cannot be edited.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.ENTRY_CLOSED_SESSION_LOCKED,
+        );
+      }
+
+      const isActive = current.leftAt === null;
+      if (
+        isActive &&
+        (data.leftAt !== undefined || data.payments !== undefined)
+      ) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'Active entries cannot be corrected with exit time or payments.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.ENTRY_ACTIVE_PAYMENT_LOCKED,
+        );
+      }
+
+      const before = snapshotEntry(current);
+      const nextEnteredAt = data.enteredAt
+        ? new Date(data.enteredAt)
+        : current.enteredAt;
+      const nextLeftAt =
+        data.leftAt !== undefined ? new Date(data.leftAt) : current.leftAt;
+      const nextPayments =
+        data.payments !== undefined
+          ? data.payments.map((payment) => ({
+              id: payment.id,
+              paymentMethodId: payment.paymentMethodId ?? null,
+              paymentMethodName: payment.paymentMethodName,
+              amount: payment.amount,
+            }))
+          : activePayments(current);
+      const nextAmountPaid =
+        data.payments !== undefined
+          ? nextPayments.reduce((sum, payment) => sum + payment.amount, 0)
+          : current.amountPaid;
+
+      if (nextLeftAt && nextLeftAt.getTime() <= nextEnteredAt.getTime()) {
+        throw new FormattedException(
+          'Bad Request',
+          HttpStatus.BAD_REQUEST,
+          'Exit time must be after entry time.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.ENTRY_EXIT_NOT_AFTER_ENTRY,
+        );
+      }
+
+      const timeChanged =
+        nextEnteredAt.getTime() !== current.enteredAt.getTime() ||
+        (nextLeftAt?.getTime() ?? null) !== (current.leftAt?.getTime() ?? null);
+      const amountsChanged = hasPaymentAmountChange(
+        activePayments(current),
+        nextPayments,
+      );
+      const reasonRequired =
+        membership?.role === MembershipRole.operator &&
+        (timeChanged || amountsChanged);
+      if (reasonRequired && !data.reason?.trim()) {
+        throw new FormattedException(
+          'Bad Request',
+          HttpStatus.BAD_REQUEST,
+          'A reason is required to correct times or amounts as an operator.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.ENTRY_CORRECTION_REASON_REQUIRED,
+        );
+      }
+
+      const updateData: Prisma.EntryUncheckedUpdateInput = {
+        version: { increment: 1 },
+      };
+      if (data.plate !== undefined) updateData.plate = data.plate.toUpperCase();
+      if (data.color !== undefined) updateData.color = data.color || null;
+      if (data.cochera !== undefined) updateData.cochera = data.cochera || null;
+      if (data.notes !== undefined) updateData.notes = data.notes || null;
+      if (data.enteredAt !== undefined) updateData.enteredAt = nextEnteredAt;
+      if (data.leftAt !== undefined) updateData.leftAt = nextLeftAt;
+      if (data.vehicleBrand !== undefined) {
+        updateData.vehicleBrand = data.vehicleBrand || null;
+      }
+      if (data.vehicleModel !== undefined) {
+        updateData.vehicleModel = data.vehicleModel || null;
+      }
+      if (data.rateId !== undefined) updateData.rateId = data.rateId || null;
+      if (data.rateSnapshotName !== undefined) {
+        updateData.rateSnapshotName = data.rateSnapshotName || null;
+      }
+      if (data.rateSnapshotHourPriceArs !== undefined) {
+        updateData.rateSnapshotHourPriceArs = data.rateSnapshotHourPriceArs;
+      }
+      if (data.rateSnapshotStayPriceArs !== undefined) {
+        updateData.rateSnapshotStayPriceArs = data.rateSnapshotStayPriceArs;
+      }
+      if (data.rateSnapshotFractionPriceArs !== undefined) {
+        updateData.rateSnapshotFractionPriceArs =
+          data.rateSnapshotFractionPriceArs;
+      }
+      if (data.payments !== undefined) {
+        updateData.amountPaid = nextAmountPaid;
+      }
+
+      await tx.entry.update({
+        where: { id: entryId },
+        data: updateData,
+      });
+
+      if (data.payments !== undefined) {
+        const deletedAt = new Date();
+        await (
+          tx.paymentTransaction.updateMany as unknown as (args: {
+            where: unknown;
+            data: unknown;
+          }) => Promise<unknown>
+        )({
+          where: {
+            tenantId,
+            entryId,
+            deletedAt: null,
+          },
+          data: { deletedAt },
+        });
+        if (data.payments.length > 0) {
+          const typeByLineId = await resolvePaymentLineTypes(
+            tx,
+            tenantId,
+            data.payments,
+          );
+
+          await tx.paymentTransaction.createMany({
+            data: data.payments.map((payment) => ({
+              id: payment.id,
+              tenantId,
+              entryId,
+              cashSessionId: current.cashSessionId,
+              paymentMethodId: payment.paymentMethodId ?? null,
+              paymentMethodName: payment.paymentMethodName,
+              paymentMethodType: typeByLineId.get(payment.id)!,
+              amount: payment.amount,
+            })),
+          });
+        }
+      }
+
+      const after = await tx.entry.findUniqueOrThrow({
+        where: { id: entryId },
+        include: { cashSession: true, paymentTransactions: true },
+      });
+      const afterSnapshot = snapshotEntry(after);
+      const changedFields = diffSnapshots(before, afterSnapshot);
+      if (changedFields.length > 0) {
+        const sensitive = changedFields.some((field) =>
+          [
+            'enteredAt',
+            'leftAt',
+            'amountPaid',
+            'payments',
+            'rateId',
+            'rateSnapshotName',
+            'rateSnapshotHourPriceArs',
+            'rateSnapshotStayPriceArs',
+            'rateSnapshotFractionPriceArs',
+          ].includes(field),
+        );
+        await tx.auditLog.create({
+          data: {
+            action: AuditActions.ENTRY_CORRECTED,
+            entityType: 'entry',
+            entityId: entryId,
+            actorUserId: user.id,
+            tenantId,
+            severity: sensitive ? 'warn' : 'info',
+            metadata: {
+              origin: 'history',
+              before,
+              after: afterSnapshot,
+              changedFields,
+              economicImpact: correctionEconomicImpact(before, afterSnapshot),
+              reason: data.reason?.trim() || null,
+              actorRole: role,
+              cashSessionId: current.cashSessionId,
+              ticketNumber: current.ticketNumber,
+            },
+          },
+        });
+      }
+
+      if (!isActive && after.amountPaid !== null && after.leftAt !== null) {
+        const suggestedAmount = calcSuggestedAmount({
+          enteredAt: after.enteredAt,
+          leftAt: after.leftAt,
+          hourPrice: toNumber(after.rateSnapshotHourPriceArs),
+          stayPrice: toNumber(after.rateSnapshotStayPriceArs),
+          fractionPrice: toNumber(after.rateSnapshotFractionPriceArs),
+        });
+        const chargedAmount = Number(after.amountPaid);
+        if (
+          suggestedAmount > 0 &&
+          chargedAmount < suggestedAmount * UNDERCHARGE_RATIO - MONEY_EPSILON
+        ) {
+          await tx.auditLog.create({
+            data: {
+              action: AuditActions.ENTRY_UNDERCHARGED,
+              entityType: 'entry',
+              entityId: entryId,
+              actorUserId: user.id,
+              tenantId,
+              severity: 'warn',
+              metadata: {
+                origin: 'history',
+                plate: after.plate,
+                cashSessionId: after.cashSessionId,
+                ticketNumber: after.ticketNumber,
+                suggestedAmount: roundMoney(suggestedAmount),
+                chargedAmount: roundMoney(chargedAmount),
+                delta: roundMoney(suggestedAmount - chargedAmount),
+                actorRole: role,
+                reason: data.reason?.trim() || null,
+              },
+            },
+          });
+        }
+      }
+
+      return after;
+    });
+
+    return toDto(updated);
   }
 
   async createStayFromLprEvent(data: LprEntryDto): Promise<EntryDto> {

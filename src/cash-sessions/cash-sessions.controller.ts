@@ -29,6 +29,8 @@ import { CashSessionDto } from './dto/cash-session.dto';
 import { CloseCashSessionDto } from './dto/close-cash-session.dto';
 import { CloseCashSessionResponseDto } from './dto/close-cash-session-response.dto';
 import { CreateCashSessionDto } from './dto/create-cash-session.dto';
+import { ExpectedVersionQueryDto } from './dto/expected-version-query.dto';
+import { UpdateCashSessionDto } from './dto/update-cash-session.dto';
 import { CashSessionsService } from './cash-sessions.service';
 
 @ApiTags('Cash Sessions')
@@ -86,5 +88,26 @@ export class CashSessionsController {
     @Body() dto: CloseCashSessionDto,
   ) {
     return this.cashSessionsService.closeSession(sessionId, dto);
+  }
+
+  @Patch(':sessionId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update a cash session using optimistic locking (expectedVersion)',
+    description: 'Updates the shift notes of an open or closed session.',
+  })
+  @ApiOkResponse({ type: CashSessionDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  @ApiParam({ name: 'sessionId', format: 'uuid' })
+  async update(
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Query() query: ExpectedVersionQueryDto,
+    @Body() dto: UpdateCashSessionDto,
+  ) {
+    return this.cashSessionsService.updateSession(
+      sessionId,
+      query.expectedVersion,
+      dto,
+    );
   }
 }

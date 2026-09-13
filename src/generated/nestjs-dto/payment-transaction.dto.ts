@@ -1,5 +1,5 @@
 
-import {Prisma} from '@prisma/client'
+import {Prisma,PaymentMethodType} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -7,6 +7,10 @@ export class PaymentTransactionDto {
   id: string ;
 paymentMethodId: string  | null;
 paymentMethodName: string ;
+@ApiProperty({
+  enum: PaymentMethodType,
+})
+paymentMethodType: PaymentMethodType ;
 @ApiProperty({
   type: `number`,
   format: `double`,
@@ -27,4 +31,9 @@ syncSeq: number ;
   format: `date-time`,
 })
 updatedAt: Date ;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+deletedAt: Date  | null;
 }

@@ -110,6 +110,7 @@ describe('AuditService', () => {
           id: 'u-1',
           email: 'owner@once.test',
           role: 'user',
+          name: null,
           createdAt,
         },
       });
@@ -121,6 +122,7 @@ describe('AuditService', () => {
         entityType: 'application',
         entityId: 'app-1',
         severity: 'info',
+        metadata: {},
         createdAt: '2026-05-01T10:00:00.000Z',
       });
     });

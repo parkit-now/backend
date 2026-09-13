@@ -11,6 +11,7 @@ type PrismaPaymentTransaction = Prisma.PaymentTransactionGetPayload<
 export function toPaymentTransactionDto(
   pt: PrismaPaymentTransaction,
 ): PaymentTransactionDto {
+  const deletedAt = (pt as { deletedAt?: Date | null }).deletedAt;
   return {
     id: pt.id,
     tenantId: pt.tenantId,
@@ -18,10 +19,12 @@ export function toPaymentTransactionDto(
     cashSessionId: pt.cashSessionId,
     paymentMethodId: pt.paymentMethodId,
     paymentMethodName: pt.paymentMethodName,
+    paymentMethodType: pt.paymentMethodType,
     amount: Number(pt.amount),
     version: pt.version,
     syncSeq: pt.syncSeq,
     updatedAt: pt.updatedAt,
+    deletedAt: deletedAt ? deletedAt.toISOString() : null,
   };
 }
 

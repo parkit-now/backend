@@ -10,6 +10,7 @@ const admin: User = {
   id: 'admin-1',
   role: 'admin',
   email: 'admin@once.test',
+  name: null,
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };
 
@@ -54,26 +55,58 @@ describe('ApplicationsService', () => {
     service = module.get<ApplicationsService>(ApplicationsService);
   });
 
-  function pendingApp(applicantRole = 'user') {
+  function pendingApp(
+    applicantRole = 'user',
+    declaredEntity: Record<string, unknown> = {
+      name: 'Centro',
+      address: 'Av 1',
+      legalName: 'ACME',
+      cuit: '30123456789',
+      email: 'acme@x.com',
+      phone: '+541100000000',
+      totalSpots: 55,
+    },
+  ) {
     return {
       id: 'app-1',
       status: 'pending_review',
       tenantId: null,
-      declaredEntity: {
-        name: 'Centro',
-        address: 'Av 1',
-        legalName: 'ACME',
-        cuit: '30123456789',
-        email: 'acme@x.com',
-        phone: '+541100000000',
-        totalSpots: 55,
-      },
+      declaredEntity,
       applicant: {
         id: 'u-applicant',
         role: applicantRole,
         email: 'applicant@once.test',
       },
     };
+  }
+
+  /** `declared_entity` con la dirección ya normalizada por el wizard nuevo. */
+  const declaredWithLocation = {
+    name: 'Centro',
+    legalName: 'ACME',
+    cuit: '30123456789',
+    email: 'acme@x.com',
+    phone: '+541100000000',
+    totalSpots: 55,
+    location: {
+      formatted: 'Av. Corrientes 1234, Balvanera, CABA',
+      streetName: 'Avenida Corrientes',
+      streetNumber: '1234',
+      floor: 'PB',
+      cityName: 'Balvanera',
+      stateName: 'Ciudad Autónoma de Buenos Aires',
+      postalCode: 'C1043',
+      latitude: -34.603722,
+      longitude: -58.381592,
+      geocodingSource: 'georef',
+      geocodedAt: '2026-09-13T16:46:17.000Z',
+    },
+  };
+
+  function tenantCreateData(): Record<string, unknown> {
+    return (
+      tx.tenant.create.mock.calls[0][0] as { data: Record<string, unknown> }
+    ).data;
   }
 
   function approvedListPayload() {
@@ -124,6 +157,146 @@ describe('ApplicationsService', () => {
       expect(tx.service.createMany).not.toHaveBeenCalled();
       expect(tx.paymentMethod.createMany).not.toHaveBeenCalled();
       expect(result.status).toBe('approved');
+    });
+
+    it('materializa la dirección estructurada declarada en columnas del tenant', async () => {
+      // Este es EL bug probable de la feature: si `approve()` no copia los
+      // campos, todo lo que cargó el dueño en el wizard se pierde en silencio
+      // al aprobar y después no puede vincular Mercado Pago.
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp('user', declaredWithLocation))
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const data = tenantCreateData();
+      expect(data).toMatchObject({
+        address: 'Av. Corrientes 1234, Balvanera, CABA',
+        streetName: 'Avenida Corrientes',
+        streetNumber: '1234',
+        floor: 'PB',
+        cityName: 'Balvanera',
+        stateName: 'Ciudad Autónoma de Buenos Aires',
+        postalCode: 'C1043',
+        latitude: -34.603722,
+        longitude: -58.381592,
+        geocodingSource: 'georef',
+      });
+      expect(data.geocodedAt).toEqual(new Date('2026-09-13T16:46:17.000Z'));
+    });
+
+    it('tolera un declared_entity viejo que sólo tiene `address`', async () => {
+      // Borradores en vuelo: se guardaron antes del wizard nuevo. No tienen
+      // objeto `location`, y aprobar uno no puede romper ni perder la
+      // dirección de display.
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp()) // sólo `address: 'Av 1'`
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const data = tenantCreateData();
+      expect(data.address).toBe('Av 1');
+      expect(data.streetName).toBeNull();
+      expect(data.cityName).toBeNull();
+      expect(data.latitude).toBeNull();
+      expect(data.longitude).toBeNull();
+      expect(data.geocodingSource).toBeNull();
+      expect(data.geocodedAt).toBeNull();
+    });
+
+    it('descarta media coordenada en vez de reventar contra el CHECK', async () => {
+      // `tenants_coordinates_paired` rechaza lat sin lng. Un borrador a medio
+      // llenar no tiene por qué hacer fallar la aprobación entera.
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(
+          pendingApp('user', {
+            ...declaredWithLocation,
+            location: { ...declaredWithLocation.location, longitude: null },
+          }),
+        )
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const data = tenantCreateData();
+      expect(data.latitude).toBeNull();
+      expect(data.longitude).toBeNull();
+      // El resto de la dirección sí se conserva.
+      expect(data.streetName).toBe('Avenida Corrientes');
+    });
+
+    it('arma `settings` con el helper en vez de pisar el objeto entero', async () => {
+      // El literal `settings: { capacity }` borraba cualquier otra clave de
+      // settings. Hoy `capacity` es la única, pero el helper es lo que hace
+      // que agregar una segunda no sea un bug silencioso.
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp())
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const settings = tenantCreateData().settings as Record<string, unknown>;
+      expect(settings).toEqual({ capacity: { total: 55 } });
+      // Las semánticas de merge del helper se cubren en
+      // `entity-settings.spec.ts`; acá se fija la forma que produce approve().
+    });
+
+    it('aprueba con capacidad 0 cuando el borrador no declara `totalSpots`', async () => {
+      // Las plazas SALIERON del wizard de alta: el front ya no manda
+      // `totalSpots`. El backend lo sigue tolerando —`entity.totalSpots ?? 0`—
+      // y el tenant nace con capacidad 0, que el dueño edita después en
+      // `/app/config`. Si esto se rompiera, aprobar una solicitud nueva
+      // tiraría un `NaN`/`undefined` adentro de `settings.capacity`.
+      const sinPlazas = { ...declaredWithLocation };
+      delete (sinPlazas as { totalSpots?: number }).totalSpots;
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp('user', sinPlazas))
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const settings = tenantCreateData().settings as Record<string, unknown>;
+      expect(settings).toEqual({ capacity: { total: 0 } });
+    });
+
+    it('sigue respetando el `totalSpots` de un borrador viejo que lo tenga', async () => {
+      // El campo no se eliminó del DTO ni de `approve()`: hay borradores
+      // guardados con la forma anterior y aprobarlos no puede perder la
+      // capacidad que su dueño ya había declarado.
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp('user', declaredWithLocation))
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const settings = tenantCreateData().settings as Record<string, unknown>;
+      expect(settings).toEqual({ capacity: { total: 55 } });
+    });
+
+    it('aprueba igual un borrador SIN dirección: la obligatoriedad es del formulario', async () => {
+      // El domicilio pasó a ser obligatorio en el WIZARD, no en el esquema.
+      // Las columnas de `tenants` siguen siendo nullable y hay tenants viejos
+      // con `null`: si `approve()` empezara a exigirla, las solicitudes que ya
+      // están en revisión quedarían imposibles de aprobar.
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(
+          pendingApp('user', {
+            name: 'Centro',
+            legalName: 'ACME',
+            cuit: '30123456789',
+            email: 'acme@x.com',
+            phone: '+541100000000',
+          }),
+        )
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      const data = tenantCreateData();
+      expect(data.address).toBeNull();
+      expect(data.streetName).toBeNull();
+      expect(tx.tenant.create).toHaveBeenCalledTimes(1);
     });
 
     it('rejects approving an application that is not pending_review', async () => {

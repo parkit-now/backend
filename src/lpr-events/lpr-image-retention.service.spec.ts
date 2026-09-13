@@ -8,10 +8,29 @@ import {
 } from '../storage/storage.service';
 import { LprImageRetentionService } from './lpr-image-retention.service';
 
+type FindManyArg = { where: Record<string, unknown>; take?: number };
+
+type RegisteredWhere = {
+  status: LprDetectionStatus;
+  tenantId: { in: string[] };
+  entry: { leftAt: { lt: Date }; OR: unknown[] };
+};
+
+type NoiseWhere = {
+  tenant: unknown;
+  OR: [
+    { status: { in: LprDetectionStatus[] }; updatedAt: { lt: Date } },
+    { status: LprDetectionStatus; updatedAt: { lt: Date } },
+  ];
+};
+
 describe('LprImageRetentionService', () => {
   const tenantId = '11111111-1111-7111-8111-111111111111';
 
   const mockPrisma = {
+    tenant: {
+      findMany: jest.fn(),
+    },
     lprDetectionEvent: {
       findMany: jest.fn(),
       updateMany: jest.fn(),
@@ -34,16 +53,61 @@ describe('LprImageRetentionService', () => {
     return { id, tenantId, imageStoragePath: `${tenantId}/${id}.jpg` };
   }
 
+  function eventFindManyArgs(): FindManyArg[] {
+    return (
+      mockPrisma.lprDetectionEvent.findMany.mock.calls as [FindManyArg][]
+    ).map(([arg]) => arg);
+  }
+
+  function isRegistered(arg: FindManyArg): boolean {
+    return arg.where.status === LprDetectionStatus.registered;
+  }
+  function isArchived(arg: FindManyArg): boolean {
+    return arg.where.archivedAt !== undefined;
+  }
+  function isNoise(arg: FindManyArg): boolean {
+    return arg.where.OR !== undefined && arg.where.tenant !== undefined;
+  }
+
+  /** The `lprDetectionEvent.findMany` call for a given tier's `where` shape. */
+  function tierCall(tier: 'registered' | 'noise' | 'archived'): FindManyArg {
+    const predicate =
+      tier === 'registered'
+        ? isRegistered
+        : tier === 'archived'
+          ? isArchived
+          : isNoise;
+    const match = eventFindManyArgs().find(predicate);
+    if (!match) throw new Error(`no ${tier} findMany call captured`);
+    return match;
+  }
+
+  /** Route each tier's `findMany` to a fixed result, regardless of order. */
+  function stubTiers(results: {
+    registered?: ReturnType<typeof candidate>[];
+    noise?: ReturnType<typeof candidate>[];
+    archived?: ReturnType<typeof candidate>[];
+  }) {
+    mockPrisma.lprDetectionEvent.findMany.mockImplementation(
+      (arg: FindManyArg) => {
+        if (isRegistered(arg)) return Promise.resolve(results.registered ?? []);
+        if (isArchived(arg)) return Promise.resolve(results.archived ?? []);
+        return Promise.resolve(results.noise ?? []);
+      },
+    );
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.tenant.findMany.mockResolvedValue([
+      { id: tenantId, lprImageRetentionDays: 90 },
+    ]);
     mockPrisma.lprDetectionEvent.findMany.mockResolvedValue([]);
   });
 
   it('only logs candidate counts and purges nothing when dry-run is enabled (default)', async () => {
     mockConfigService.get.mockReturnValue(undefined);
-    mockPrisma.lprDetectionEvent.findMany.mockResolvedValue([
-      candidate('event-1'),
-    ]);
+    stubTiers({ registered: [candidate('event-1')] });
 
     await makeService().run();
 
@@ -54,10 +118,7 @@ describe('LprImageRetentionService', () => {
 
   it('deletes the bucket object, clears the image fields and records an audit entry when dry-run is disabled', async () => {
     mockConfigService.get.mockReturnValue('false');
-    mockPrisma.lprDetectionEvent.findMany
-      .mockResolvedValueOnce([candidate('registered-1')]) // registered tier
-      .mockResolvedValueOnce([]) // noise tier
-      .mockResolvedValueOnce([]); // archived tier
+    stubTiers({ registered: [candidate('registered-1')] });
 
     await makeService().run();
 
@@ -93,10 +154,7 @@ describe('LprImageRetentionService', () => {
 
   it('keeps purging remaining candidates when one storage removal fails', async () => {
     mockConfigService.get.mockReturnValue('false');
-    mockPrisma.lprDetectionEvent.findMany
-      .mockResolvedValueOnce([candidate('bad-1'), candidate('good-1')])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+    stubTiers({ registered: [candidate('bad-1'), candidate('good-1')] });
     mockStorageService.remove
       .mockRejectedValueOnce(new Error('storage unavailable'))
       .mockResolvedValueOnce(undefined);
@@ -113,42 +171,81 @@ describe('LprImageRetentionService', () => {
     mockConfigService.get.mockReturnValue('true');
     await makeService().run();
 
-    const registeredCall = mockPrisma.lprDetectionEvent.findMany.mock
-      .calls[0][0] as {
-      where: {
-        status: LprDetectionStatus;
-        entry: { OR: unknown[] };
-      };
-    };
-    expect(registeredCall.where.status).toBe(LprDetectionStatus.registered);
-    expect(registeredCall.where.entry.OR).toEqual([
+    const where = tierCall('registered').where as unknown as RegisteredWhere;
+    expect(where.status).toBe(LprDetectionStatus.registered);
+    expect(where.entry.OR).toEqual([
       { cashSessionId: null },
       { cashSession: { closedAt: { not: null } } },
     ]);
+  });
+
+  it('uses each tenant configured retention window for the registered cutoff', async () => {
+    mockConfigService.get.mockReturnValue('true');
+    const shortTenant = '22222222-2222-7222-8222-222222222222';
+    const longTenant = '33333333-3333-7333-8333-333333333333';
+    mockPrisma.tenant.findMany.mockResolvedValue([
+      { id: shortTenant, lprImageRetentionDays: 30 },
+      { id: longTenant, lprImageRetentionDays: 365 },
+    ]);
+
+    const before = Date.now();
+    await makeService().run();
+    const after = Date.now();
+
+    const registered = eventFindManyArgs()
+      .filter(isRegistered)
+      .map((arg) => arg.where as unknown as RegisteredWhere);
+    expect(registered).toHaveLength(2);
+
+    const shortWhere = registered.find((w) =>
+      w.tenantId.in.includes(shortTenant),
+    );
+    const longWhere = registered.find((w) =>
+      w.tenantId.in.includes(longTenant),
+    );
+    if (!shortWhere || !longWhere) throw new Error('missing per-tenant query');
+
+    const day = 24 * 60 * 60 * 1000;
+    const shortCutoff = shortWhere.entry.leftAt.lt.getTime();
+    const longCutoff = longWhere.entry.leftAt.lt.getTime();
+    expect(shortCutoff).toBeGreaterThanOrEqual(before - 30 * day);
+    expect(shortCutoff).toBeLessThanOrEqual(after - 30 * day);
+    expect(longCutoff).toBeGreaterThanOrEqual(before - 365 * day);
+    expect(longCutoff).toBeLessThanOrEqual(after - 365 * day);
+  });
+
+  it('caps the registered tier at the per-tier maximum across all tenants', async () => {
+    mockConfigService.get.mockReturnValue('true');
+    mockPrisma.tenant.findMany.mockResolvedValue([
+      { id: 'a1111111-1111-7111-8111-111111111111', lprImageRetentionDays: 30 },
+      { id: 'b2222222-2222-7222-8222-222222222222', lprImageRetentionDays: 90 },
+    ]);
+    const many = Array.from({ length: 400 }, (_, i) => candidate(`e-${i}`));
+    mockPrisma.lprDetectionEvent.findMany.mockImplementation(
+      (arg: FindManyArg) => Promise.resolve(isRegistered(arg) ? many : []),
+    );
+
+    const service = makeService() as unknown as {
+      findRegisteredCandidates: () => Promise<unknown[]>;
+    };
+    const candidates = await service.findRegisteredCandidates();
+
+    expect(candidates).toHaveLength(500);
   });
 
   it('filters noise candidates by status/pending-timeout and requires no open cash session for the tenant', async () => {
     mockConfigService.get.mockReturnValue('true');
     await makeService().run();
 
-    const noiseCall = mockPrisma.lprDetectionEvent.findMany.mock
-      .calls[1][0] as {
-      where: {
-        tenant: unknown;
-        OR: [
-          { status: { in: LprDetectionStatus[] } },
-          { status: LprDetectionStatus },
-        ];
-      };
-    };
-    expect(noiseCall.where.OR[0].status.in).toEqual([
+    const where = tierCall('noise').where as unknown as NoiseWhere;
+    expect(where.OR[0].status.in).toEqual([
       LprDetectionStatus.dismissed,
       LprDetectionStatus.suppressed_active_entry,
       LprDetectionStatus.suppressed_pending_event,
       LprDetectionStatus.suppressed_recent_exit,
     ]);
-    expect(noiseCall.where.OR[1].status).toBe(LprDetectionStatus.pending);
-    expect(noiseCall.where.tenant).toEqual({
+    expect(where.OR[1].status).toBe(LprDetectionStatus.pending);
+    expect(where.tenant).toEqual({
       cashSessions: { none: { closedAt: null } },
     });
   });
@@ -157,16 +254,8 @@ describe('LprImageRetentionService', () => {
     mockConfigService.get.mockReturnValue('true');
     await makeService().run();
 
-    const noiseCall = mockPrisma.lprDetectionEvent.findMany.mock
-      .calls[1][0] as {
-      where: {
-        OR: [
-          { updatedAt: { lt: Date } },
-          { status: LprDetectionStatus; updatedAt: { lt: Date } },
-        ];
-      };
-    };
-    const [noiseBranch, pendingBranch] = noiseCall.where.OR;
+    const where = tierCall('noise').where as unknown as NoiseWhere;
+    const [noiseBranch, pendingBranch] = where.OR;
     expect(pendingBranch.updatedAt.lt.getTime()).toBeGreaterThan(
       noiseBranch.updatedAt.lt.getTime(),
     );
@@ -176,9 +265,7 @@ describe('LprImageRetentionService', () => {
     mockConfigService.get.mockReturnValue('true');
     await makeService().run();
 
-    const archivedCall = mockPrisma.lprDetectionEvent.findMany.mock
-      .calls[2][0] as { where: Record<string, unknown> };
-    expect(archivedCall.where).toEqual({
+    expect(tierCall('archived').where).toEqual({
       archivedAt: { not: null },
       imageStoragePath: { not: null },
       imageDeletedAt: null,

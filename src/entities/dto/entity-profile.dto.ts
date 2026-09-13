@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { PaymentMethodType } from '@prisma/client';
 import type { BranchStatus } from '@prisma/client';
+import { EntityAddressDto } from './entity-address.dto';
+import { LPR_IMAGE_RETENTION_DAYS_OPTIONS } from './update-entity-profile.dto';
 
 /**
  * Capacidad total del estacionamiento, en plazas. Vive en
@@ -30,6 +33,23 @@ export class PaymentMethodSummaryDto {
     example: '2a1b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d',
   })
   id: string;
+
+  /**
+   * Lo que el medio ES, contra `name`, que es cómo el dueño decidió llamarlo.
+   *
+   * Sin este campo el desktop no puede snapshotear el tipo al cobrar y el
+   * arqueo de caja no tiene más remedio que adivinar buscando "efectivo" en el
+   * nombre — que es exactamente el bug que rompía el arqueo de cualquiera que
+   * renombrara su método a "Caja".
+   */
+  @ApiProperty({
+    description:
+      'What the method IS, as opposed to `name` (what the owner calls it). The desktop snapshots this on every charge so the cash count never has to guess from the name.',
+    enum: PaymentMethodType,
+    enumName: 'PaymentMethodType',
+    example: PaymentMethodType.cash,
+  })
+  type: PaymentMethodType;
 
   @ApiProperty({
     description: 'Display name of the payment method.',
@@ -129,10 +149,18 @@ export class EntityProfileDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'Address, or `null` if not provided.',
+    description:
+      'Dirección en una línea, para mostrar. Se conserva por retrocompatibilidad y es el mismo valor que `location.formatted`. Los campos separados que necesita Mercado Pago están en `location`.',
     example: 'Av. Corrientes 1234, CABA',
   })
   address: string | null;
+
+  @ApiProperty({
+    type: EntityAddressDto,
+    description:
+      'Dirección estructurada (calle, altura, localidad, provincia, coordenadas). Campos separados porque Mercado Pago los necesita así para dar de alta el `Store` del cobro con QR. Todos pueden venir en `null`: las filas anteriores a la migración 20260913164617 no tienen los campos cargados y no se hizo backfill.',
+  })
+  location: EntityAddressDto;
 
   @ApiProperty({
     enum: ['active', 'maintenance'],
@@ -147,6 +175,15 @@ export class EntityProfileDto {
       'Per-vehicle-type spot capacity of the lot. Defaults to zeros when not configured.',
   })
   capacity: EntityCapacityDto;
+
+  @ApiProperty({
+    type: 'integer',
+    enum: LPR_IMAGE_RETENTION_DAYS_OPTIONS,
+    description:
+      'Days a `registered` LPR detection image is kept after the stay exit before the retention job purges it. Owner-configurable, one of 30/60/90; defaults to 30. Readable by any member, editable only by an owner.',
+    example: 30,
+  })
+  lprImageRetentionDays: number;
 
   @ApiProperty({
     type: [PaymentMethodSummaryDto],
