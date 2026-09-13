@@ -39,14 +39,17 @@ export interface SystemPaymentMethodDefault {
  * En el MISMO orden que el `INSERT ... VALUES` del trigger, para que la
  * comparación del spec sea directa.
  *
- * `is_default` es `transfer`: hoy el flujo de cobro arranca en transferencia.
- * Cambiarlo es otra decisión y tiene otro impacto; vive acá sólo para que el
- * seed no invente un tercer criterio.
+ * `is_default` es `cash` desde
+ * 20260913204951_payment_methods_cash_is_default.sql: el modal de egreso
+ * arranca en Efectivo, que es lo que más se cobra en una playa. Antes arrancaba
+ * en Transferencia y el operador tenía que corregir la selección casi siempre;
+ * con el tipo del medio ya snapshoteado en cada cobro, esa corrección olvidada
+ * le desaparecía la plata del arqueo.
  */
 export const SYSTEM_PAYMENT_METHOD_DEFAULTS: readonly SystemPaymentMethodDefault[] =
   [
-    { type: 'transfer', name: 'Transferencia', isDefault: true },
-    { type: 'cash', name: 'Efectivo', isDefault: false },
+    { type: 'transfer', name: 'Transferencia', isDefault: false },
+    { type: 'cash', name: 'Efectivo', isDefault: true },
   ] as const;
 
 /**
