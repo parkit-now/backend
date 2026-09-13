@@ -1,8 +1,13 @@
+import { HttpStatus } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
-import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import { ErrorCodes } from '../utils/exceptions/error-codes';
+import {
+  FormattedException,
+  FormattedExceptionWithValidation,
+} from '../utils/exceptions/http-exception/formatted-exeption';
 import { OnboardingService } from './onboarding.service';
 
 const driver: User = {
@@ -13,14 +18,53 @@ const driver: User = {
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };
 
+/**
+ * Dirección normalizada por Georef: el camino feliz del wizard. Alcanza sola
+ * para enviar a revisión (ver `missingDeclaredAddressFields`).
+ */
+const georefLocation = {
+  formatted: 'Av. Corrientes 1234, Balvanera, CABA',
+  streetName: 'Avenida Corrientes',
+  streetNumber: '1234',
+  cityName: 'Balvanera',
+  stateName: 'Ciudad Autónoma de Buenos Aires',
+  latitude: -34.603722,
+  longitude: -58.381592,
+  geocodingSource: 'georef' as const,
+  geocodedAt: '2026-09-13T16:46:17.000Z',
+};
+
+/** Los cuatro campos a mano, sin Georef. También alcanza. */
+const manualLocation = {
+  streetName: 'Avenida Corrientes',
+  streetNumber: '1234',
+  cityName: 'Balvanera',
+  stateName: 'Ciudad Autónoma de Buenos Aires',
+  geocodingSource: 'manual' as const,
+  geocodedAt: '2026-09-13T16:46:17.000Z',
+};
+
 const validEntity = {
   name: 'Centro',
-  address: 'Av 1',
+  address: 'Av. Corrientes 1234, Balvanera, CABA',
+  location: georefLocation,
   legalName: 'ACME',
   cuit: '30123456789',
   email: 'acme@x.com',
   phone: '+541100000000',
 };
+
+/** El ProblemDetails que viaja adentro de la excepción. */
+function problem(error: unknown): {
+  status: number;
+  code: string;
+  detail: string;
+  validationsErrors?: { field: string; reason: string; code: string }[];
+} {
+  return (error as FormattedException).getResponse() as ReturnType<
+    typeof problem
+  >;
+}
 
 describe('OnboardingService', () => {
   let service: OnboardingService;
@@ -107,6 +151,42 @@ describe('OnboardingService', () => {
       expect(updateArg.data.declaredEntity.cuit).toBe('30123456789');
     });
 
+    it('un PATCH sin `totalSpots` NO borra el que ya tenía el borrador', async () => {
+      // El wizard nuevo dejó de mandar `totalSpots` (las plazas se configuran
+      // en `/app/config`). Como `update()` hace MERGE contra el
+      // `declaredEntity` guardado, editar un borrador viejo con el wizard
+      // nuevo NO le tira abajo la capacidad que su dueño ya había declarado.
+      // Si esto pasara a ser un reemplazo, esos borradores se aprobarían con
+      // capacidad 0 sin que nadie se entere.
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({ declaredEntity: { ...validEntity, totalSpots: 55 } }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(ownedApp());
+
+      await service.update(driver, 'app-1', { name: 'New Name' });
+
+      const updateArg = mockPrisma.onboardingApplication.update.mock
+        .calls[0][0] as { data: { declaredEntity: Record<string, unknown> } };
+      expect(updateArg.data.declaredEntity.totalSpots).toBe(55);
+    });
+
+    it('acepta un PATCH sin dirección: el DTO sigue teniéndola opcional', async () => {
+      // El domicilio es obligatorio en el FORMULARIO del wizard, no en el
+      // contrato. Volverlo requerido acá dejaría sin poder editar a los
+      // borradores que se guardaron sin dirección antes de este cambio.
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({ declaredEntity: { name: 'Centro' } }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(ownedApp());
+
+      await service.update(driver, 'app-1', { phone: '+541100000001' });
+
+      const updateArg = mockPrisma.onboardingApplication.update.mock
+        .calls[0][0] as { data: { declaredEntity: Record<string, unknown> } };
+      expect(updateArg.data.declaredEntity.phone).toBe('+541100000001');
+      expect(updateArg.data.declaredEntity.address).toBeUndefined();
+    });
+
     it('rejects editing a non-editable (pending_review) application', async () => {
       mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
         ownedApp({ status: 'pending_review' }),
@@ -157,6 +237,143 @@ describe('OnboardingService', () => {
         FormattedException,
       );
       expect(mockPrisma.onboardingApplication.update).not.toHaveBeenCalled();
+    });
+
+    // ── El domicilio es obligatorio para PASAR A REVISIÓN ──────────────────
+    //
+    // El wizard ya lo exigía en el front, pero por API se podía mandar una
+    // solicitud a revisión sin ninguna dirección. La validación va acá y no en
+    // el DTO: un BORRADOR incompleto es legítimo, una solicitud en revisión
+    // sin domicilio no.
+
+    it('rechaza enviar a revisión una solicitud SIN dirección', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({ declaredEntity: { name: 'Centro', cuit: '30123456789' } }),
+      );
+
+      const error = await service
+        .submit(driver, 'app-1')
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(FormattedExceptionWithValidation);
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_NOT_SUBMITTABLE);
+      expect(problem(error).status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(mockPrisma.onboardingApplication.update).not.toHaveBeenCalled();
+      expect(mockAudit.record).not.toHaveBeenCalled();
+    });
+
+    it('acepta una dirección normalizada por Georef', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: { name: 'Centro', location: georefLocation },
+        }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(
+        ownedApp({ status: 'pending_review', submittedAt: new Date() }),
+      );
+
+      await service.submit(driver, 'app-1');
+
+      const updateArg = mockPrisma.onboardingApplication.update.mock
+        .calls[0][0] as { data: { status: string } };
+      expect(updateArg.data.status).toBe('pending_review');
+    });
+
+    it('acepta los cuatro campos cargados a mano, sin Georef', async () => {
+      // Georef caído no puede frenar un alta: la carga manual es un camino de
+      // primera, no un plan B degradado.
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: { name: 'Centro', location: manualLocation },
+        }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(
+        ownedApp({ status: 'pending_review', submittedAt: new Date() }),
+      );
+
+      await service.submit(driver, 'app-1');
+
+      const updateArg = mockPrisma.onboardingApplication.update.mock
+        .calls[0][0] as { data: { status: string } };
+      expect(updateArg.data.status).toBe('pending_review');
+    });
+
+    it('rechaza una dirección PARCIAL nombrando lo que falta', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: {
+            name: 'Centro',
+            location: {
+              streetName: 'Avenida Corrientes',
+              streetNumber: '1234',
+              geocodingSource: 'manual' as const,
+            },
+          },
+        }),
+      );
+
+      const error = await service
+        .submit(driver, 'app-1')
+        .catch((e: unknown) => e);
+
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_NOT_SUBMITTABLE);
+      // No es un 400 genérico: dice exactamente qué campos faltan, y los dice
+      // también en `validationsErrors` para que el cliente pueda marcarlos.
+      expect(problem(error).detail).toContain('cityName and stateName');
+      expect(problem(error).validationsErrors?.map((v) => v.field)).toEqual([
+        'declaredEntity.location.cityName',
+        'declaredEntity.location.stateName',
+      ]);
+      expect(mockPrisma.onboardingApplication.update).not.toHaveBeenCalled();
+    });
+
+    it('rechaza un borrador viejo que sólo tiene el `address` plano', async () => {
+      // Decisión consciente: una línea de texto libre NO alcanza, mismo
+      // criterio que el front. No sirve para la ubicación del Store de Mercado
+      // Pago, que es para lo que se pide la dirección. El error nombra los
+      // cuatro campos, así que quien tenga un borrador así ve qué completar.
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: { name: 'Centro', address: 'Av. Corrientes 1234' },
+        }),
+      );
+
+      const error = await service
+        .submit(driver, 'app-1')
+        .catch((e: unknown) => e);
+
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_NOT_SUBMITTABLE);
+      expect(problem(error).validationsErrors).toHaveLength(4);
+    });
+
+    it('NO revalida las solicitudes que ya están en revisión', async () => {
+      // 🔴 La validación es de la TRANSICIÓN, no del recurso. Una solicitud sin
+      // dirección que entró a `pending_review` antes de este cambio sigue su
+      // curso normal: el chequeo de estado corta primero y devuelve
+      // ONBOARDING_INVALID_STATE, no el código nuevo. Si esto se invirtiera,
+      // los borradores viejos ya enviados empezarían a fallar con otro error.
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({ status: 'pending_review', declaredEntity: { name: 'X' } }),
+      );
+
+      const error = await service
+        .submit(driver, 'app-1')
+        .catch((e: unknown) => e);
+
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_INVALID_STATE);
+      expect(problem(error).status).toBe(HttpStatus.CONFLICT);
+    });
+
+    it('un borrador SIN dirección se puede seguir guardando y editando', async () => {
+      // La obligatoriedad no toca `update()`: para eso es un borrador.
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({ declaredEntity: { name: 'Centro' } }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(ownedApp());
+
+      await service.update(driver, 'app-1', { name: 'Centro II' });
+
+      expect(mockPrisma.onboardingApplication.update).toHaveBeenCalled();
     });
   });
 

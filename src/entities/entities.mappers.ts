@@ -4,6 +4,7 @@ import {
   PaymentMethodSummaryDto,
 } from './dto/entity-profile.dto';
 import { readCapacity } from './entity-settings';
+import { toEntityAddressDto } from './tenant-address';
 
 export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
   return {
@@ -31,6 +32,7 @@ export function toEntityProfileDto(
     email: tenant.email,
     phone: tenant.phone,
     address: tenant.address,
+    location: toEntityAddressDto(tenant),
     status: tenant.status,
     capacity: readCapacity(tenant.settings),
     lprImageRetentionDays: tenant.lprImageRetentionDays,

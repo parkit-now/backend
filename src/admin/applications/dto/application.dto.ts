@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { EntityAddressDto } from '../../../entities/dto/entity-address.dto';
 import { ApplicationDocumentDto } from '../../../onboarding/dto/onboarding-response.dto';
 import type { ApplicationStatusFilter } from './list-applications-query.dto';
 
@@ -95,10 +96,18 @@ export class ApplicationDetailDto extends ApplicationDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'Declared postal address. `null` when not provided.',
+    description:
+      'Dirección declarada en una línea. Sale de `location.formatted`. `null` si no se declaró.',
     example: 'Av. Corrientes 1234, CABA',
   })
   address: string | null;
+
+  @ApiProperty({
+    type: EntityAddressDto,
+    description:
+      'Dirección estructurada declarada, tal como se va a materializar en `tenants` al aprobar. Los borradores anteriores al wizard nuevo sólo traen `formatted`; el resto de los campos viene en `null`.',
+  })
+  location: EntityAddressDto;
 
   @ApiProperty({
     type: 'object',

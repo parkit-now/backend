@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsEmail,
   IsInt,
@@ -7,13 +8,21 @@ import {
   IsString,
   Matches,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { UpdateEntityAddressDto } from '../../entities/dto/entity-address.dto';
 
 /**
  * The single entity declared in an onboarding application. On approval it is
  * materialized as a row in `tenants` (the declared spot counts are stored in
  * the tenant settings capacity). This is the JSON shape persisted in
  * `OnboardingApplication.declaredEntity`.
+ *
+ * OJO: es una columna JSON sin esquema en la base, así que conviven dos
+ * formas. La vieja trae sólo `address` como string plano; la nueva trae
+ * `location` con los campos separados. `readDeclaredAddress()`
+ * (`src/entities/tenant-address.ts`) lee las dos — si se rompe eso, los
+ * borradores en vuelo pierden la dirección al aprobarse, en silencio.
  */
 export class DeclaredEntityDto {
   @ApiProperty({
@@ -24,13 +33,25 @@ export class DeclaredEntityDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({
-    description: 'Address of the parking lot.',
+  @ApiPropertyOptional({
+    description:
+      'Dirección en una línea (campo de display, legacy). Pasó a ser OPCIONAL: el wizard nuevo manda `location` con los campos separados y su `formatted`. Si se mandan los dos, gana `location.formatted`.',
     example: 'Av. Corrientes 1234, CABA',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  address: string;
+  address?: string;
+
+  @ApiPropertyOptional({
+    type: UpdateEntityAddressDto,
+    description:
+      'Dirección estructurada declarada, normalizada en el front contra la API Georef. Opcional: hay borradores en vuelo que sólo traen `address`. Se materializa en columnas de `tenants` al aprobar la solicitud.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateEntityAddressDto)
+  location?: UpdateEntityAddressDto;
 
   @ApiProperty({
     description: 'Registered legal name of the entity.',

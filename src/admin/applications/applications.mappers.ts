@@ -1,4 +1,5 @@
 import type { ApplicationStatus, Prisma } from '@prisma/client';
+import { readDeclaredAddress } from '../../entities/tenant-address';
 import {
   declaredEntityOf,
   toApplicationDocumentDto,
@@ -82,10 +83,15 @@ export function toApplicationDetailDto(
   app: ApplicationDetailPayload,
 ): ApplicationDetailDto {
   const entity = declaredEntityOf(app);
+  const location = readDeclaredAddress(entity);
   return {
     ...toApplicationDto(app),
     phone: declaredString(entity, 'phone'),
-    address: declaredString(entity, 'address'),
+    // `address` sale de `location.formatted` cuando existe y cae al `address`
+    // plano de los borradores viejos: el revisor tiene que ver la MISMA
+    // dirección que se va a materializar al aprobar, no una copia desfasada.
+    address: location.formatted,
+    location,
     declaredEntity: entity,
     tenantId: app.tenantId,
     rejectionReason: app.rejectionReason,
