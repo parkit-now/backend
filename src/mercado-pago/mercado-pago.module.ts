@@ -1,41 +1,60 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module';
+import { PrismaModule } from '../database/prisma.module';
+import { MpAccountsController } from './mp-accounts.controller';
+import { MpAccountsService } from './mp-accounts.service';
+import { MpApiClient } from './mp-api.client';
 import { MpConfigService } from './mp-config.service';
 import { MpCryptoService } from './mp-crypto.service';
+import { MpOauthController } from './mp-oauth.controller';
 import { MpSignatureService } from './mp-signature.service';
 
 /**
- * Cimientos de la integración con Mercado Pago: configuración validada al
- * boot, cifrado de tokens y verificación de firma de webhooks. Sin red y sin
- * estado: son las piezas que van a consumir el OAuth (B2) y el webhook (B4).
+ * Integración con Mercado Pago: configuración validada al boot, cifrado de
+ * tokens, verificación de firma de webhooks, cliente HTTP y la vinculación
+ * OAuth de la cuenta de cobro de cada playa.
  *
  * `ConfigService` llega por el `ConfigModule.forRoot({ isGlobal: true })` de
  * `AppModule`, igual que en `StorageModule`.
  *
- * ## Por qué todavía NO está en `app.module.ts`
+ * ## Ahora SÍ está registrado en `app.module.ts`
  *
- * `MpConfigService` valida el entorno con `getOrThrow` en `onModuleInit`, o
- * sea que sin las `MP_*` el proceso no levanta. Eso es exactamente lo que
- * queremos cuando haya cobros de por medio, y exactamente lo que no queremos
- * hoy: todavía no hay un solo endpoint que las use, así que registrarlo ahora
- * es todo costo y cero beneficio.
+ * En B1 no lo estaba, y el motivo estaba escrito acá: `MpConfigService` valida
+ * el entorno con `getOrThrow` en `onModuleInit`, así que sin las `MP_*` el
+ * proceso entero no levanta — y en B1 no había un solo endpoint que las usara,
+ * con lo cual era todo costo y cero beneficio.
  *
- * Se verificó a mano, no se asumió:
+ * Eso cambió en esta etapa: ya hay endpoints de vinculación que sin esas
+ * variables no pueden hacer nada, así que el fail-fast ahora protege algo real.
+ * Y se registra en el MISMO commit que suma las `MP_*` obligatorias a
+ * `make env-check`, que es lo que hace que la falta de configuración se detecte
+ * antes de desplegar y no cuando el proceso no arranca en Cloud Run.
  *
- *  - Registrarlo NO rompe la suite: ningún spec levanta `AppModule` (todos
- *    arman sus providers a mano), así que `bun test` queda igual de verde.
- *  - Pero el `.env.example` recién ahora documenta estas variables: un
- *    entorno que no las tenga —CI si algún día bootea, staging, Cloud Run, o
- *    la máquina de cualquiera que haga `git pull` sin tocar su `.env`— deja
- *    de arrancar entero, no sólo la parte de Mercado Pago.
+ * ## De dónde sale `PermissionsService`
  *
- * Y hay una trampa: quien tenga las `MP_*` en su `.env` local NO va a ver el
- * problema, con lo cual el que registra es el único al que le funciona. Por
- * eso se registra en B2, en el mismo commit que agregue el controller de
- * OAuth y sume las variables a `make env-check`: ahí el fail-fast protege
- * algo real y la falta de configuración se detecta antes de desplegar.
+ * De `AuthModule`, que es `@Global()`: no se importa acá, igual que no lo
+ * importa `EntitiesModule` pese a usar sus guards. Lo necesita
+ * `MpAccountsService` porque el callback del OAuth no puede apoyarse en
+ * `TenantMembershipGuard` (ver el docblock de `MpOauthController`), así que el
+ * chequeo de `owner` lo hace el service a mano — con la MISMA fuente de verdad
+ * que usaría el guard, no con una regla paralela.
  */
 @Module({
-  providers: [MpConfigService, MpCryptoService, MpSignatureService],
-  exports: [MpConfigService, MpCryptoService, MpSignatureService],
+  imports: [PrismaModule, AuditModule],
+  controllers: [MpAccountsController, MpOauthController],
+  providers: [
+    MpConfigService,
+    MpCryptoService,
+    MpSignatureService,
+    MpApiClient,
+    MpAccountsService,
+  ],
+  exports: [
+    MpConfigService,
+    MpCryptoService,
+    MpSignatureService,
+    MpApiClient,
+    MpAccountsService,
+  ],
 })
 export class MercadoPagoModule {}
