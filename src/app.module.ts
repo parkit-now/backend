@@ -21,6 +21,7 @@ import { ServicesModule } from './services/services.module';
 import { CashSessionsModule } from './cash-sessions/cash-sessions.module';
 import { PaymentTransactionsModule } from './payment-transactions/payment-transactions.module';
 import { LprEventsModule } from './lpr-events/lpr-events.module';
+import { MercadoPagoModule } from './mercado-pago/mercado-pago.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { LprEventsModule } from './lpr-events/lpr-events.module';
     CashSessionsModule,
     PaymentTransactionsModule,
     LprEventsModule,
+    MercadoPagoModule,
   ],
 })
 export class AppModule {}
