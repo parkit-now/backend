@@ -37,6 +37,25 @@ import { PaymentMethodType } from '@prisma/client';
  *
  * Los dos casos necesitan id nulo o colgado Y un nombre que miente. Hacia
  * adelante no pasa nunca: el tipo viaja explícito en cada cobro.
+ *
+ * NO AGREGAR ACÁ UNA RAMA PARA `mercadopago_qr`
+ *
+ * El enum tiene desde 20260914011821 un valor `mercadopago_qr` para el cobro
+ * con el QR de Mercado Pago. La tentación evidente es sumar
+ * `if (normalized.includes('mercado pago')) return 'mercadopago_qr'`. Sería un
+ * error, y de los que no se ven:
+ *
+ * Esta función SÓLO corre sobre filas VIEJAS —cobros sin tipo, con el método
+ * ya borrado— y esas filas son, por definición, anteriores a la integración.
+ * Un "Mercado Pago" ahí es un método propio (`other`) que alguien creó a mano
+ * para anotar una transferencia por fuera del sistema: esa plata nunca pasó
+ * por el QR. Reclasificarla movería cobros entre categorías de arqueos YA
+ * CERRADOS, que es exactamente lo que el snapshot de tipo vino a evitar. El
+ * spec deja asentado el comportamiento actual: 'Mercado Pago' -> 'other'.
+ *
+ * El cobro real con QR no necesita ninguna heurística: nace con
+ * `paymentMethodType = 'mercadopago_qr'` explícito, escrito por el backend
+ * cuando el webhook confirma el pago. Eso se implementa en B5.
  */
 export function inferPaymentMethodTypeFromName(
   name: string,
