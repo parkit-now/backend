@@ -36,6 +36,10 @@ export const AuditActions = {
   MEMBERSHIP_CREATED: 'membership.created',
   MEMBERSHIP_UPDATED: 'membership.updated',
   MEMBERSHIP_DELETED: 'membership.deleted',
+  // Mercado Pago · vinculación de la cuenta de cobro de una playa
+  MP_ACCOUNT_LINKED: 'mp_account.linked',
+  MP_ACCOUNT_UNLINKED: 'mp_account.unlinked',
+  MP_ACCOUNT_LINK_FAILED: 'mp_account.link_failed',
 } as const;
 
 export interface RecordAuditInput {
