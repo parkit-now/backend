@@ -15,6 +15,8 @@ import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
 import {WhitelistEntity} from './whitelist.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
+import {MpAccountEntity} from './mp-account.entity'
+import {MpOauthStateEntity} from './mp-oauth-state.entity'
 
 
 export class TenantEntity {
@@ -99,4 +101,6 @@ cashSessions?: CashSessionEntity[] ;
 paymentTransactions?: PaymentTransactionEntity[] ;
 whitelists?: WhitelistEntity[] ;
 lprDetectionEvents?: LprDetectionEventEntity[] ;
+mpAccount?: MpAccountEntity  | null;
+mpOauthStates?: MpOauthStateEntity[] ;
 }

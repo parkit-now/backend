@@ -1,0 +1,164 @@
+// Mercado Pago — capa de datos de la integración de cobro con QR.
+//
+// Dos tablas: `mp_accounts` (la cuenta vinculada de una playa, con sus tokens
+// de OAuth cifrados y el Store/POS del QR) y `mp_oauth_states` (el `state` de
+// un flujo de vinculación en vuelo). Migraciones
+// 20260914011817_mercado_pago_accounts.sql y
+// 20260914011819_mercado_pago_oauth_states.sql.
+//
+// ## Por qué están en `global/` si tienen `tenant_id`
+//
+// Porque el cron de refresh de tokens las barre CROSS-TENANT. El
+// `refresh_token` de Mercado Pago vence, así que un job periódico recorre las
+// cuentas por vencer de TODAS las playas de una sola pasada — y lo mismo hace
+// la purga de states vencidos. `getTenantClient()` necesita un tenant en el
+// `AsyncLocalStorage`, que lo pone el `TenantInterceptor` en cada request
+// HTTP; en un cron NO HAY REQUEST, así que no hay tenant y el cliente scopeado
+// no sirve. Hay además un segundo motivo del lado de `mp_oauth_states`: el
+// callback de OAuth llega SIN `:tenantId` en la ruta, porque la playa se
+// deduce justamente de la fila del `state`.
+//
+// El precedente exacto es `PaymentMethod`: tiene `tenantId` y campos de sync, y
+// vive igual en `global/`. El motivo está escrito textual en
+// `src/entities/entities.service.ts:22-27`:
+//
+//   "`tenants`, `payment_methods` and `audit_log` are GLOBAL tables (not in
+//    `TENANT_MODELS`), so this service uses the plain Prisma client filtering
+//    by the `:tenantId` from the route (already validated by
+//    `TenantMembershipGuard`)."
+//
+// Consecuencia directa, y hay que tenerla presente al escribir los services:
+// NINGUNO de estos dos modelos va en `TENANT_MODELS`
+// (`src/database/prisma-tenant.ts`). El aislamiento no desaparece, cambia de
+// lugar: deja de ser automático (la extensión de Prisma inyecta el `WHERE
+// tenant_id`) y pasa a ser EXPLÍCITO — el service filtra a mano por el
+// `:tenantId` de la ruta, que el `TenantMembershipGuard` ya validó. Olvidarse
+// de ese filtro acá es una fuga entre playas, sin red abajo.
+//
+// ## Por qué no llevan `syncSeq` ni `version`
+//
+// El desktop no sincroniza nada de esto, y no debería: son tokens de acceso a
+// la plata del dueño, no tienen por qué bajar a la IndexedDB de una máquina en
+// el mostrador. Sin `syncSeq` no hay endpoint `changes`; sin `version` no hay
+// optimistic locking porque no hay edición concurrente desde clientes (escriben
+// el backend al vincular y el cron al refrescar). `mp_accounts` sí lleva
+// `updatedAt`, mantenido por un trigger `BEFORE UPDATE` propio.
+//
+// Backend-only las dos: RLS prendida y CERO policies, así que son inalcanzables
+// desde PostgREST. Son la tabla de los tokens y la del secreto de PKCE.
+
+enum MpAccountStatus {
+  linked // vinculada y operativa
+  token_expired // el refresh falló lo suficiente; hace falta re-autorizar
+  revoked // el dueño desvinculó la app desde Mercado Pago
+
+  @@map("mp_account_status")
+}
+
+/// Cuenta de Mercado Pago vinculada a una playa. Una fila por playa que
+/// completó el flujo de OAuth.
+model MpAccount {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // UNIQUE: una playa tiene a lo sumo una cuenta vinculada.
+  tenantId String @unique @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Id del vendedor en Mercado Pago. NO es unique a propósito: un dueño con
+  /// varias playas tiene UNA sola cuenta de Mercado Pago y un solo CUIT, y las
+  /// separa con un Store/POS por playa, que es como Mercado Pago espera que se
+  /// haga. Un unique acá rompería el alta de la segunda playa a cambio de nada.
+  mpUserId String @map("mp_user_id")
+
+  /// CIFRADO, nunca en plano: el base64 que produce `MpCryptoService`
+  /// (AES-256-GCM, `base64(iv[12] || tag[16] || ciphertext)`).
+  accessToken String @map("access_token")
+  /// CIFRADO igual que `accessToken`, y es el secreto de más valor de la fila:
+  /// con él se renueva el acceso sin volver a pedirle permiso al dueño.
+  refreshToken String @map("refresh_token")
+  /// Versión de la clave que cifró los tokens DE ESTA FILA. Se cifra con la
+  /// clave activa y se descifra con la que diga la fila: es lo que hace posible
+  /// rotar la clave sin re-cifrar todo de golpe.
+  tokenKeyVersion Int @default(1) @map("token_key_version") @db.SmallInt
+  /// Cuándo vence el `accessToken`. Es lo que ordena el barrido del cron.
+  accessTokenExpiresAt DateTime @map("access_token_expires_at") @db.Timestamptz(6)
+
+  status MpAccountStatus @default(linked)
+
+  /// Id del `Store` de Mercado Pago creado para esta playa.
+  storeId String? @map("store_id")
+  /// Id del `POS` de Mercado Pago: la caja contra la que se genera el QR.
+  posId String? @map("pos_id")
+  /// NUESTRO identificador del POS (`external_id` del lado de Mercado Pago).
+  externalPosId String? @map("external_pos_id")
+  /// Imagen del QR que devuelve la creación del POS.
+  qrImageUrl String? @map("qr_image_url")
+  /// PDF imprimible del QR: el cartel que el dueño pega en el mostrador.
+  qrTemplateDocumentUrl String? @map("qr_template_document_url")
+
+  /// Fallos CONSECUTIVOS del refresh. Contador y no flag: un 500 de Mercado
+  /// Pago no puede dejar a una playa sin cobrar. A los 3, el cron pasa `status`
+  /// a `token_expired`; un refresh exitoso lo vuelve a 0.
+  refreshFailureCount Int @default(0) @map("refresh_failure_count")
+  /// Último refresh EXITOSO. NULL mientras los tokens sean los originales.
+  lastRefreshAt DateTime? @map("last_refresh_at") @db.Timestamptz(6)
+  /// Cuándo se completó la vinculación. Separado de `createdAt` porque una
+  /// re-vinculación reescribe la fila.
+  linkedAt DateTime @default(now()) @map("linked_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // El índice del cron de refresh es PARCIAL (`access_token_expires_at` WHERE
+  // status = 'linked') y Prisma no sabe expresar índices parciales, así que
+  // vive sólo en SQL: `mp_accounts_token_expiry_idx`. Mismo caso que
+  // `payment_methods_tenant_system_type_idx`.
+  @@map("mp_accounts")
+}
+
+/// El `state` de un flujo de OAuth de Mercado Pago en vuelo: un solo uso, TTL
+/// de 10 minutos.
+///
+/// Está en la base y no en un `Map` en memoria porque Cloud Run autoescala: el
+/// `/authorize` puede salir de una instancia y el callback caer en otra, que no
+/// tendría ni el `state` ni el `codeVerifier`. Un `Map` anda en la máquina del
+/// que lo escribe y falla en producción de forma intermitente —aparece recién
+/// cuando hay más de una instancia— e imposible de reproducir en local.
+model MpOauthState {
+  /// El parámetro `state` del OAuth, uuid v4 de `randomUUID()`. Sin `@default`
+  /// a propósito: lo genera el backend, no la base. Tiene que ser imposible de
+  /// adivinar: es lo único que ata el callback al flujo que lo inició.
+  state String @id @db.Uuid
+
+  /// La playa que inició la vinculación. NO viene del callback: se guarda al
+  /// arrancar el flujo y es la única fuente de verdad de a qué playa vincular.
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// Quién inició la vinculación: para auditar y para re-chequear al volver que
+  /// siga teniendo permiso sobre la playa.
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// El `code_verifier` de PKCE (S256). Viaja a Mercado Pago sólo como hash
+  /// (`code_challenge`) y se presenta en claro recién al canjear el código: sin
+  /// él, un `authorization_code` robado no se puede canjear.
+  codeVerifier String @map("code_verifier")
+  /// A dónde volver en el front después del callback. Se guarda acá, y no en la
+  /// URL de retorno, para que el callback no acepte un destino arbitrario.
+  returnPath String? @map("return_path")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// TTL de 10 minutos, el mismo que el `authorization_code` de Mercado Pago:
+  /// guardar el state más tiempo del que vive el código sólo agranda la ventana
+  /// de replay.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  /// Cuándo se canjeó. NO es auditoría: es el candado de un solo uso. Se marca
+  /// en la MISMA transacción del canje, con un UPDATE condicional sobre
+  /// `consumedAt IS NULL`; si no actualizó ninguna fila, el callback es un
+  /// replay y se rechaza.
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "mp_oauth_states_expires_at_idx")
+  @@map("mp_oauth_states")
+}

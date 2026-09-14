@@ -5,6 +5,7 @@ import {UserMembershipEntity} from './user-membership.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
+import {MpOauthStateEntity} from './mp-oauth-state.entity'
 
 
 export class UserEntity {
@@ -26,4 +27,5 @@ reviewedApplications?: OnboardingApplicationEntity[] ;
 auditLogs?: AuditLogEntity[] ;
 reviewedLprDetectionEvents?: LprDetectionEventEntity[] ;
 archivedLprDetectionEvents?: LprDetectionEventEntity[] ;
+mpOauthStates?: MpOauthStateEntity[] ;
 }
