@@ -96,6 +96,18 @@ export const ErrorCodes = {
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',
   SERVICE_INVALID_CODE: 'SERVICE_INVALID_CODE',
 
+  // Mercado Pago (integracion de cobros)
+  // El webhook llego pero MP_WEBHOOK_SECRET no esta cargada: no podemos
+  // verificar la firma. Es un problema de configuracion nuestro, NO una firma
+  // invalida, y por eso tiene su propio code.
+  MP_WEBHOOK_SECRET_NOT_CONFIGURED: 'MP_WEBHOOK_SECRET_NOT_CONFIGURED',
+  // El token cifrado no se pudo descifrar: adulterado, truncado, o cifrado con
+  // una clave que ya no esta declarada.
+  MP_TOKEN_DECRYPT_FAILED: 'MP_TOKEN_DECRYPT_FAILED',
+  // La fila apunta a un `token_key_version` que el entorno no conoce (se borro
+  // una clave anterior antes de re-cifrar sus filas).
+  MP_TOKEN_KEY_VERSION_UNKNOWN: 'MP_TOKEN_KEY_VERSION_UNKNOWN',
+
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
 
