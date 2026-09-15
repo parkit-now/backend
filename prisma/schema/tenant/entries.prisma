@@ -53,5 +53,10 @@ model Entry {
   @@index([tenantId, syncSeq], map: "entries_tenant_sync_seq_idx")
   @@index([tenantId, updatedAt], map: "entries_tenant_updated_at_idx")
   @@index([tenantId, cashSessionId], map: "entries_tenant_cash_session_idx")
+  // Metrics dashboard: revenue is filtered by exit time, the "entered" series
+  // by arrival time, and top-plates groups closed stays by plate.
+  @@index([tenantId, leftAt], map: "entries_tenant_left_at_idx")
+  @@index([tenantId, enteredAt], map: "entries_tenant_entered_at_idx")
+  @@index([tenantId, plate], map: "entries_tenant_plate_idx")
   @@map("entries")
 }

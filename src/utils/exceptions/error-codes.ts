@@ -87,6 +87,11 @@ export const ErrorCodes = {
   ENTRY_CORRECTION_REASON_REQUIRED: 'ENTRY_CORRECTION_REASON_REQUIRED',
   ENTRY_EXIT_NOT_AFTER_ENTRY: 'ENTRY_EXIT_NOT_AFTER_ENTRY',
 
+  // Cash sessions (turnos de caja)
+  // La caja pedida no existe o es de otro estacionamiento (mismo code para
+  // ambos casos: distinguirlos le confirmaría a un tercero que el id existe).
+  CASH_SESSION_NOT_FOUND: 'CASH_SESSION_NOT_FOUND',
+
   // Schedules (opening hours)
   SCHEDULE_NOT_FOUND: 'SCHEDULE_NOT_FOUND',
   SCHEDULE_INVALID_RANGE: 'SCHEDULE_INVALID_RANGE',

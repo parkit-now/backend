@@ -1,9 +1,20 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import type { AuditSeverity } from '@prisma/client';
+import { IsIn, IsOptional } from 'class-validator';
+import { AuditActions } from '../../audit/audit.service';
+import { IsOffsetDateTime } from '../../utils/validators/is-offset-date-time';
+import { PaginationQueryDto } from '../../utils/pagination/pagination-query.dto';
 
-export class EntityAuditQueryDto {
+/** Every action the catalog can emit, for validation and Swagger. */
+const AUDIT_ACTIONS = Object.values(AuditActions);
+
+/**
+ * Filters for the entity audit trail.
+ *
+ * Pagination replaces the previous `limit`: the dashboard renders this as a
+ * table and needs a total to page through.
+ */
+export class EntityAuditQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({
     enum: ['info', 'warn', 'crit'],
     description:
@@ -15,17 +26,30 @@ export class EntityAuditQueryDto {
   severity?: AuditSeverity;
 
   @ApiPropertyOptional({
-    type: 'integer',
-    minimum: 1,
-    maximum: 500,
-    default: 100,
-    description: 'Maximum number of audit events to return.',
-    example: 100,
+    enum: AUDIT_ACTIONS,
+    description:
+      'Filter by a single action from the catalog (`<entity>.<verb>`). Validated against the catalog, so a typo fails loudly instead of silently returning nothing.',
+    example: 'entity.profile_updated',
   })
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(500)
-  limit?: number;
+  @IsIn(AUDIT_ACTIONS)
+  action?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Only events at or after this instant. ISO-8601 **with an explicit offset** (e.g. `-03:00`), matching the metrics endpoints.',
+    example: '2026-08-01T00:00:00-03:00',
+  })
+  @IsOptional()
+  @IsOffsetDateTime()
+  from?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Only events strictly before this instant, same format as `from`.',
+    example: '2026-09-01T00:00:00-03:00',
+  })
+  @IsOptional()
+  @IsOffsetDateTime()
+  to?: string;
 }

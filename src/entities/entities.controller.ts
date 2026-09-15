@@ -30,6 +30,7 @@ import {
 import { MembershipRole } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { AuditEventDto } from '../audit/dto/audit-event.dto';
+import { PaginatedAuditDto } from '../audit/dto/paginated-audit.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -61,6 +62,7 @@ import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
   PaymentMethodSummaryDto,
   PaymentMethodChangesResponseDto,
   AuditEventDto,
+  PaginatedAuditDto,
 )
 // Entity-scoped: routes depend on the tenant (parking lot / entity).
 @Controller('tenants/:tenantId')
@@ -251,20 +253,25 @@ export class EntitiesController {
     operationId: 'entitiesListAudit',
     summary: 'Read the entity audit trail',
     description: [
-      'Returns the audit events recorded for the `:tenantId` entity (profile edits, payment-method changes, approval, etc.), most recent first.',
+      'Returns a page of audit events recorded for the `:tenantId` entity, most recent first. Available to any member of the entity.',
       '',
-      'Supports optional filtering by `severity` and capping the number of returned events with `limit` (defaults to 100). Available to any member of the entity.',
+      'Filters by `severity`, a single `action` from the catalog, and a `from`/`to` instant range (half-open, ISO-8601 with an explicit offset). They compose.',
+      '',
+      '**What this covers:** configuration and lifecycle changes — profile edits, payment-method toggles, onboarding, LPR event review, admin actions.',
+      '',
+      '**What it does not:** payments and vehicle entries/exits are not written to the audit trail, and there is no maximum-stay concept, so no overstay alerts. For operational figures use `/metrics/*`; for detections pending review use `/lpr-events?status=pending`.',
     ].join('\n'),
   })
-  @ApiOkResponse({ type: AuditEventDto, isArray: true })
+  @ApiOkResponse({ type: PaginatedAuditDto })
   @ApiBadRequestResponse({
-    description: 'Invalid query parameters (validation failed).',
+    description:
+      'Invalid query parameters, an unknown `action`, a date-time without an explicit offset, or `from` not earlier than `to`.',
     type: ValidationProblemDetailsDto,
   })
   listAudit(
     @Param('tenantId') tenantId: string,
     @Query() query: EntityAuditQueryDto,
-  ): Promise<AuditEventDto[]> {
+  ): Promise<PaginatedAuditDto> {
     return this.entities.listAudit(tenantId, query);
   }
 }

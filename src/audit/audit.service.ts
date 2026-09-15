@@ -54,6 +54,18 @@ export interface RecordAuditInput {
 
 type AuditLogWithActor = AuditLog & { actor: User | null };
 
+/** Filters and paging accepted by `listForTenant`. */
+export interface ListAuditOptions {
+  severity?: AuditSeverity;
+  action?: string;
+  /** Inclusive lower bound on `createdAt`. */
+  from?: Date;
+  /** Exclusive upper bound on `createdAt`. */
+  to?: Date;
+  skip?: number;
+  take?: number;
+}
+
 /**
  * Generic audit trail for the onboarding/configuration flow.
  *
@@ -82,20 +94,42 @@ export class AuditService {
     });
   }
 
+  /**
+   * A page of audit events for one entity, most recent first.
+   *
+   * Every filter is optional and they compose. The `createdAt` window is
+   * half-open (`[from, to)`) so an event landing exactly on a boundary is
+   * never counted in two adjacent ranges — the same convention the metrics
+   * endpoints use.
+   */
   async listForTenant(
     tenantId: string,
-    opts?: { limit?: number; severity?: AuditSeverity },
-  ): Promise<AuditEventDto[]> {
-    const rows = await this.prisma.auditLog.findMany({
-      where: {
-        tenantId,
-        ...(opts?.severity ? { severity: opts.severity } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: opts?.limit ?? 100,
-      include: { actor: true },
-    });
-    return rows.map((row) => AuditService.toEvent(row));
+    opts: ListAuditOptions = {},
+  ): Promise<{ items: AuditEventDto[]; total: number }> {
+    const createdAt = {
+      ...(opts.from ? { gte: opts.from } : {}),
+      ...(opts.to ? { lt: opts.to } : {}),
+    };
+
+    const where: Prisma.AuditLogWhereInput = {
+      tenantId,
+      ...(opts.severity ? { severity: opts.severity } : {}),
+      ...(opts.action ? { action: opts.action } : {}),
+      ...(Object.keys(createdAt).length > 0 ? { createdAt } : {}),
+    };
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: opts.skip ?? 0,
+        take: opts.take ?? 100,
+        include: { actor: true },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    return { items: rows.map((row) => AuditService.toEvent(row)), total };
   }
 
   static toEvent(row: AuditLogWithActor): AuditEventDto {
