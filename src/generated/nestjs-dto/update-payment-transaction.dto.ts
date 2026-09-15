@@ -18,7 +18,7 @@ paymentMethodName?: string;
   enum: PaymentMethodType,
 })
 @IsOptional()
-@IsIn(["transfer","cash","other"])
+@IsIn(["transfer","cash","other","mercadopago_qr"])
 paymentMethodType?: PaymentMethodType;
 @ApiProperty({
   type: `number`,

@@ -21,7 +21,7 @@ paymentMethodName: string;
   enum: PaymentMethodType,
 })
 @IsNotEmpty()
-@IsIn(["transfer","cash","other"])
+@IsIn(["transfer","cash","other","mercadopago_qr"])
 paymentMethodType: PaymentMethodType;
 @ApiProperty({
   type: `number`,

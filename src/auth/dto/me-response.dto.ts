@@ -14,6 +14,14 @@ export class MeMembershipDto {
   tenantName: string;
 
   @ApiProperty({
+    nullable: true,
+    description:
+      'Entity (tenant) street address as one display line, or `null` if the ' +
+      'entity never declared one. The desktop prints it on the entry ticket.',
+  })
+  tenantAddress: string | null;
+
+  @ApiProperty({
     enum: MembershipRole,
     description: 'Per-entity role of the caller in this tenant.',
   })

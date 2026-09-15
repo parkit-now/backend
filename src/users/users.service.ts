@@ -52,7 +52,7 @@ export class UsersService {
   async getMe(user: User): Promise<MeResponseDto> {
     const memberships = await this.prisma.userMembership.findMany({
       where: { userId: user.id },
-      include: { tenant: { select: { id: true, name: true } } },
+      include: { tenant: { select: { id: true, name: true, address: true } } },
     });
     return {
       id: user.id,
@@ -61,6 +61,7 @@ export class UsersService {
       memberships: memberships.map((m) => ({
         tenantId: m.tenantId,
         tenantName: m.tenant.name,
+        tenantAddress: m.tenant.address,
         role: m.role,
       })),
     };

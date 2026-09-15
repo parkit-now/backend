@@ -79,6 +79,10 @@ model Tenant {
   paymentTransactions  PaymentTransaction[]
   whitelists           Whitelist[]
   lprDetectionEvents   LprDetectionEvent[]
+  // Mercado Pago (global/mercado-pago.prisma). La cuenta es 0..1 por el
+  // `@unique` sobre `MpAccount.tenantId`: una playa vincula a lo sumo una.
+  mpAccount            MpAccount?
+  mpOauthStates        MpOauthState[]
 
   @@index([cuit])
   @@map("tenants")
