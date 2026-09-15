@@ -94,8 +94,11 @@ describe('LprEventsService', () => {
       syncSeq: 1,
       createdAt: now,
       updatedAt: now,
+      // `{...completo, ...Partial<T>}` hace que TS ensanche cada campo del
+      // Partial a `| undefined`, y `imageDeletedAt` es `Date | null` a secas.
+      // El spread en runtime es correcto: lo que falla es la inferencia.
       ...overrides,
-    };
+    } as Prisma.LprDetectionEventGetPayload<Record<string, never>>;
   }
 
   let service: LprEventsService;

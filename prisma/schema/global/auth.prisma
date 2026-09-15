@@ -35,6 +35,9 @@ model User {
   auditLogs            AuditLog[]
   reviewedLprDetectionEvents LprDetectionEvent[]
   archivedLprDetectionEvents LprDetectionEvent[] @relation("ArchivedLprDetectionEvents")
+  // Flujos de vinculación de Mercado Pago que inició esta persona
+  // (global/mercado-pago.prisma).
+  mpOauthStates              MpOauthState[]
 
   @@map("users")
 }

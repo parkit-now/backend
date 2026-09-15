@@ -6,12 +6,14 @@ const admin: User = {
   id: 'a',
   role: 'admin',
   email: 'admin@once.test',
+  name: null,
   createdAt: new Date(),
 };
 const plainUser: User = {
   id: 'u',
   role: 'user',
   email: 'user@once.test',
+  name: null,
   createdAt: new Date(),
 };
 

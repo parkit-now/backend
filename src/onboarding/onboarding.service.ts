@@ -2,8 +2,17 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma, type OnboardingApplication, type User } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
+import {
+  describeMissingAddressFields,
+  missingDeclaredAddressFields,
+  readDeclaredAddress,
+} from '../entities/tenant-address';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
-import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import {
+  FormattedException,
+  FormattedExceptionWithValidation,
+  ValidationErr,
+} from '../utils/exceptions/http-exception/formatted-exeption';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import {
   ApplicationDocumentDto,
@@ -119,13 +128,20 @@ export class OnboardingService {
     return toApplicationDocumentDto(doc);
   }
 
-  /** Submits the application for review: draft|rejected → pending_review. */
+  /**
+   * Submits the application for review: draft|rejected → pending_review.
+   *
+   * Acá —y no en el DTO— vive la validación de COMPLETITUD. Un borrador puede
+   * estar a medias, para eso es un borrador; lo que no puede es ENVIARSE a
+   * revisión vacío. Ver `assertDeclaredAddressComplete`.
+   */
   async submit(
     user: User,
     applicationId: string,
   ): Promise<OnboardingApplicationDto> {
     const application = await this.loadOwnedApplication(user, applicationId);
     this.assertEditable(application);
+    this.assertDeclaredAddressComplete(application);
 
     const updated = await this.prisma.onboardingApplication.update({
       where: { id: applicationId },
@@ -199,5 +215,64 @@ export class OnboardingService {
         ErrorCodes.ONBOARDING_INVALID_STATE,
       );
     }
+  }
+
+  /**
+   * El domicilio es OBLIGATORIO para pasar a revisión.
+   *
+   * POR QUÉ ACÁ Y NO EN EL DTO
+   *
+   * El wizard lo volvió obligatorio en el front (A5), pero por API se podía
+   * mandar una solicitud a revisión sin ninguna dirección. Volver requerido el
+   * campo en `DeclaredEntityDto` NO era el arreglo:
+   *
+   *  - `location: {}` pasa `@ValidateNested` igual, porque todos sus campos
+   *    internos son opcionales: una garantía vacía.
+   *  - `UpdateApplicationDto extends PartialType(...)` la volvería inaplicable
+   *    en el PATCH.
+   *  - Rompería los borradores viejos sin dirección, que hoy se pueden seguir
+   *    editando.
+   *
+   * La obligatoriedad no es del CONTRATO, es de la TRANSICIÓN. Un borrador
+   * incompleto es legítimo; una solicitud a revisión sin domicilio no.
+   *
+   * Sólo corre en `submit()`: las solicitudes que YA están en `pending_review`
+   * (incluidas las que entraron antes de este cambio) no se revalidan, y el
+   * camino de aprobación/rechazo del panel de Ops queda intacto.
+   *
+   * 422 y no 400: el body está bien formado y el contrato se respeta; lo que
+   * no se puede procesar es el ESTADO del recurso. 409 tampoco, porque en este
+   * mismo endpoint ya significa otra cosa (`ONBOARDING_INVALID_STATE`, la
+   * solicitud no está en un estado enviable) y mezclar los dos casos detrás
+   * del mismo status le complica la vida al cliente sin necesidad.
+   *
+   * Va con `validationsErrors` y no sólo con un `detail`: el `code` dice QUÉ
+   * pasó, pero el cliente necesita saber QUÉ CAMPO falta para poder decirlo en
+   * español y marcar el input. Es el mismo mecanismo que usa el ValidationPipe
+   * (`main.ts::validationExceptionFactory`), así que el front ya lo sabe leer.
+   * El `detail` queda en inglés, para logs, como manda el contrato de errores.
+   */
+  private assertDeclaredAddressComplete(
+    application: OnboardingApplication,
+  ): void {
+    const address = readDeclaredAddress(declaredEntityOf(application));
+    const missing = missingDeclaredAddressFields(address);
+    if (missing.length === 0) return;
+
+    throw new FormattedExceptionWithValidation(
+      'Unprocessable Entity',
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      `The application cannot be submitted for review without the parking lot address: missing ${describeMissingAddressFields(missing)}`,
+      '/onboarding/applications',
+      ErrorCodes.ONBOARDING_NOT_SUBMITTABLE,
+      missing.map(
+        (field) =>
+          new ValidationErr(
+            `declaredEntity.location.${field}`,
+            `${field} is required to submit the application for review`,
+            'isNotEmpty',
+          ),
+      ),
+    );
   }
 }

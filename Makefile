@@ -70,16 +70,28 @@ status: ## Ver estado de Supabase local
 env-print: ## Mostrar variables locales sugeridas desde `supabase status -o env`
 	@supabase status -o env
 
+# Las `MP_*` son OBLIGATORIAS desde que `MercadoPagoModule` está registrado en
+# `app.module.ts`: `MpConfigService` valida el entorno con `getOrThrow` en
+# `onModuleInit`, así que sin ellas el proceso ENTERO no levanta, no sólo la
+# parte de Mercado Pago. Mejor enterarse acá que en el arranque de Cloud Run.
+# (`MP_TOKEN_ENCRYPTION_KEY_VERSION` tiene default 1, y `MP_WEBHOOK_SECRET` y
+#  `MP_API_BASE_URL` son opcionales a propósito: no se piden.)
+#
+# ⚠️ OJO al agregar variables a `.env.example`: acá abajo se hace
+# `set -a; . ./.env`, o sea que BASH PARSEA EL ARCHIVO. Todo placeholder tiene
+# que ir ENTRE COMILLAS o bash interpreta `<` como redirección y el target
+# explota con un error de sintaxis que no dice nada útil.
 env-check: ## Validar que `.env` tenga variables críticas completas (sin placeholders)
 	@if [ ! -f .env ]; then \
 		echo "✗ Falta .env. Corré: cp .env.example .env"; exit 1; fi
 	@set -a; . ./.env; set +a; \
-	for v in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET; do \
+	for v in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET \
+	         MP_CLIENT_ID MP_CLIENT_SECRET MP_OAUTH_REDIRECT_URI MP_TOKEN_ENCRYPTION_KEY; do \
 		val="$${!v:-}"; \
 		if [ -z "$$val" ]; then \
 			echo "✗ $$v está vacía en .env"; exit 1; \
 		fi; \
-		if [[ "$$val" == \<* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
+		if [[ "$$val" == *"<"* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
 			echo "✗ $$v parece placeholder ($$val). Completala con valores reales."; exit 1; \
 		fi; \
 	done; \

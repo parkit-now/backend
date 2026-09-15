@@ -101,6 +101,44 @@ export const ErrorCodes = {
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',
   SERVICE_INVALID_CODE: 'SERVICE_INVALID_CODE',
 
+  // Mercado Pago (integracion de cobros)
+  // El webhook llego pero MP_WEBHOOK_SECRET no esta cargada: no podemos
+  // verificar la firma. Es un problema de configuracion nuestro, NO una firma
+  // invalida, y por eso tiene su propio code.
+  MP_WEBHOOK_SECRET_NOT_CONFIGURED: 'MP_WEBHOOK_SECRET_NOT_CONFIGURED',
+  // El token cifrado no se pudo descifrar: adulterado, truncado, o cifrado con
+  // una clave que ya no esta declarada.
+  MP_TOKEN_DECRYPT_FAILED: 'MP_TOKEN_DECRYPT_FAILED',
+  // La fila apunta a un `token_key_version` que el entorno no conoce (se borro
+  // una clave anterior antes de re-cifrar sus filas).
+  MP_TOKEN_KEY_VERSION_UNKNOWN: 'MP_TOKEN_KEY_VERSION_UNKNOWN',
+  // La playa no tiene ninguna cuenta de Mercado Pago vinculada (404).
+  MP_NOT_LINKED: 'MP_NOT_LINKED',
+  // Ya hay una cuenta vinculada y operativa: hay que desvincular antes de
+  // volver a correr el OAuth (409).
+  MP_ALREADY_LINKED: 'MP_ALREADY_LINKED',
+  // La cuenta esta vinculada pero su access token vencio y el refresh no lo
+  // pudo renovar: hace falta que el dueno re-autorice (409).
+  MP_ACCOUNT_TOKEN_EXPIRED: 'MP_ACCOUNT_TOKEN_EXPIRED',
+  // La cuenta se desvinculo (desde nuestro panel o desde Mercado Pago) (409).
+  MP_ACCOUNT_REVOKED: 'MP_ACCOUNT_REVOKED',
+  // La playa no tiene la direccion estructurada completa y Mercado Pago la
+  // exige para `Store.location` (422).
+  MP_ENTITY_ADDRESS_INCOMPLETE: 'MP_ENTITY_ADDRESS_INCOMPLETE',
+  // El `state` del callback no existe, ya se consumio, vencio, o no pertenece
+  // a quien esta llamando. UN SOLO code para los cuatro casos, a proposito: el
+  // cliente no tiene por que saber cual fallo (400).
+  MP_OAUTH_STATE_INVALID: 'MP_OAUTH_STATE_INVALID',
+  // Mercado Pago rechazo el canje del `authorization_code` por tokens (502).
+  MP_OAUTH_CODE_EXCHANGE_FAILED: 'MP_OAUTH_CODE_EXCHANGE_FAILED',
+  // Fallo la creacion del `Store` en Mercado Pago (502).
+  MP_STORE_CREATE_FAILED: 'MP_STORE_CREATE_FAILED',
+  // Fallo la creacion (o la lectura) del `POS` en Mercado Pago (502).
+  MP_POS_CREATE_FAILED: 'MP_POS_CREATE_FAILED',
+  // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
+  // el cliente deberia reintentar mas tarde (503).
+  MP_UNAVAILABLE: 'MP_UNAVAILABLE',
+
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
 

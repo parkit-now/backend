@@ -1,7 +1,7 @@
 
-import {Prisma} from '@prisma/client'
+import {Prisma,PaymentMethodType} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsDecimal,IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
+import {IsDecimal,IsIn,IsNotEmpty,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty,getSchemaPath} from '@nestjs/swagger'
 
 
@@ -17,6 +17,12 @@ paymentMethodId?: string;
 @IsNotEmpty()
 @IsString()
 paymentMethodName: string;
+@ApiProperty({
+  enum: PaymentMethodType,
+})
+@IsNotEmpty()
+@IsIn(["transfer","cash","other","mercadopago_qr"])
+paymentMethodType: PaymentMethodType;
 @ApiProperty({
   type: `number`,
   format: `double`,

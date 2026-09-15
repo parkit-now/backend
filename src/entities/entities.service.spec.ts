@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import type { Tenant, User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventDto } from '../audit/dto/audit-event.dto';
@@ -10,6 +11,7 @@ const owner: User = {
   id: 'u-owner',
   role: 'user',
   email: 'owner@once.test',
+  name: null,
   createdAt: new Date('2026-05-01T00:00:00.000Z'),
 };
 
@@ -22,8 +24,19 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
     email: 'acme@x.com',
     phone: null,
     address: null,
+    streetName: null,
+    streetNumber: null,
+    floor: null,
+    cityName: null,
+    stateName: null,
+    postalCode: null,
+    latitude: null,
+    longitude: null,
+    geocodingSource: null,
+    geocodedAt: null,
     status: 'active',
     settings: {},
+    lprImageRetentionDays: 30,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
     ...overrides,
   };
@@ -86,9 +99,17 @@ describe('EntitiesService', () => {
 
       expect(profile.id).toBe('t-1');
       expect(profile.name).toBe('Centro');
+      expect(profile.lprImageRetentionDays).toBe(30);
       expect(profile.paymentMethods).toHaveLength(1);
       expect(profile.paymentMethods[0].name).toBe('Cash');
       expect(profile.paymentMethods[0].isSystem).toBe(true);
+      // El `type` tiene que viajar, y viajar SEPARADO del nombre. Sin este
+      // campo el desktop no puede snapshotearlo al cobrar y el arqueo de caja
+      // vuelve a tener que adivinar buscando "efectivo" en el nombre — que es
+      // el bug que rompía la caja de cualquiera que renombrara su método.
+      // Ojo al fixture: el método se llama 'Cash' y es `type: 'cash'`; el
+      // nombre no dice "efectivo" y aun así el tipo llega bien.
+      expect(profile.paymentMethods[0].type).toBe('cash');
     });
 
     it('throws ENTITY_NOT_FOUND when the tenant does not exist', async () => {
@@ -98,6 +119,53 @@ describe('EntitiesService', () => {
       await expect(service.getProfile('t-x')).rejects.toBeInstanceOf(
         FormattedException,
       );
+    });
+
+    it('expone la dirección estructurada, con Decimal coercido a number', async () => {
+      // `numeric` vuelve de Prisma como Decimal; el contrato HTTP es JSON.
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({
+          address: 'Av. Corrientes 1234, Balvanera, CABA',
+          streetName: 'Avenida Corrientes',
+          streetNumber: 'S/N',
+          cityName: 'Balvanera',
+          latitude: new Prisma.Decimal('-34.603722'),
+          longitude: new Prisma.Decimal('-58.381592'),
+          geocodingSource: 'georef',
+          geocodedAt: new Date('2026-09-13T16:46:17.000Z'),
+        }),
+      );
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      const profile = await service.getProfile('t-1');
+
+      expect(profile.location.formatted).toBe(
+        'Av. Corrientes 1234, Balvanera, CABA',
+      );
+      // Altura como texto: "S/N" es una altura válida en Argentina.
+      expect(profile.location.streetNumber).toBe('S/N');
+      expect(profile.location.latitude).toBe(-34.603722);
+      expect(profile.location.longitude).toBe(-58.381592);
+      expect(typeof profile.location.latitude).toBe('number');
+      expect(profile.location.geocodingSource).toBe('georef');
+      expect(profile.location.geocodedAt).toBe('2026-09-13T16:46:17.000Z');
+      // `address` sigue existiendo para los clientes viejos.
+      expect(profile.address).toBe('Av. Corrientes 1234, Balvanera, CABA');
+    });
+
+    it('un tenant anterior a la migración devuelve la dirección en null, sin romper', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({ address: 'Av. Corrientes 1234, CABA' }),
+      );
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      const profile = await service.getProfile('t-1');
+
+      // No hubo backfill: sólo sobrevive la línea de display.
+      expect(profile.location.formatted).toBe('Av. Corrientes 1234, CABA');
+      expect(profile.location.streetName).toBeNull();
+      expect(profile.location.latitude).toBeNull();
+      expect(profile.location.geocodingSource).toBeNull();
     });
   });
 
@@ -114,6 +182,26 @@ describe('EntitiesService', () => {
       };
       expect(updateArg.data.name).toBe('New Name');
       expect(mockAudit.record).toHaveBeenCalled();
+    });
+
+    it('persists a new LPR image retention window', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({ lprImageRetentionDays: 60 }),
+      );
+      mockPrisma.tenant.update.mockResolvedValue(
+        tenant({ lprImageRetentionDays: 60 }),
+      );
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      const profile = await service.updateProfile('t-1', owner, {
+        lprImageRetentionDays: 60,
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: { lprImageRetentionDays?: number };
+      };
+      expect(updateArg.data.lprImageRetentionDays).toBe(60);
+      expect(profile.lprImageRetentionDays).toBe(60);
     });
 
     it('merges capacity into settings and sets status', async () => {
@@ -151,6 +239,104 @@ describe('EntitiesService', () => {
         data: { settings: { capacity: Record<string, number> } };
       };
       expect(updateArg.data.settings.capacity).toEqual({ total: 55 });
+    });
+
+    it('persiste la dirección estructurada en columnas, no en settings', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, {
+        location: {
+          formatted: 'Av. Corrientes 1234, Balvanera, CABA',
+          streetName: 'Avenida Corrientes',
+          streetNumber: '1234',
+          floor: 'PB',
+          cityName: 'Balvanera',
+          stateName: 'Ciudad Autónoma de Buenos Aires',
+          postalCode: 'C1043',
+          latitude: -34.603722,
+          longitude: -58.381592,
+          geocodingSource: 'georef',
+          geocodedAt: '2026-09-13T16:46:17.000Z',
+        },
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(updateArg.data).toMatchObject({
+        address: 'Av. Corrientes 1234, Balvanera, CABA',
+        streetName: 'Avenida Corrientes',
+        streetNumber: '1234',
+        floor: 'PB',
+        cityName: 'Balvanera',
+        stateName: 'Ciudad Autónoma de Buenos Aires',
+        postalCode: 'C1043',
+        latitude: -34.603722,
+        longitude: -58.381592,
+        geocodingSource: 'georef',
+      });
+      expect(updateArg.data.geocodedAt).toEqual(
+        new Date('2026-09-13T16:46:17.000Z'),
+      );
+      // La dirección NO va al jsonb: si fuera ahí, el próximo literal que
+      // escriba `settings` la borra sin avisar (ver el bug de `approve`).
+      expect(updateArg.data.settings).toBeUndefined();
+    });
+
+    it('sólo toca los campos de dirección presentes (patch, no reemplazo)', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, {
+        location: { floor: '3 B' },
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(updateArg.data.floor).toBe('3 B');
+      // Omitidos ⇒ ausentes del update: Prisma los deja como están. Si
+      // aparecieran como `null`, editar el piso borraría la calle entera.
+      expect('streetName' in updateArg.data).toBe(false);
+      expect('latitude' in updateArg.data).toBe(false);
+      expect('address' in updateArg.data).toBe(false);
+    });
+
+    it('un `null` explícito borra el campo de dirección', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, {
+        location: { latitude: null, longitude: null },
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(updateArg.data.latitude).toBeNull();
+      expect(updateArg.data.longitude).toBeNull();
+    });
+
+    it('`location.formatted` le gana al `address` plano legacy', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, {
+        address: 'lo que escribió el usuario a mano',
+        location: { formatted: 'Av. Corrientes 1234, Balvanera, CABA' },
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: { address: string };
+      };
+      expect(updateArg.data.address).toBe(
+        'Av. Corrientes 1234, Balvanera, CABA',
+      );
     });
 
     it('lee la forma vieja de tres contadores sumándola', async () => {

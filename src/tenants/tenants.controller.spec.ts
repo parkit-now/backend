@@ -3,6 +3,7 @@ import type { User } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantsController } from './tenants.controller';
 import { TenantsService } from './tenants.service';
+import type { EntitySummaryDto } from './dto/entity-summary.dto';
 
 const caller = { id: 'user-1' } as User;
 
@@ -24,7 +25,15 @@ describe('TenantsController', () => {
   });
 
   it('delegates to the service with the caller and role filter', async () => {
-    const summaries = [{ tenantId: 't-1', role: 'owner' }];
+    const summaries: EntitySummaryDto[] = [
+      {
+        tenantId: 't-1',
+        name: 'Estacionamiento Once',
+        status: 'active',
+        role: 'owner',
+        address: null,
+      },
+    ];
     mockService.listMine.mockResolvedValue(summaries);
 
     const result = await controller.listMine(caller, { role: 'owner' });

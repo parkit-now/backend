@@ -4,10 +4,12 @@ import {
   PaymentMethodSummaryDto,
 } from './dto/entity-profile.dto';
 import { readCapacity } from './entity-settings';
+import { toEntityAddressDto } from './tenant-address';
 
 export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
   return {
     id: pm.id,
+    type: pm.type,
     name: pm.name,
     enabled: pm.enabled,
     isDefault: pm.isDefault,
@@ -31,8 +33,10 @@ export function toEntityProfileDto(
     email: tenant.email,
     phone: tenant.phone,
     address: tenant.address,
+    location: toEntityAddressDto(tenant),
     status: tenant.status,
     capacity: readCapacity(tenant.settings),
+    lprImageRetentionDays: tenant.lprImageRetentionDays,
     paymentMethods: paymentMethods.map(toPaymentMethodDto),
     createdAt: tenant.createdAt.toISOString(),
   };

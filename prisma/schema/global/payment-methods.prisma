@@ -1,16 +1,35 @@
 // PaymentMethod — entity-level (tenant) payment methods.
 //
-// On entity approval, 'transfer' and 'cash' are created automatically with
-// `isSystem=true` (not deletable; can be disabled via `enabled`).
+// Every new tenant gets the two system methods automatically, seeded by the
+// `bootstrap_tenant_defaults()` trigger (AFTER INSERT ON tenants): type
+// 'transfer' named "Transferencia" and type 'cash' named "Efectivo". They are
+// `isSystem=true` (not deletable; can be disabled via `enabled`) and the owner
+// can rename them.
+//
+// `name` is user-facing and NOT the type: the desktop cash count keys off the
+// name (isCashMethod), which is why the defaults are in Spanish. See
+// 20260913163737_payment_methods_spanish_default_names.sql.
 //
 // Custom methods use type='other' and can be created/deleted freely by owners.
 //
 // Backend-only: service-role, RLS without policies.
 
+// `mercadopago_qr` se agregó con `ALTER TYPE ... ADD VALUE` (migración
+// 20260914011821) y no con el rename+recreate que usan otros enums del repo:
+// ese patrón es obligatorio para CAMBIAR o QUITAR valores, pero para AGREGAR
+// uno obligaría a reescribir `payment_transactions` entera bajo ACCESS
+// EXCLUSIVE. Ver la cabecera de esa migración.
 enum PaymentMethodType {
   transfer
   cash
   other
+  /// Cobro con el QR de Mercado Pago, confirmado por webhook. Va ÚLTIMO porque
+  /// `ADD VALUE` sin `BEFORE`/`AFTER` lo appendea al final del enum de
+  /// Postgres, y este archivo refleja la base. El medio de pago de una playa se
+  /// crea en RUNTIME al vincular la cuenta (B5): NO lo siembra
+  /// `bootstrap_tenant_defaults()`, porque una playa sin Mercado Pago vinculado
+  /// no tiene por qué mostrarlo en la pantalla de cobro.
+  mercadopago_qr
 
   @@map("payment_method_type")
 }

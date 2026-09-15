@@ -9,9 +9,6 @@ import {
   StorageService,
 } from '../storage/storage.service';
 
-/** Stays with billing/audit value: keep the image this long after exit. */
-const REGISTERED_RETENTION_DAYS = 45;
-
 /** Noise (never became a paid stay): keep the image at least this long. */
 const NOISE_RETENTION_FLOOR_HOURS = 48;
 
@@ -39,9 +36,10 @@ type Tier = 'registered' | 'noise' | 'archived';
  * Daily job that deletes LPR detection photos from the private bucket once
  * they've stopped having audit/billing value, per tier:
  *
- *  - `registered` (became a real paid stay): kept until
- *    `REGISTERED_RETENTION_DAYS` after exit, and never before the entry's
- *    cash session closes (an open session may still need the evidence).
+ *  - `registered` (became a real paid stay): kept until the owner-configured
+ *    `Tenant.lprImageRetentionDays` (30/60/90, default 30) have passed since
+ *    exit, and never before the entry's cash session closes (an open session
+ *    may still need the evidence).
  *  - noise (`dismissed`/`suppressed_*`, never billed): kept only until the
  *    tenant has no open cash session (i.e. between shifts) and
  *    `NOISE_RETENTION_FLOOR_HOURS` have passed.
@@ -96,26 +94,45 @@ export class LprImageRetentionService {
     await this.purge(archived, 'archived');
   }
 
-  private findRegisteredCandidates(): Promise<PurgeCandidate[]> {
-    const cutoff = new Date(
-      Date.now() - REGISTERED_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    );
-    return this.prisma.lprDetectionEvent.findMany({
-      where: {
-        status: LprDetectionStatus.registered,
-        imageStoragePath: { not: null },
-        imageDeletedAt: null,
-        entry: {
-          leftAt: { lt: cutoff },
-          OR: [
-            { cashSessionId: null },
-            { cashSession: { closedAt: { not: null } } },
-          ],
-        },
-      },
-      select: { id: true, tenantId: true, imageStoragePath: true },
-      take: MAX_CANDIDATES_PER_TIER,
+  private async findRegisteredCandidates(): Promise<PurgeCandidate[]> {
+    // Retention for this tier is per-tenant (owner-configurable). Group the
+    // tenants by their configured value so we run one query per distinct
+    // cutoff instead of one per tenant.
+    const tenants = await this.prisma.tenant.findMany({
+      select: { id: true, lprImageRetentionDays: true },
     });
+
+    const tenantIdsByDays = new Map<number, string[]>();
+    for (const { id, lprImageRetentionDays } of tenants) {
+      const ids = tenantIdsByDays.get(lprImageRetentionDays) ?? [];
+      ids.push(id);
+      tenantIdsByDays.set(lprImageRetentionDays, ids);
+    }
+
+    const perGroup = await Promise.all(
+      [...tenantIdsByDays].map(([days, tenantIds]) => {
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        return this.prisma.lprDetectionEvent.findMany({
+          where: {
+            tenantId: { in: tenantIds },
+            status: LprDetectionStatus.registered,
+            imageStoragePath: { not: null },
+            imageDeletedAt: null,
+            entry: {
+              leftAt: { lt: cutoff },
+              OR: [
+                { cashSessionId: null },
+                { cashSession: { closedAt: { not: null } } },
+              ],
+            },
+          },
+          select: { id: true, tenantId: true, imageStoragePath: true },
+          take: MAX_CANDIDATES_PER_TIER,
+        });
+      }),
+    );
+
+    return perGroup.flat().slice(0, MAX_CANDIDATES_PER_TIER);
   }
 
   private findNoiseCandidates(): Promise<PurgeCandidate[]> {

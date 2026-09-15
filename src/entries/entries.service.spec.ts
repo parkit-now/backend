@@ -84,9 +84,14 @@ describe('EntriesService', () => {
     it('should call prisma with the correct tenant isolation', async () => {
       const mockEntries = [{ id: '1', plate: 'AAA111' }];
 
-      // Mockeamos el valor de retorno del findMany dentro de tenant
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      (mockTenant.entry.findMany as jest.Mock).mockResolvedValue(mockEntries);
+      // Mockeamos el valor de retorno del findMany dentro de tenant.
+      //
+      // Antes esto casteaba a `jest.Mock`, que no existe: acá corre
+      // `bun test`. Bun shimea `jest` como VALOR (por eso `jest.fn()` anda
+      // más arriba), pero no publica el namespace de TIPOS. Era un error de
+      // TS invisible, porque `nest build` excluye los specs y `bun test` no
+      // chequea tipos. Sin el cast, `jest.fn()` ya tipa bien el mock.
+      mockTenant.entry.findMany.mockResolvedValue(mockEntries);
 
       const result = await service.findAll();
 
@@ -398,6 +403,222 @@ describe('EntriesService', () => {
       expect(auditArg.data.action).toBe(AuditActions.ENTRY_UNDERCHARGED);
       expect(auditArg.data.metadata.suggestedAmount).toBe(2000);
       expect(auditArg.data.metadata.chargedAmount).toBe(1800);
+    });
+  });
+
+  /**
+   * EL SNAPSHOT DEL TIPO DE MEDIO DE PAGO — camino del dinero.
+   *
+   * `payment_transactions.payment_method_type` es lo que el arqueo de caja del
+   * desktop mira para decidir qué plata entró al cajón. Si el backend lo
+   * escribe mal, el operador cierra el turno con un faltante que no existe (o
+   * sin uno que sí).
+   *
+   * El fix anterior de este mismo bug (renombrar los métodos del sistema a
+   * español) se mergeó SIN un test que avisara si volvía. Este bloque es esa
+   * red: cubre las tres ramas de precedencia y, sobre todo, el caso que rompía
+   * antes — el método renombrado a algo que no dice "efectivo".
+   */
+  describe('snapshot del tipo de medio de pago al cobrar', () => {
+    const CASH_PM = '77777777-7777-7777-8777-777777777777';
+    const OTHER_PM = '99999999-9999-7999-8999-999999999999';
+
+    function makeCloseService(paymentMethods: unknown[] = []) {
+      const current = {
+        id: ENTRY,
+        tenantId: TENANT,
+        plate: 'ABC123',
+        enteredAt: new Date('2026-09-08T10:00:00.000Z'),
+        leftAt: null,
+        amountPaid: null,
+        rateId: null,
+        rateSnapshotName: 'Auto',
+        rateSnapshotHourPriceArs: 1000,
+        rateSnapshotStayPriceArs: 5000,
+        rateSnapshotFractionPriceArs: 500,
+        cashSessionId: '55555555-5555-7555-8555-555555555555',
+        ticketNumber: 7,
+      };
+      const tx = {
+        entry: {
+          findFirst: jest.fn().mockResolvedValue(current),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            ...current,
+            leftAt: new Date('2026-09-08T12:00:00.000Z'),
+            amountPaid: 2000,
+          }),
+        },
+        paymentMethod: {
+          findMany: jest.fn().mockResolvedValue(paymentMethods),
+        },
+        paymentTransaction: {
+          createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        auditLog: { create: jest.fn().mockResolvedValue(undefined) },
+      };
+      const prisma = {
+        $transaction: jest.fn((cb: (txArg: typeof tx) => unknown) => cb(tx)),
+      };
+      const tenantContext = { getTenantIdOrThrow: () => TENANT };
+      return {
+        tx,
+        service: new EntriesService(
+          prisma as unknown as PrismaService,
+          tenantContext as unknown as TenantContextService,
+        ),
+      };
+    }
+
+    async function close(
+      subject: EntriesService,
+      payments: Record<string, unknown>[],
+    ): Promise<void> {
+      await subject.closeEntry(
+        ENTRY,
+        1,
+        {
+          leftAt: '2026-09-08T12:00:00.000Z',
+          cashSessionId: '55555555-5555-7555-8555-555555555555',
+          payments: payments as never,
+        },
+        USER as never,
+        { role: 'operator' } as never,
+      );
+    }
+
+    function writtenRows(tx: {
+      paymentTransaction: { createMany: { mock: { calls: unknown[][] } } };
+    }): Array<{ paymentMethodName: string; paymentMethodType: string }> {
+      const call = tx.paymentTransaction.createMany.mock.calls[0][0] as {
+        data: Array<{ paymentMethodName: string; paymentMethodType: string }>;
+      };
+      return call.data;
+    }
+
+    it('escribe el tipo que mandó el cliente, que es el snapshot', async () => {
+      const { service: subject, tx } = makeCloseService();
+
+      await close(subject, [
+        {
+          id: '88888888-8888-7888-8888-888888888888',
+          paymentMethodId: CASH_PM,
+          paymentMethodName: 'Efectivo',
+          paymentMethodType: 'cash',
+          amount: 2000,
+        },
+      ]);
+
+      expect(writtenRows(tx)[0].paymentMethodType).toBe('cash');
+      // Si el cliente ya mandó el tipo, no hace falta ir a la base.
+      expect(tx.paymentMethod.findMany).not.toHaveBeenCalled();
+    });
+
+    it('ESTE es el bug: un método de efectivo renombrado a "Caja" se sigue contando como efectivo', async () => {
+      // El dueño renombró su método de efectivo. `'caja'.includes('efectivo')`
+      // es false, así que con la regla vieja esta plata desaparecía del arqueo
+      // y le aparecía al operador como faltante.
+      const { service: subject, tx } = makeCloseService();
+
+      await close(subject, [
+        {
+          id: '88888888-8888-7888-8888-888888888888',
+          paymentMethodId: CASH_PM,
+          paymentMethodName: 'Caja',
+          paymentMethodType: 'cash',
+          amount: 2000,
+        },
+      ]);
+
+      expect(writtenRows(tx)[0]).toMatchObject({
+        paymentMethodName: 'Caja',
+        paymentMethodType: 'cash',
+      });
+    });
+
+    it('la otra mitad del bug: un "Efectivo Mercado Pago" type=other NO es efectivo', async () => {
+      // La plata entró por MP, no al cajón. Con la regla vieja el arqueo se lo
+      // reclamaba al operador.
+      const { service: subject, tx } = makeCloseService();
+
+      await close(subject, [
+        {
+          id: '88888888-8888-7888-8888-888888888888',
+          paymentMethodId: OTHER_PM,
+          paymentMethodName: 'Efectivo Mercado Pago',
+          paymentMethodType: 'other',
+          amount: 2000,
+        },
+      ]);
+
+      expect(writtenRows(tx)[0]).toMatchObject({
+        paymentMethodName: 'Efectivo Mercado Pago',
+        paymentMethodType: 'other',
+      });
+    });
+
+    it('cliente viejo sin tipo: lo resuelve por id contra payment_methods', async () => {
+      // Un desktop que todavía no se actualizó no manda el tipo, pero sí manda
+      // el id. Ahí la base tiene la respuesta exacta, y el nombre no importa.
+      const { service: subject, tx } = makeCloseService([
+        { id: CASH_PM, type: 'cash' },
+      ]);
+
+      await close(subject, [
+        {
+          id: '88888888-8888-7888-8888-888888888888',
+          paymentMethodId: CASH_PM,
+          paymentMethodName: 'Caja',
+          amount: 2000,
+        },
+      ]);
+
+      expect(tx.paymentMethod.findMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, id: { in: [CASH_PM] } },
+        select: { id: true, type: true },
+      });
+      expect(writtenRows(tx)[0].paymentMethodType).toBe('cash');
+    });
+
+    it('cliente viejo y método ya borrado: recién ahí infiere del nombre', async () => {
+      // Último recurso. `findMany` no devuelve nada porque el método no existe
+      // más (la columna no tiene FK justamente para permitir eso).
+      const { service: subject, tx } = makeCloseService([]);
+
+      await close(subject, [
+        {
+          id: '88888888-8888-7888-8888-888888888888',
+          paymentMethodId: OTHER_PM,
+          paymentMethodName: 'Efectivo',
+          amount: 1000,
+        },
+        {
+          id: '88888888-8888-7888-8888-888888888889',
+          paymentMethodName: 'Transferencia Galicia',
+          amount: 1000,
+        },
+      ]);
+
+      const rows = writtenRows(tx);
+      expect(rows[0].paymentMethodType).toBe('cash');
+      expect(rows[1].paymentMethodType).toBe('transfer');
+    });
+
+    it('nunca escribe una fila sin tipo: la columna es NOT NULL', async () => {
+      // Sin esto un pago se perdería con un error de constraint en producción.
+      const { service: subject, tx } = makeCloseService([]);
+
+      await close(subject, [
+        {
+          id: '88888888-8888-7888-8888-888888888888',
+          paymentMethodName: 'Lo que sea',
+          amount: 500,
+        },
+      ]);
+
+      for (const row of writtenRows(tx)) {
+        expect(row.paymentMethodType).toBeDefined();
+      }
     });
   });
 });

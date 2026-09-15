@@ -26,9 +26,43 @@ model Tenant {
   cuit      String?
   email     String?      @db.VarChar(255)
   phone     String?
+  /// Dirección completa en una línea, para mostrar. Guarda la `nomenclatura`
+  /// que devuelve la API Georef. Es el campo de display y el que mantiene la
+  /// retrocompatibilidad; los datos para Mercado Pago viven en las columnas
+  /// separadas de abajo.
   address   String?
   status    BranchStatus @default(active)
   settings  Json         @default("{}")
+  // Owner-configurable retention for `registered` LPR detection images
+  // (days after the stay exit). One of 30/60/90 by a DB CHECK; default 30.
+  lprImageRetentionDays Int @default(30) @map("lpr_image_retention_days") @db.SmallInt
+
+  // Dirección estructurada (migración 20260913164617). Mercado Pago necesita
+  // la ubicación del `Store` con los campos SEPARADOS; una ubicación mal
+  // cargada le rompe el cálculo de impuestos al dueño. Todas nullable: no
+  // hacen falta para existir como tenant, la obligatoriedad la valida el
+  // service recién al vincular Mercado Pago. El backend NO geocodifica: el
+  // front normaliza contra la API Georef del Estado y manda esto ya separado.
+  /// Nombre de la calle, sin altura.
+  streetName   String? @map("street_name")
+  /// Altura, como TEXTO y no entero a propósito: existen "S/N", "1234 bis" y
+  /// "Km 5". Mercado Pago también lo recibe como string. No convertir a Int.
+  streetNumber String? @map("street_number")
+  /// Piso y/o departamento. Sólo contacto/facturación; Mercado Pago no lo usa.
+  floor        String?
+  cityName     String? @map("city_name")
+  stateName    String? @map("state_name")
+  postalCode   String? @map("postal_code")
+  /// Latitud en grados decimales. Sólo válida junto con `longitude`: el CHECK
+  /// `tenants_coordinates_paired` prohíbe media coordenada.
+  latitude     Decimal? @db.Decimal(9, 6)
+  /// Longitud en grados decimales. Ver `latitude`.
+  longitude    Decimal? @db.Decimal(9, 6)
+  /// Origen del dato: `georef` (normalizado por la API del Estado) o `manual`.
+  /// Conjunto cerrado por el CHECK `tenants_geocoding_source_valid`.
+  geocodingSource String? @map("geocoding_source") @db.VarChar(16)
+  geocodedAt      DateTime? @map("geocoded_at") @db.Timestamptz(6)
+
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
   memberships          UserMembership[]
@@ -45,6 +79,10 @@ model Tenant {
   paymentTransactions  PaymentTransaction[]
   whitelists           Whitelist[]
   lprDetectionEvents   LprDetectionEvent[]
+  // Mercado Pago (global/mercado-pago.prisma). La cuenta es 0..1 por el
+  // `@unique` sobre `MpAccount.tenantId`: una playa vincula a lo sumo una.
+  mpAccount            MpAccount?
+  mpOauthStates        MpOauthState[]
 
   @@index([cuit])
   @@map("tenants")
