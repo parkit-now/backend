@@ -61,6 +61,11 @@ rateSnapshotStayPriceArs: Prisma.Decimal  | null;
   format: `double`,
 })
 rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotMediaEstadiaPriceArs: Prisma.Decimal  | null;
 vehicleBrand: string  | null;
 vehicleModel: string  | null;
 @ApiProperty({

@@ -53,7 +53,7 @@ install: ## Instalar bun + supabase CLI si faltan, y dependencias del proyecto
 
 up: install ## Levantar Supabase + aplicar migraciones nuevas (preserva data)
 	@supabase start
-	@supabase migration up --local
+	@supabase migration up --local --include-all
 	@bun run db:generate >/dev/null
 	@echo "✓ Stack listo. Corré 'make dev' para levantar la API."
 

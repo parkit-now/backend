@@ -23,6 +23,12 @@ stayPriceArs: Prisma.Decimal ;
   format: `double`,
 })
 fractionPriceArs: Prisma.Decimal ;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+mediaEstadiaPriceArs: Prisma.Decimal ;
+autoFractionPrice: boolean ;
 isActive: boolean ;
 @ApiProperty({
   type: `integer`,

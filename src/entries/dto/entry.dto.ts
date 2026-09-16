@@ -90,6 +90,10 @@ export class EntryDto {
   @ApiPropertyOptional({ type: Number })
   rateSnapshotFractionPriceArs: number | null;
 
+  /** NULL = la tarifa vigente al ingresar no tenía escalón de media estadía. */
+  @ApiPropertyOptional({ type: Number })
+  rateSnapshotMediaEstadiaPriceArs: number | null;
+
   @ApiPropertyOptional({ format: 'uuid' })
   cashSessionId: string | null;
 

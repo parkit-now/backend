@@ -404,6 +404,72 @@ describe('EntriesService', () => {
       expect(auditArg.data.metadata.suggestedAmount).toBe(2000);
       expect(auditArg.data.metadata.chargedAmount).toBe(1800);
     });
+
+    /**
+     * Cableado del snapshot de media estadía hasta el detector de subcobro.
+     *
+     * El motor está testeado aparte en `pricing.spec.ts`; lo que prueba esto es
+     * que el campo VIAJA: que el tope de 12h congelado al ingreso llega al
+     * cálculo. Si alguien se olvida de propagarlo en `registerExit`, el sugerido
+     * sube por encima del tope y el operador que cobró bien queda marcado como
+     * subcobrador en Auditoría.
+     */
+    it('respeta el tope de media estadía del snapshot al medir el subcobro', async () => {
+      const current = {
+        id: ENTRY,
+        tenantId: TENANT,
+        plate: 'ABC123',
+        enteredAt: new Date('2026-09-08T10:00:00.000Z'),
+        leftAt: null,
+        amountPaid: null,
+        rateId: null,
+        rateSnapshotName: 'Auto',
+        rateSnapshotHourPriceArs: 4000,
+        rateSnapshotStayPriceArs: 18000,
+        rateSnapshotFractionPriceArs: 400,
+        rateSnapshotMediaEstadiaPriceArs: 12000,
+        cashSessionId: '55555555-5555-7555-8555-555555555555',
+        ticketNumber: 7,
+      };
+      // 6 horas. Sin el tope el sugerido sería 24.000; con el tope, 12.000.
+      const leftAt = new Date('2026-09-08T16:00:00.000Z');
+      const tx = {
+        entry: {
+          findFirst: jest.fn().mockResolvedValue(current),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            ...current,
+            leftAt,
+            amountPaid: 5000,
+          }),
+        },
+        paymentTransaction: {
+          createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        auditLog: { create: jest.fn().mockResolvedValue(undefined) },
+      };
+      const prisma = {
+        $transaction: jest.fn((cb: (txArg: typeof tx) => unknown) => cb(tx)),
+      };
+      const tenantContext = { getTenantIdOrThrow: () => TENANT };
+      const subject = new EntriesService(
+        prisma as unknown as PrismaService,
+        tenantContext as unknown as TenantContextService,
+      );
+
+      await subject.closeEntry(
+        ENTRY,
+        1,
+        { leftAt: leftAt.toISOString(), amountPaid: 5000 },
+        USER as never,
+        { role: 'operator' } as never,
+      );
+
+      const auditArg = tx.auditLog.create.mock.calls[0][0] as {
+        data: { metadata: { suggestedAmount: number } };
+      };
+      expect(auditArg.data.metadata.suggestedAmount).toBe(12000);
+    });
   });
 
   /**

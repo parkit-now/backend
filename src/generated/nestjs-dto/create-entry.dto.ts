@@ -80,6 +80,14 @@ rateSnapshotStayPriceArs?: Prisma.Decimal;
 @IsDecimal()
 @Type(()=>String)
 rateSnapshotFractionPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotMediaEstadiaPriceArs?: Prisma.Decimal;
 @IsOptional()
 @IsString()
 vehicleBrand?: string;

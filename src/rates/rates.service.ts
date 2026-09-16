@@ -18,6 +18,7 @@ function toDto(rate: PrismaRate): RateDto {
     hourPriceArs: Number(rate.hourPriceArs),
     stayPriceArs: Number(rate.stayPriceArs),
     fractionPriceArs: Number(rate.fractionPriceArs),
+    mediaEstadiaPriceArs: Number(rate.mediaEstadiaPriceArs),
   };
 }
 
@@ -42,6 +43,8 @@ export class RatesService {
         hourPriceArs: data.hourPriceArs,
         stayPriceArs: data.stayPriceArs,
         fractionPriceArs: data.fractionPriceArs,
+        mediaEstadiaPriceArs: data.mediaEstadiaPriceArs,
+        autoFractionPrice: data.autoFractionPrice ?? false,
         shortcutNumber: data.shortcutNumber ?? null,
         // tenantId is injected by prismaForTenant(...)
       } as Prisma.RateUncheckedCreateInput,
@@ -107,6 +110,10 @@ export class RatesService {
       updateData.stayPriceArs = data.stayPriceArs;
     if (data.fractionPriceArs !== undefined)
       updateData.fractionPriceArs = data.fractionPriceArs;
+    if (data.mediaEstadiaPriceArs !== undefined)
+      updateData.mediaEstadiaPriceArs = data.mediaEstadiaPriceArs;
+    if (data.autoFractionPrice !== undefined)
+      updateData.autoFractionPrice = data.autoFractionPrice;
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
     if (data.shortcutNumber !== undefined)
       updateData.shortcutNumber = data.shortcutNumber;

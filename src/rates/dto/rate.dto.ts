@@ -19,6 +19,12 @@ export class RateDto {
   @ApiProperty({ type: Number })
   fractionPriceArs: number;
 
+  @ApiProperty({ type: Number })
+  mediaEstadiaPriceArs: number;
+
+  @ApiProperty()
+  autoFractionPrice: boolean;
+
   @ApiProperty()
   isActive: boolean;
 
