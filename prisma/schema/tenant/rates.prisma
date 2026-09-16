@@ -6,6 +6,11 @@ model Rate {
   hourPriceArs    Decimal @map("hour_price_ars") @db.Decimal(12, 2)
   stayPriceArs    Decimal @map("stay_price_ars") @db.Decimal(12, 2)
   fractionPriceArs Decimal @map("fraction_price_ars") @db.Decimal(12, 2)
+  // Tope de las 12h. 0 = la tarifa no tiene este escalón, no que sea gratis.
+  mediaEstadiaPriceArs Decimal @default(0) @map("media_estadia_price_ars") @db.Decimal(12, 2)
+  // Preferencia de UI: la fracción se deriva de hora / 12 (techo legal). El
+  // valor derivado se guarda igual en fractionPriceArs; el cobro no lee esto.
+  autoFractionPrice Boolean @default(false) @map("auto_fraction_price")
   isActive        Boolean @default(true) @map("is_active")
   shortcutNumber  Int?    @map("shortcut_number")
   version         Int     @default(1)

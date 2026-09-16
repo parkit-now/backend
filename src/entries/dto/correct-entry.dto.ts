@@ -92,6 +92,14 @@ export class CorrectEntryDto {
   @Min(0)
   rateSnapshotFractionPriceArs?: number;
 
+  /** Ausente = la tarifa vigente al ingresar no tenía escalón de media estadía. */
+  @ApiPropertyOptional({ type: Number, minimum: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  rateSnapshotMediaEstadiaPriceArs?: number;
+
   @ApiPropertyOptional({
     description: 'Payment breakdown replacing the current active lines.',
     type: () => [PaymentLineDto],

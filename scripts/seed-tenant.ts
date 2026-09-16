@@ -458,6 +458,9 @@ type SeedRate = {
   hourPriceArs: string;
   stayPriceArs: string;
   fractionPriceArs: string;
+  /** Tope de 12h. Por omisión, la mitad de la estadía — el mismo criterio con
+   *  el que la migración rellenó las tarifas que ya existían. */
+  mediaEstadiaPriceArs?: string;
   shortcutNumber: number;
   isActive?: boolean;
   /** Tarifa borrada (tombstone) — ver abajo. */
@@ -1307,6 +1310,8 @@ async function seedRates(): Promise<void> {
       hourPriceArs: rate.hourPriceArs,
       stayPriceArs: rate.stayPriceArs,
       fractionPriceArs: rate.fractionPriceArs,
+      mediaEstadiaPriceArs:
+        rate.mediaEstadiaPriceArs ?? (Number(rate.stayPriceArs) / 2).toFixed(2),
       shortcutNumber: rate.shortcutNumber,
       isActive: rate.isActive ?? true,
       deletedAt: rate.deleted ? DEMO_DELETED_AT : null,
@@ -1578,6 +1583,10 @@ async function seedEntries(): Promise<void> {
       rateSnapshotHourPriceArs: rate?.hourPriceArs ?? null,
       rateSnapshotStayPriceArs: rate?.stayPriceArs ?? null,
       rateSnapshotFractionPriceArs: rate?.fractionPriceArs ?? null,
+      rateSnapshotMediaEstadiaPriceArs: rate
+        ? (rate.mediaEstadiaPriceArs ??
+          (Number(rate.stayPriceArs) / 2).toFixed(2))
+        : null,
       cashSessionId,
       ticketNumber: entry.ticketNumber ?? null,
       source: entry.lpr ? 'auto' : 'manual',

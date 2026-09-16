@@ -36,6 +36,8 @@ describe('RatesService', () => {
     hourPriceArs: new Prisma.Decimal(1000),
     stayPriceArs: new Prisma.Decimal(2000),
     fractionPriceArs: new Prisma.Decimal(300),
+    mediaEstadiaPriceArs: new Prisma.Decimal(1000),
+    autoFractionPrice: false,
     isActive: true,
     shortcutNumber: null,
     version: 1,
@@ -82,6 +84,9 @@ describe('RatesService', () => {
       expect(result[0].hourPriceArs).toBe(1000);
       expect(result[0].stayPriceArs).toBe(2000);
       expect(result[0].fractionPriceArs).toBe(300);
+      // Sin el Number() explícito en toDto esto llega como el string "1000":
+      // el spread deja pasar el Decimal tal cual.
+      expect(result[0].mediaEstadiaPriceArs).toBe(1000);
     });
 
     it('should exclude soft-deleted rates', async () => {

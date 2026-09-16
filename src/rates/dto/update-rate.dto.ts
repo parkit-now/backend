@@ -54,6 +54,28 @@ export class UpdateRateDto {
   fractionPriceArs?: number;
 
   @ApiPropertyOptional({
+    description:
+      'Tope de las primeras 12 horas en ARS. 0 = la tarifa no tiene este escalón.',
+    example: 12000,
+    minimum: 0,
+    type: Number,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  mediaEstadiaPriceArs?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Si la fracción se deriva de hora / 12 en el formulario. Preferencia de UI: el valor derivado se guarda igual en fractionPriceArs.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  autoFractionPrice?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Permite activar/desactivar una tarifa.',
     example: true,
   })

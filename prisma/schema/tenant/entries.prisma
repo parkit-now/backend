@@ -30,6 +30,8 @@ model Entry {
   rateSnapshotHourPriceArs     Decimal? @map("rate_snapshot_hour_price_ars") @db.Decimal(12, 2)
   rateSnapshotStayPriceArs     Decimal? @map("rate_snapshot_stay_price_ars") @db.Decimal(12, 2)
   rateSnapshotFractionPriceArs Decimal? @map("rate_snapshot_fraction_price_ars") @db.Decimal(12, 2)
+  // NULL = la tarifa vigente al ingresar no tenía escalón de media estadía.
+  rateSnapshotMediaEstadiaPriceArs Decimal? @map("rate_snapshot_media_estadia_price_ars") @db.Decimal(12, 2)
 
   vehicleBrand String? @map("vehicle_brand") @db.VarChar(120)
   vehicleModel String? @map("vehicle_model") @db.VarChar(120)

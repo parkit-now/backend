@@ -12,6 +12,7 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
+import { calcStayPrice } from './pricing';
 import { PaymentLineDto } from '../payment-transactions/dto/payment-line.dto';
 import { inferPaymentMethodTypeFromName } from '../payment-transactions/payment-method-type';
 
@@ -41,6 +42,7 @@ type EntryAuditSnapshot = {
   rateSnapshotHourPriceArs: number | null;
   rateSnapshotStayPriceArs: number | null;
   rateSnapshotFractionPriceArs: number | null;
+  rateSnapshotMediaEstadiaPriceArs: number | null;
   cashSessionId: string | null;
   ticketNumber: number | null;
   payments: PaymentSnapshot[];
@@ -85,6 +87,10 @@ function toDto(entry: PrismaEntry): EntryDto {
       entry.rateSnapshotFractionPriceArs !== null
         ? Number(entry.rateSnapshotFractionPriceArs)
         : null,
+    rateSnapshotMediaEstadiaPriceArs:
+      entry.rateSnapshotMediaEstadiaPriceArs !== null
+        ? Number(entry.rateSnapshotMediaEstadiaPriceArs)
+        : null,
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     source: entry.source,
@@ -107,26 +113,31 @@ function toNumber(
   return Number(value);
 }
 
+/**
+ * Monto que el operador DEBERÍA haber cobrado, según el snapshot de tarifa
+ * congelado en el ingreso.
+ *
+ * Wrapper delgado: la política de cobro vive en `calcStayPrice`, gemela de la
+ * del desktop. Acá solo se convierten fechas a minutos y `null` a 0 — el motor
+ * ya distingue "precio ausente" de "precio cero" donde importa.
+ */
 function calcSuggestedAmount(input: {
   enteredAt: Date;
   leftAt: Date;
   hourPrice: number | null;
   stayPrice: number | null;
   fractionPrice: number | null;
+  mediaEstadiaPrice: number | null;
 }): number {
-  const hourPrice = input.hourPrice ?? 0;
-  const stayPrice = input.stayPrice ?? 0;
-  const fractionPrice = input.fractionPrice ?? 0;
   const totalMinutes =
     (input.leftAt.getTime() - input.enteredAt.getTime()) / 60000;
 
-  if (totalMinutes <= 0) return 0;
-
-  const hours = Math.floor(totalMinutes / 60);
-  const remainingMinutes = totalMinutes % 60;
-  const fullHoursAmount = hours * hourPrice;
-  const fractionAmount = remainingMinutes > 0 ? fractionPrice : 0;
-  return Math.min(fullHoursAmount + fractionAmount, stayPrice);
+  return calcStayPrice(totalMinutes, {
+    hour: input.hourPrice ?? 0,
+    fraction: input.fractionPrice ?? 0,
+    mediaEstadia: input.mediaEstadiaPrice ?? 0,
+    stay: input.stayPrice ?? 0,
+  });
 }
 
 function roundMoney(value: number): number {
@@ -224,6 +235,9 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     rateSnapshotHourPriceArs: toNumber(entry.rateSnapshotHourPriceArs),
     rateSnapshotStayPriceArs: toNumber(entry.rateSnapshotStayPriceArs),
     rateSnapshotFractionPriceArs: toNumber(entry.rateSnapshotFractionPriceArs),
+    rateSnapshotMediaEstadiaPriceArs: toNumber(
+      entry.rateSnapshotMediaEstadiaPriceArs,
+    ),
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     payments: activePayments(entry),
@@ -249,6 +263,7 @@ function diffSnapshots(
     'rateSnapshotHourPriceArs',
     'rateSnapshotStayPriceArs',
     'rateSnapshotFractionPriceArs',
+    'rateSnapshotMediaEstadiaPriceArs',
     'payments',
   ];
 
@@ -284,6 +299,7 @@ function snapshotSuggestedAmount(snapshot: EntryAuditSnapshot): number | null {
       hourPrice: snapshot.rateSnapshotHourPriceArs,
       stayPrice: snapshot.rateSnapshotStayPriceArs,
       fractionPrice: snapshot.rateSnapshotFractionPriceArs,
+      mediaEstadiaPrice: snapshot.rateSnapshotMediaEstadiaPriceArs,
     }),
   );
 }
@@ -369,6 +385,8 @@ export class EntriesService {
           rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
           rateSnapshotStayPriceArs: data.rateSnapshotStayPriceArs,
           rateSnapshotFractionPriceArs: data.rateSnapshotFractionPriceArs,
+          rateSnapshotMediaEstadiaPriceArs:
+            data.rateSnapshotMediaEstadiaPriceArs,
           cashSessionId: data.cashSessionId,
           ticketNumber: data.ticketNumber,
         },
@@ -498,6 +516,7 @@ export class EntriesService {
           hourPrice: toNumber(current.rateSnapshotHourPriceArs),
           stayPrice: toNumber(current.rateSnapshotStayPriceArs),
           fractionPrice: toNumber(current.rateSnapshotFractionPriceArs),
+          mediaEstadiaPrice: toNumber(current.rateSnapshotMediaEstadiaPriceArs),
         });
         if (
           suggestedAmount > 0 &&
@@ -527,6 +546,9 @@ export class EntriesService {
                   stayPriceArs: toNumber(current.rateSnapshotStayPriceArs),
                   fractionPriceArs: toNumber(
                     current.rateSnapshotFractionPriceArs,
+                  ),
+                  mediaEstadiaPriceArs: toNumber(
+                    current.rateSnapshotMediaEstadiaPriceArs,
                   ),
                 },
               },
@@ -680,6 +702,10 @@ export class EntriesService {
         updateData.rateSnapshotFractionPriceArs =
           data.rateSnapshotFractionPriceArs;
       }
+      if (data.rateSnapshotMediaEstadiaPriceArs !== undefined) {
+        updateData.rateSnapshotMediaEstadiaPriceArs =
+          data.rateSnapshotMediaEstadiaPriceArs;
+      }
       if (data.payments !== undefined) {
         updateData.amountPaid = nextAmountPaid;
       }
@@ -744,6 +770,7 @@ export class EntriesService {
             'rateSnapshotHourPriceArs',
             'rateSnapshotStayPriceArs',
             'rateSnapshotFractionPriceArs',
+            'rateSnapshotMediaEstadiaPriceArs',
           ].includes(field),
         );
         await tx.auditLog.create({
@@ -776,6 +803,7 @@ export class EntriesService {
           hourPrice: toNumber(after.rateSnapshotHourPriceArs),
           stayPrice: toNumber(after.rateSnapshotStayPriceArs),
           fractionPrice: toNumber(after.rateSnapshotFractionPriceArs),
+          mediaEstadiaPrice: toNumber(after.rateSnapshotMediaEstadiaPriceArs),
         });
         const chargedAmount = Number(after.amountPaid);
         if (
