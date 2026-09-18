@@ -18,7 +18,7 @@ ENV_LOCAL := .env.local
 ENV_PROD  := .env.production
 
 .PHONY: help install up down dev prod build test lint format \
-        migration migration-apply generate reset seed-all seed-global seed-auth seed-tenant \
+        migration migration-check migration-apply generate reset seed-all seed-global seed-auth seed-tenant \
         env-check env-print env-use-local env-use-prod \
         push push-dry-run push-linked status studio logs clean
 
@@ -164,6 +164,9 @@ format: ## Prettier sobre src/
 ## ──────────────────────────────────────────────────────────────────
 ## Migraciones (SQL es la fuente de verdad)
 ## ──────────────────────────────────────────────────────────────────
+
+migration-check: ## Verificar que las migraciones se pueden aplicar en orden (lo corre el pre-commit y el CI)
+	@./scripts/check-migrations.sh
 
 migration: ## Crear archivo vacío de migración. Uso: make migration NAME=add_vehicles
 	@if [ -z "$(NAME)" ]; then \

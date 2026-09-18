@@ -215,7 +215,21 @@ make migration NAME=add_<feature>
 
 2. Editar SQL en `supabase/migrations/<timestamp>_add_<feature>.sql`.
 3. Reflejar cambio en `prisma/schema/**` (o capa de modelado vigente).
-4. Aplicar/regen:
+4. Verificar que el orden sea aplicable:
+
+```bash
+make migration-check
+```
+
+> **Por qué importa el orden**: `supabase db push` aplica en orden de nombre y
+> rechaza cualquier migración con timestamp anterior a la última ya aplicada.
+> Si se mergea una así, el deploy a producción se bloquea hasta que alguien
+> corra `--include-all`, que la aplica **fuera de orden**. Ya pasó: producción
+> quedó 5 migraciones atrás y el backend desplegado devolvía 404 porque Prisma
+> pedía columnas que la base no tenía. El chequeo corre solo en el pre-commit y
+> en el job `Migrations` del CI.
+
+5. Aplicar/regen:
 
 ```bash
 make migration-apply
@@ -230,7 +244,7 @@ make generate
 > PATH="$HOME/.nvm/versions/node/v20.20.2/bin:$PATH" bun run db:generate
 > ```
 
-5. Validar:
+6. Validar:
 
 ```bash
 bun run build
