@@ -79,6 +79,12 @@ export const ErrorCodes = {
   // Payment methods
   PAYMENT_METHOD_NOT_FOUND: 'PAYMENT_METHOD_NOT_FOUND',
   PAYMENT_METHOD_SYSTEM_LOCKED: 'PAYMENT_METHOD_SYSTEM_LOCKED',
+  // Se intento HABILITAR un medio que vive de una integracion externa
+  // (hoy solo `mercadopago_qr`) sin que esa integracion este vinculada y viva
+  // (409). Deshabilitarlo o renombrarlo sigue permitido siempre: lo unico que
+  // se bloquea es prender un boton de cobro que no puede cobrar.
+  PAYMENT_METHOD_INTEGRATION_NOT_LINKED:
+    'PAYMENT_METHOD_INTEGRATION_NOT_LINKED',
 
   // Entries (vehicle stays)
   ENTRY_DUPLICATE_ACTIVE_STAY: 'ENTRY_DUPLICATE_ACTIVE_STAY',

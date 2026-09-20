@@ -16,7 +16,8 @@ const TOKEN =
 const BASE_ENV: Record<string, string> = {
   MP_CLIENT_ID: '1234567890',
   MP_CLIENT_SECRET: 'un-secreto',
-  MP_OAUTH_REDIRECT_URI: 'https://api.parkit.app/mercado-pago/oauth/callback',
+  MP_OAUTH_REDIRECT_URI:
+    'https://panel.parkit.app/integraciones/mercadopago/callback',
   MP_TOKEN_ENCRYPTION_KEY: KEY_V1,
 };
 

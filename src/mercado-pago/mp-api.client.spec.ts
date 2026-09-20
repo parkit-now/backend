@@ -20,7 +20,8 @@ describe('MpApiClient', () => {
   const mockConfig = {
     clientId: 'app-id',
     clientSecret: CLIENT_SECRET,
-    oauthRedirectUri: 'https://panel.parkit.test/mercado-pago/oauth/callback',
+    oauthRedirectUri:
+      'https://panel.parkit.test/integraciones/mercadopago/callback',
     apiBaseUrl: 'https://api.mercadopago.com',
   };
 

@@ -86,7 +86,7 @@ export class MpAuthorizationUrlDto {
     description:
       'Mercado Pago authorization URL the owner must open to grant access. Carries the PKCE `code_challenge` and the single-use `state`.',
     example:
-      'https://auth.mercadopago.com/authorization?client_id=123&response_type=code&platform_id=mp&state=6f9619ff-8b86-4d01-b42d-00cf4fc964ff&redirect_uri=https%3A%2F%2Fpanel.parkit.app%2Fmercado-pago%2Foauth%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
+      'https://auth.mercadopago.com/authorization?client_id=123&response_type=code&platform_id=mp&state=6f9619ff-8b86-4d01-b42d-00cf4fc964ff&redirect_uri=https%3A%2F%2Fpanel.parkit.app%2Fintegraciones%2Fmercadopago%2Fcallback&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256',
   })
   authorizationUrl: string;
 

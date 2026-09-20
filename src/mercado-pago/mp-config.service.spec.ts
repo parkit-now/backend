@@ -9,7 +9,8 @@ const KEY_V2 = Buffer.alloc(32, 2).toString('base64');
 const BASE_ENV: Record<string, string> = {
   MP_CLIENT_ID: '1234567890',
   MP_CLIENT_SECRET: 'un-secreto',
-  MP_OAUTH_REDIRECT_URI: 'https://api.parkit.app/mercado-pago/oauth/callback',
+  MP_OAUTH_REDIRECT_URI:
+    'https://panel.parkit.app/integraciones/mercadopago/callback',
   MP_TOKEN_ENCRYPTION_KEY: KEY_V2,
 };
 
@@ -61,7 +62,7 @@ describe('MpConfigService', () => {
     expect(config.clientId).toBe('1234567890');
     expect(config.clientSecret).toBe('un-secreto');
     expect(config.oauthRedirectUri).toBe(
-      'https://api.parkit.app/mercado-pago/oauth/callback',
+      'https://panel.parkit.app/integraciones/mercadopago/callback',
     );
     expect(config.apiBaseUrl).toBe('https://api.mercadopago.com');
     expect(config.activeEncryptionKey.version).toBe(1);
