@@ -536,6 +536,81 @@ describe('EntitiesService', () => {
         expect(result.name).toBe('Naranja X');
         expect(mockPrisma.mpAccount.findUnique).not.toHaveBeenCalled();
       });
+
+      // Marcar predeterminado NO es neutral: es el medio que queda
+      // preseleccionado en el modal de egreso. Sin cuenta viva, el operario se
+      // encuentra un QR muerto puesto por defecto.
+      it('rechaza marcar `mercadopago_qr` como predeterminado sin cuenta vinculada', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue(null);
+
+        const promise = service.togglePaymentMethod('t-1', owner, 'pm-mp', {
+          isDefault: true,
+        });
+
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(promise).rejects.toMatchObject({
+          status: HttpStatus.CONFLICT,
+          response: {
+            code: ErrorCodes.PAYMENT_METHOD_INTEGRATION_NOT_LINKED,
+          },
+        });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('deja marcarlo predeterminado con la cuenta en `linked`', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue({ status: 'linked' });
+        txInner.paymentMethod.update.mockResolvedValue({
+          ...mpMethod,
+          name: 'Mercado Pago',
+          enabled: true,
+          isDefault: true,
+          isSystem: true,
+          syncSeq: 6,
+          version: 4,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-05T00:00:00.000Z'),
+        });
+
+        const result = await service.togglePaymentMethod(
+          't-1',
+          owner,
+          'pm-mp',
+          { isDefault: true },
+        );
+
+        expect(result.isDefault).toBe(true);
+        expect(txInner.paymentMethod.update).toHaveBeenCalled();
+      });
+
+      // Sacarle el predeterminado es lo contrario de ponerlo en circulación:
+      // pasa siempre, igual que `enabled: false`.
+      it('deja SACARLE el predeterminado sin cuenta vinculada', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue(null);
+        txInner.paymentMethod.update.mockResolvedValue({
+          ...mpMethod,
+          name: 'Mercado Pago',
+          enabled: true,
+          isDefault: false,
+          isSystem: true,
+          syncSeq: 7,
+          version: 5,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-06T00:00:00.000Z'),
+        });
+
+        const result = await service.togglePaymentMethod(
+          't-1',
+          owner,
+          'pm-mp',
+          { isDefault: false },
+        );
+
+        expect(result.isDefault).toBe(false);
+        expect(mockPrisma.mpAccount.findUnique).not.toHaveBeenCalled();
+      });
     });
   });
 

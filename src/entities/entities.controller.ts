@@ -200,7 +200,7 @@ export class EntitiesController {
       '',
       'System methods (`transfer`, `cash`, `mercadopago_qr`) can be renamed and disabled but never deleted. Setting `isDefault: true` clears the previous default. The change is recorded in the audit trail. Requires the caller to be an `owner` of the entity (platform admins bypass the role check).',
       '',
-      'Integration-backed methods (today only `mercadopago_qr`) can only be ENABLED while their integration is linked: unlinking the Mercado Pago account disables the method, and turning it back on requires linking the account again. Renaming and disabling are always allowed.',
+      'Integration-backed methods (today only `mercadopago_qr`) can only be ENABLED or made DEFAULT while their integration is linked: unlinking the Mercado Pago account disables the method, and both turning it back on and pre-selecting it for checkout require linking the account again. Renaming, `enabled: false` and `isDefault: false` are always allowed.',
     ].join('\n'),
   })
   @ApiOkResponse({ type: PaymentMethodSummaryDto })
@@ -215,7 +215,7 @@ export class EntitiesController {
   })
   @ApiConflictResponse({
     description:
-      'Attempted to enable an integration-backed method whose integration is not linked (PAYMENT_METHOD_INTEGRATION_NOT_LINKED).',
+      'Attempted to enable or set as default an integration-backed method whose integration is not linked (PAYMENT_METHOD_INTEGRATION_NOT_LINKED).',
     type: ProblemDetailsDto,
   })
   togglePaymentMethod(

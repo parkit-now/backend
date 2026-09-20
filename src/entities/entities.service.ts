@@ -241,17 +241,33 @@ export class EntitiesService {
       );
     }
 
-    // Sólo al PRENDER: renombrar es cosmético y apagar tiene que funcionar
-    // siempre, sobre todo sin la cuenta vinculada, que es justo cuando el
-    // dueño necesita sacarlo de la pantalla de cobro.
+    // Las DOS acciones que ponen el medio EN CIRCULACIÓN piden la cuenta viva:
+    // prenderlo lo devuelve a la pantalla de cobro, y marcarlo predeterminado
+    // lo deja PRESELECCIONADO en el modal de egreso. Marcar como default no es
+    // neutral respecto de la disponibilidad: es el que el operario se
+    // encuentra puesto. Sin esto, un QR muerto vuelve a la caja por la puerta
+    // del `isDefault`.
+    //
+    // Siempre permitido, con cuenta o sin ella: renombrar (es cosmético),
+    // `enabled: false` y `isDefault: false`. Apagarlo sin la cuenta vinculada
+    // es JUSTO la salida de emergencia del dueño para sacar el medio muerto de
+    // la pantalla de cobro; bloquearlo lo dejaría encerrado con el QR roto.
     const requiresLinkedIntegration = INTEGRATION_BACKED_TYPES[method.type];
-    if (dto.enabled === true && requiresLinkedIntegration) {
+    // Se resuelve UNA sola vez aunque el DTO traiga las dos banderas prendidas:
+    // el chequeo es una query, no se paga dos veces por el mismo PATCH.
+    const rejectedAction =
+      dto.enabled === true
+        ? 'enabling it'
+        : dto.isDefault === true
+          ? 'making it the default'
+          : null;
+    if (rejectedAction && requiresLinkedIntegration) {
       const linked = await requiresLinkedIntegration(this.prisma, tenantId);
       if (!linked) {
         throw new FormattedException(
           'Conflict',
           HttpStatus.CONFLICT,
-          `Payment method ${paymentMethodId} is backed by the ${method.type} integration, which is not linked for this entity; link the account again from Integrations before enabling it`,
+          `Payment method ${paymentMethodId} is backed by the ${method.type} integration, which is not linked for this entity; link the account again from Integrations before ${rejectedAction}`,
           '/tenants/:tenantId/payment-methods',
           ErrorCodes.PAYMENT_METHOD_INTEGRATION_NOT_LINKED,
         );
