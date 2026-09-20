@@ -1,9 +1,11 @@
+import { HttpStatus } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import type { Tenant, User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventDto } from '../audit/dto/audit-event.dto';
 import { PrismaService } from '../database/prisma.service';
+import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { EntitiesService } from './entities.service';
 
@@ -57,6 +59,7 @@ describe('EntitiesService', () => {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    mpAccount: { findUnique: jest.fn() },
     $transaction: jest.fn(),
   };
   const mockAudit = { record: jest.fn(), listForTenant: jest.fn() };
@@ -399,6 +402,140 @@ describe('EntitiesService', () => {
         data: { isDefault: false },
       });
       expect(mockAudit.record).toHaveBeenCalled();
+    });
+
+    // La guarda del medio integrado. `unlink()` apaga el `mercadopago_qr`;
+    // sin esto el dueño lo volvía a prender por API, el operario lo veía en el
+    // modal de egreso y no había con qué cobrar.
+    describe('medios respaldados por una integración', () => {
+      const mpMethod = { id: 'pm-mp', tenantId: 't-1', type: 'mercadopago_qr' };
+
+      it('rechaza habilitar `mercadopago_qr` sin cuenta vinculada', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue(null);
+
+        const promise = service.togglePaymentMethod('t-1', owner, 'pm-mp', {
+          enabled: true,
+        });
+
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(promise).rejects.toBeInstanceOf(FormattedException);
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(promise).rejects.toMatchObject({
+          status: HttpStatus.CONFLICT,
+          response: {
+            code: ErrorCodes.PAYMENT_METHOD_INTEGRATION_NOT_LINKED,
+          },
+        });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        // El `tenantId` va EXPLÍCITO: `MpAccount` no está en `TENANT_MODELS`,
+        // así que Prisma no lo inyecta y sin este `where` se lee la cuenta de
+        // otra playa.
+        expect(mockPrisma.mpAccount.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { tenantId: 't-1' } }),
+        );
+      });
+
+      it('deja habilitar `mercadopago_qr` con la cuenta en `linked`', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue({ status: 'linked' });
+        txInner.paymentMethod.update.mockResolvedValue({
+          ...mpMethod,
+          name: 'Mercado Pago',
+          enabled: true,
+          isDefault: false,
+          isSystem: true,
+          syncSeq: 3,
+          version: 2,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+        });
+
+        const result = await service.togglePaymentMethod(
+          't-1',
+          owner,
+          'pm-mp',
+          { enabled: true },
+        );
+
+        expect(result.enabled).toBe(true);
+        expect(txInner.paymentMethod.update).toHaveBeenCalled();
+      });
+
+      it('rechaza habilitarlo con la cuenta en `revoked`', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue({
+          status: 'revoked',
+        });
+
+        const promise = service.togglePaymentMethod('t-1', owner, 'pm-mp', {
+          enabled: true,
+        });
+
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(promise).rejects.toBeInstanceOf(FormattedException);
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(promise).rejects.toMatchObject({
+          status: HttpStatus.CONFLICT,
+        });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      // El caso que NO hay que romper: sin cuenta vinculada es justo cuando el
+      // dueño necesita poder sacarlo de la pantalla de cobro.
+      it('deja DESHABILITARLO sin cuenta vinculada', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(mpMethod);
+        mockPrisma.mpAccount.findUnique.mockResolvedValue(null);
+        txInner.paymentMethod.update.mockResolvedValue({
+          ...mpMethod,
+          name: 'Mercado Pago',
+          enabled: false,
+          isDefault: false,
+          isSystem: true,
+          syncSeq: 4,
+          version: 3,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-03T00:00:00.000Z'),
+        });
+
+        const result = await service.togglePaymentMethod(
+          't-1',
+          owner,
+          'pm-mp',
+          { enabled: false },
+        );
+
+        expect(result.enabled).toBe(false);
+        expect(mockPrisma.mpAccount.findUnique).not.toHaveBeenCalled();
+      });
+
+      // Regresión: la guarda no toca a los medios que no son de integración.
+      it('renombrar un medio normal sigue andando', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue({
+          id: 'pm-2',
+          tenantId: 't-1',
+          type: 'other',
+        });
+        txInner.paymentMethod.update.mockResolvedValue({
+          id: 'pm-2',
+          type: 'other',
+          name: 'Naranja X',
+          enabled: true,
+          isDefault: false,
+          isSystem: false,
+          syncSeq: 5,
+          version: 2,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-04T00:00:00.000Z'),
+        });
+
+        const result = await service.togglePaymentMethod('t-1', owner, 'pm-2', {
+          name: 'Naranja X',
+        });
+
+        expect(result.name).toBe('Naranja X');
+        expect(mockPrisma.mpAccount.findUnique).not.toHaveBeenCalled();
+      });
     });
   });
 
