@@ -2,7 +2,9 @@
 //
 // Siembra los datos de negocio de los tres estacionamientos de demo: perfil de
 // la entidad (incluida la DIRECCIÓN ESTRUCTURADA), tipos y vehículos propios,
-// tarifas, horarios, abonados, cajas, ingresos y sus cobros, y el onboarding.
+// tarifas, horarios, abonados, cajas, ingresos y sus cobros, el onboarding y la
+// cuenta de Mercado Pago de la playa piloto —con los tokens CIFRADOS de verdad,
+// no con relleno: ver `MP_SEED_ACCOUNT`—.
 // Idempotente — se puede correr todas las veces que haga falta.
 //
 // REGLA DE ORO DE ESTE ARCHIVO: los datos que escribe tienen que ser datos que
@@ -18,6 +20,7 @@
 //
 // Trigger: `make seed-tenant` o `bun run seed:tenant`.
 
+import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
   PrismaClient,
@@ -29,6 +32,9 @@ import {
 import { Pool } from 'pg';
 import { withCapacity } from '../src/entities/entity-settings';
 import { SYSTEM_PAYMENT_METHOD_DEFAULTS } from '../src/entities/system-payment-methods';
+import { MP_PAYMENT_METHOD_NAME } from '../src/mercado-pago/mp-accounts.service';
+import { MpConfigService } from '../src/mercado-pago/mp-config.service';
+import { MpCryptoService } from '../src/mercado-pago/mp-crypto.service';
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? '';
 const DATABASE_URL = process.env.DATABASE_URL ?? '';
@@ -1029,6 +1035,120 @@ const CUSTOM_PAYMENT_METHODS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Mercado Pago
+// ---------------------------------------------------------------------------
+
+/** Un día en milisegundos. Para que las cuentas de abajo se lean. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Cuánto dura un access token de Mercado Pago: 180 días. Se cuenta DESDE HOY,
+ * nunca contra una fecha fija.
+ *
+ * Una fecha absoluta en un fixture se vence sola, y el día que pasa no falla
+ * de frente: la cuenta entra en la ventana de refresh perezoso de
+ * `MpTokenService` (30 días), el próximo cobro sale a canjear el
+ * `refresh_token` contra Mercado Pago —que no conoce ninguno de estos dos
+ * tokens inventados—, y a los 3 fallos la playa queda en `token_expired` con
+ * el medio de pago apagado. Alguien pierde una tarde entendiendo por qué se
+ * "desvinculó" sola una cuenta que nadie tocó.
+ */
+const MP_ACCESS_TOKEN_TTL_DAYS = 180;
+
+/**
+ * Piso de vida útil que el seed tolera en una fila que YA existe.
+ *
+ * Re-sembrar no reescribe el vencimiento porque sí (misma disciplina que
+ * `needsUpdate`): sólo lo empuja de vuelta a los 180 días cuando bajó de este
+ * piso. 60 días es el doble de la ventana de refresh de `MpTokenService`, así
+ * que entre corrida y corrida la cuenta sembrada nunca llega a intentar un
+ * refresh real.
+ */
+const MP_MIN_TOKEN_LIFETIME_DAYS = 60;
+
+/**
+ * La cuenta de Mercado Pago VINCULADA de la playa piloto.
+ *
+ * ## Por qué el seed cifra de verdad en vez de poner un placeholder
+ *
+ * `access_token` y `refresh_token` no son texto: son el base64 que produce
+ * `MpCryptoService` — `base64(iv[12] || tag[16] || ciphertext)`, o sea 28
+ * bytes de cabecera ANTES del primer byte de dato, que en base64 son 40
+ * caracteres de piso. Cualquier string de relleno mide menos, y AES-GCM no
+ * perdona: `decrypt()` valida el tag de autenticación y, si no cierra, tira
+ * `MP_TOKEN_DECRYPT_FAILED`. **Nunca devuelve plaintext basura**, que es
+ * justamente la propiedad por la que se eligió GCM.
+ *
+ * Eso convierte al placeholder en una bomba con la mecha larga: la fila se ve
+ * perfecta en Studio, `GET /tenants/:id/mercado-pago` la muestra vinculada, el
+ * medio de pago aparece en el modal de egreso… y revienta recién cuando algo
+ * pide el token DE VERDAD, que es el primer paso de
+ * `POST /tenants/:tenantId/payment-intents`
+ * (`MpTokenService.getUsableAccessToken`). Un 500 en el camino de cobro, en la
+ * primera prueba manual, por culpa del fixture y no del código.
+ *
+ * Ya pasó: la fila que había en las bases locales venía de un INSERT a mano con
+ * tokens de 31 caracteres —imposibles— y nunca estuvo versionada. Por eso esto
+ * ahora vive acá y cifra con el MISMO service que usa el backend, con la clave
+ * real del entorno (`MP_TOKEN_ENCRYPTION_KEY`, que `env-check` garantiza porque
+ * el target `seed-tenant` depende de él). Es la regla de oro del archivo
+ * aplicada al caso: el seed escribe filas que la aplicación real podría haber
+ * escrito.
+ *
+ * El PLANO sí es obviamente falso, y tiene que serlo: es un fixture local, no
+ * una credencial. Sirve para ejercitar todo lo que pasa de este lado
+ * —descifrado, ventana de refresh, degradación, el gate de `MP_NOT_LINKED`— y
+ * falla ruidosamente contra la API de Mercado Pago, que es exactamente lo que
+ * se le pide a un token de mentira.
+ *
+ * ## Por qué SÓLO Once
+ *
+ * Belgrano y Palermo quedan SIN cuenta a propósito. "No vinculada" no es un
+ * hueco del fixture: es el 404 `MP_NOT_LINKED`, el estado en el que nace toda
+ * playa y el que ve cualquier dueño que todavía no autorizó. Es camino feliz y
+ * hay que poder probarlo sin borrar filas a mano.
+ */
+const MP_SEED_ACCOUNT = {
+  tenantId: TENANTS.once,
+
+  /** Texto PLANO de los tokens. Se cifra antes de tocar la base. */
+  plaintext: {
+    accessToken: 'APP_USR-SEED-FAKE-ACCESS-TOKEN',
+    refreshToken: 'TG-SEED-FAKE-REFRESH-TOKEN',
+  },
+
+  /**
+   * Campos que el seed considera SUYOS y corrige si alguien los movió.
+   *
+   * `status`, `refreshFailureCount` y `lastRefreshAt` entran acá a propósito:
+   * después de probar a mano la degradación (tres fallos y la cuenta cae a
+   * `token_expired`), `make seed-tenant` devuelve la playa a `linked` y
+   * limpia el contador. Sin eso, ejercitar la degradación una vez dejaría la
+   * base local inservible para lo demás hasta un `make reset`.
+   */
+  fields: {
+    /** Id de vendedor de mentira, con la FORMA de uno real (numérico). */
+    mpUserId: '1234567890',
+    status: 'linked',
+    storeId: 'STORE-ONCE-SEED',
+    posId: 'POS-ONCE-SEED',
+    /** Nuestro identificador del POS: es el `external_id` del lado de ellos. */
+    externalPosId: 'PARKIT-ONCE',
+    /**
+     * QR real y escaneable, generado por un servicio público. No apunta a un
+     * cobro (no existe), pero se VE: el panel muestra una imagen de verdad en
+     * vez de un cuadrado roto, que es lo que hace usable la pantalla en local.
+     */
+    qrImageUrl:
+      'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https%3A%2F%2Fmpago.la%2Fparkit-once',
+    /** PDF público cualquiera: alcanza para probar el botón de descarga. */
+    qrTemplateDocumentUrl: 'https://www.orimi.com/pdf-test.pdf',
+    refreshFailureCount: 0,
+    lastRefreshAt: null,
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
 // Onboarding
 // ---------------------------------------------------------------------------
 
@@ -1529,6 +1649,224 @@ async function seedCustomPaymentMethods(): Promise<void> {
   console.log(describe('Métodos de pago propios del dueño', t));
 }
 
+/**
+ * Instancia `MpCryptoService` fuera de Nest, con la MISMA configuración que el
+ * backend.
+ *
+ * No hay contenedor de DI en un script, pero tampoco hace falta: la cadena es
+ * de dos eslabones y `ConfigService` sin argumentos ya lee `process.env` (que
+ * bun completa con `.env` al arrancar). El `onModuleInit()` a mano no es un
+ * detalle: es donde `MpConfigService` valida y decodifica las claves, así que
+ * sin esa llamada el service queda sin settings y el primer `encrypt()` tira.
+ *
+ * Se llama a esto y no se replica el algoritmo a propósito. Un seed que copia
+ * el `aes-256-gcm` a mano es un seed que deja de cifrar como el backend el día
+ * que el formato cambie, y lo va a contar tarde y mal: con un
+ * `MP_TOKEN_DECRYPT_FAILED` adentro de un cobro.
+ */
+function mpCrypto(): { crypto: MpCryptoService; activeKeyVersion: number } {
+  const config = new MpConfigService(new ConfigService());
+  config.onModuleInit();
+  return {
+    crypto: new MpCryptoService(config),
+    activeKeyVersion: config.activeEncryptionKey.version,
+  };
+}
+
+/**
+ * ¿El ciphertext guardado descifra EXACTAMENTE al plano que espera el fixture?
+ *
+ * El try/catch no es pereza: `decrypt()` TIRA ante cualquier anomalía —tag
+ * inválido, clave equivocada, payload más corto que la cabecera (ahí cae la
+ * fila envenenada del INSERT a mano)—, y acá eso no es un error, es la
+ * respuesta "no, no sirve". Lo que sigue es reescribirla, que es el arreglo.
+ */
+function decryptsTo(
+  crypto: MpCryptoService,
+  ciphertext: string,
+  keyVersion: number,
+  expected: string,
+): boolean {
+  try {
+    return crypto.decrypt(ciphertext, keyVersion) === expected;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cifra el par de tokens con la clave ACTIVA y devuelve las tres columnas
+ * juntas.
+ *
+ * Las dos van con UNA sola `token_key_version` porque el esquema tiene una
+ * sola: se cifran juntas y se descifran juntas. Devolverlas en el mismo objeto
+ * hace imposible el bug de actualizar un token y olvidarse de la versión.
+ */
+function mpEncryptedTokens(crypto: MpCryptoService): {
+  accessToken: string;
+  refreshToken: string;
+  tokenKeyVersion: number;
+} {
+  const access = crypto.encrypt(MP_SEED_ACCOUNT.plaintext.accessToken);
+  const refresh = crypto.encrypt(MP_SEED_ACCOUNT.plaintext.refreshToken);
+  return {
+    accessToken: access.ciphertext,
+    refreshToken: refresh.ciphertext,
+    tokenKeyVersion: access.keyVersion,
+  };
+}
+
+/**
+ * La cuenta de Mercado Pago de la playa piloto, cifrada de verdad.
+ *
+ * ## Idempotencia, que acá tiene una vuelta de tuerca
+ *
+ * El ciphertext CAMBIA en cada corrida aunque el plano sea idéntico: el IV es
+ * aleatorio por operación, y tiene que serlo (reusar un IV en GCM con la misma
+ * clave no es "un poco peor", es catastrófico — ver `MpCryptoService`).
+ * Entonces comparar ciphertext contra ciphertext diría "cambió" SIEMPRE, y el
+ * seed reescribiría la fila en cada `make seed-all`.
+ *
+ * Lo que se compara es el PLANO, descifrando lo que ya está guardado. Eso da
+ * las dos cosas de una: re-sembrar sin cambios es un no-op de verdad, y
+ * cualquier fila que no descifre —la del seed a mano, una cifrada con una clave
+ * que ya no está en el entorno— se detecta y se repara sola.
+ *
+ * También se exige que la versión de clave de la fila sea la ACTIVA: si alguien
+ * rotó `MP_TOKEN_ENCRYPTION_KEY`, la vieja todavía descifra (sigue declarada en
+ * `..._PREVIOUS`), pero dejar el fixture cifrado con la anterior sería sembrar
+ * un caso que nadie pidió.
+ */
+async function seedMercadoPagoAccount(): Promise<void> {
+  if (!(await tableExists('mp_accounts'))) {
+    console.warn('⚠ Se omite Mercado Pago: falta la tabla "mp_accounts".');
+    return;
+  }
+
+  const { crypto, activeKeyVersion } = mpCrypto();
+  const { tenantId, fields } = MP_SEED_ACCOUNT;
+  const existing = await prisma.mpAccount.findUnique({ where: { tenantId } });
+
+  if (!existing) {
+    await prisma.mpAccount.create({
+      data: {
+        tenantId,
+        ...fields,
+        ...mpEncryptedTokens(crypto),
+        accessTokenExpiresAt: mpExpiresAt(),
+      },
+    });
+    console.log('✓ Cuenta de Mercado Pago (Once): creada y cifrada.');
+    await seedMercadoPagoPaymentMethod(tenantId);
+    return;
+  }
+
+  const tokensOk =
+    existing.tokenKeyVersion === activeKeyVersion &&
+    decryptsTo(
+      crypto,
+      existing.accessToken,
+      existing.tokenKeyVersion,
+      MP_SEED_ACCOUNT.plaintext.accessToken,
+    ) &&
+    decryptsTo(
+      crypto,
+      existing.refreshToken,
+      existing.tokenKeyVersion,
+      MP_SEED_ACCOUNT.plaintext.refreshToken,
+    );
+
+  const msLeft = existing.accessTokenExpiresAt.getTime() - Date.now();
+  const expiryOk = msLeft >= MP_MIN_TOKEN_LIFETIME_DAYS * DAY_MS;
+
+  if (tokensOk && expiryOk && !needsUpdate(existing, fields)) {
+    console.log('✓ Cuenta de Mercado Pago (Once): sin cambios.');
+    await seedMercadoPagoPaymentMethod(tenantId);
+    return;
+  }
+
+  await prisma.mpAccount.update({
+    where: { tenantId },
+    data: {
+      ...fields,
+      // Tokens nuevos ⇒ vencimiento nuevo: un par recién cifrado con una fecha
+      // vieja sería una cuenta que nace a punto de renovarse.
+      ...(tokensOk ? {} : mpEncryptedTokens(crypto)),
+      ...(tokensOk && expiryOk ? {} : { accessTokenExpiresAt: mpExpiresAt() }),
+    },
+  });
+
+  console.log(
+    tokensOk
+      ? '✓ Cuenta de Mercado Pago (Once): actualizada (vencimiento renovado).'
+      : '✓ Cuenta de Mercado Pago (Once): tokens re-cifrados.',
+  );
+
+  await seedMercadoPagoPaymentMethod(tenantId);
+}
+
+/** Vencimiento del access token, siempre relativo al momento de la corrida. */
+function mpExpiresAt(): Date {
+  return new Date(Date.now() + MP_ACCESS_TOKEN_TTL_DAYS * DAY_MS);
+}
+
+/**
+ * El medio de pago `mercadopago_qr` de la playa vinculada.
+ *
+ * En producción esta fila no la escribe nadie a mano: la crea
+ * `MpAccountsService.link()` DENTRO de la misma transacción que la cuenta
+ * (`ensurePaymentMethod`), porque vincular sin medio de pago deja una playa que
+ * puede generar el QR pero no puede cobrarlo. El seed no pasa por `link()` —no
+ * hay OAuth contra Mercado Pago en local—, así que tiene que reproducir ese
+ * efecto o el fixture queda a medio vincular. Por eso se llama desde
+ * `seedMercadoPagoAccount` y no desde `main`: las dos filas van juntas o no van.
+ *
+ * Mismo find + create/update que allá, y por el mismo motivo: la unicidad de
+ * los métodos de sistema es un índice PARCIAL
+ * (`payment_methods_tenant_system_type_idx WHERE is_system = true`), que Prisma
+ * no sabe expresar, así que no hay `upsert` posible.
+ *
+ * El `name` NO se pisa si la fila ya existe: los métodos de sistema son
+ * renombrables por el dueño, y volver a sembrar no es motivo para deshacerle el
+ * nombre que eligió. Mismo criterio que `seedSystemPaymentMethods` y que
+ * `ensurePaymentMethod`, donde está explicado largo.
+ *
+ * ⚠ OJO con lo que ya tiene Once y NO se toca: además de este, la playa tiene
+ * un método PROPIO llamado "Mercado Pago" de tipo `other` (ver
+ * `CUSTOM_PAYMENT_METHODS`). No es una duplicación a limpiar: es el dueño
+ * cobrando por QR a mano con su celular, contra este otro que es la integración
+ * de verdad. Dos filas que dicen casi lo mismo y significan cosas distintas, y
+ * son el fixture que prueba que el código discrimina por `type` y no por
+ * nombre.
+ */
+async function seedMercadoPagoPaymentMethod(tenantId: string): Promise<void> {
+  const type: PaymentMethodType = 'mercadopago_qr';
+  const existing = await prisma.paymentMethod.findFirst({
+    where: { tenantId, type },
+  });
+
+  if (!existing) {
+    await prisma.paymentMethod.create({
+      data: { tenantId, type, name: MP_PAYMENT_METHOD_NAME, isSystem: true },
+    });
+    console.log(`✓ Medio de pago "${MP_PAYMENT_METHOD_NAME}" (Once): creado.`);
+    return;
+  }
+
+  if (!existing.enabled) {
+    await prisma.paymentMethod.update({
+      where: { id: existing.id },
+      data: { enabled: true },
+    });
+    console.log(
+      `✓ Medio de pago "${existing.name}" (Once): re-habilitado (la cuenta está vinculada).`,
+    );
+    return;
+  }
+
+  console.log(`✓ Medio de pago "${existing.name}" (Once): sin cambios.`);
+}
+
 /** Resuelve un cobro del fixture a la fila real de `payment_methods`. */
 async function resolvePaymentMethod(
   tenantId: string,
@@ -1683,6 +2021,11 @@ async function main(): Promise<void> {
   // Después del onboarding: los cobros necesitan los métodos de pago ya
   // sembrados para copiarles el nombre.
   await seedCustomPaymentMethods();
+
+  // Después de los métodos de pago: vincular Mercado Pago agrega uno más
+  // (`mercadopago_qr`), igual que hace `link()` en producción.
+  await seedMercadoPagoAccount();
+
   await seedEntries();
 }
 
