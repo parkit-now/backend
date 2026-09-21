@@ -54,7 +54,9 @@ describe('MpAccountsService', () => {
   const mpApi = {
     exchangeAuthorizationCode: jest.fn(),
     createStore: jest.fn(),
+    findStoreByExternalId: jest.fn(),
     createPos: jest.fn(),
+    findPosByExternalId: jest.fn(),
     getPos: jest.fn(),
   };
   // Mockeado y no el real: el ciclo de vida del token lo cubre
@@ -199,9 +201,13 @@ describe('MpAccountsService', () => {
     mpApi.createPos.mockResolvedValue({
       id: '2711382',
       externalId: 'PARKITPOS1111',
+      storeId: '1234567',
       qrImageUrl: 'https://mp.test/qr.png',
       qrTemplateDocumentUrl: 'https://mp.test/qr.pdf',
     });
+    // El default es "no existe nada": el camino de una vinculación primera.
+    mpApi.findStoreByExternalId.mockResolvedValue(null);
+    mpApi.findPosByExternalId.mockResolvedValue(null);
   });
 
   /**
@@ -372,6 +378,97 @@ describe('MpAccountsService', () => {
     });
     expect(tx.mpAccount.upsert).not.toHaveBeenCalled();
     expect(tx.paymentMethod.create).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 EL BUG. Los dos `external_id` salen del `tenant_id`, así que un intento
+   * que creó el Store y murió en el POS deja el Store HUÉRFANO —vivo en MP, sin
+   * que nosotros tengamos su id, porque el flujo no persiste nada si falla— y
+   * todo reintento choca contra `already assigned`. Para siempre, y pagando un
+   * paseo por la pantalla de autorización de MP cada vez.
+   */
+  it('adopta el Store y el POS que ya existen en vez de crearlos de nuevo', async () => {
+    mpApi.findStoreByExternalId.mockResolvedValue({ id: '7654321' });
+    mpApi.findPosByExternalId.mockResolvedValue({
+      id: '9999999',
+      externalId: 'PARKITPOS1111',
+      storeId: '7654321',
+      qrImageUrl: 'https://mp.test/adoptado.png',
+      qrTemplateDocumentUrl: 'https://mp.test/adoptado.pdf',
+    });
+
+    await service.handleCallback('code', STATE, user);
+
+    expect(mpApi.createStore).not.toHaveBeenCalled();
+    expect(mpApi.createPos).not.toHaveBeenCalled();
+
+    const { create } = tx.mpAccount.upsert.mock.calls[0][0] as {
+      create: Record<string, unknown>;
+    };
+    expect(create.storeId).toBe('7654321');
+    expect(create.posId).toBe('9999999');
+    // Adoptar un POS y quedarse sin QR deja la vinculación "exitosa" y al dueño
+    // sin nada que imprimir: el resultado tiene que ser INDISTINGUIBLE de crear.
+    expect(create.qrImageUrl).toBe('https://mp.test/adoptado.png');
+    expect(create.qrTemplateDocumentUrl).toBe('https://mp.test/adoptado.pdf');
+  });
+
+  /**
+   * La carrera: entre el `find` y el `create` alguien más lo creó (doble click,
+   * retry de un proxy). Se re-busca ante CUALQUIER fallo del alta y no parseando
+   * el "already assigned" del mensaje: ese texto es prosa que MP puede cambiar.
+   */
+  it('si el alta del Store choca con uno preexistente, lo vuelve a buscar y lo adopta', async () => {
+    mpApi.findStoreByExternalId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: '7654321' });
+    mpApi.createStore.mockRejectedValue(
+      new FormattedException(
+        'Bad Gateway',
+        HttpStatus.BAD_GATEWAY,
+        "Mercado Pago returned 400: external id 'PARKITSTORE1' is already assigned to this user 1178299265",
+        '/mercado-pago/oauth/callback',
+        ErrorCodes.MP_STORE_CREATE_FAILED,
+      ),
+    );
+
+    await service.handleCallback('code', STATE, user);
+
+    // La caja se cuelga del Store ADOPTADO, no de uno nuevo que nunca existió.
+    const [, posInput] = mpApi.createPos.mock.calls[0] as [
+      string,
+      { storeId: string },
+    ];
+    expect(posInput.storeId).toBe('7654321');
+  });
+
+  /**
+   * 🔴 Sin el mensaje de MP, cada fallo es una caja negra: `reason` dice QUÉ
+   * code falló, pero el POR QUÉ —"already assigned", una categoría MCC
+   * inválida, lo que sea— vivía sólo en el log de Cloud Run. Ya nos pasó.
+   */
+  it('audita el mensaje real de Mercado Pago, no sólo el ErrorCode', async () => {
+    mpApi.createPos.mockRejectedValue(
+      new FormattedException(
+        'Bad Gateway',
+        HttpStatus.BAD_GATEWAY,
+        'Mercado Pago returned 400 while trying to create Mercado Pago POS: invalid category',
+        '/mercado-pago/oauth/callback',
+        ErrorCodes.MP_POS_CREATE_FAILED,
+      ),
+    );
+
+    await problemOf(service.handleCallback('code', STATE, user));
+
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          reason: ErrorCodes.MP_POS_CREATE_FAILED,
+          detail:
+            'Mercado Pago returned 400 while trying to create Mercado Pago POS: invalid category',
+        },
+      }),
+    );
   });
 
   /**
