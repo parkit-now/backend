@@ -105,6 +105,15 @@ export class EntitiesService {
     if (dto.lprImageRetentionDays !== undefined) {
       data.lprImageRetentionDays = dto.lprImageRetentionDays;
     }
+    // `null` explícito = desvincular la cámara. Por eso se compara contra
+    // undefined y no se usa un truthy check: `?? null` borraría el valor cada
+    // vez que el cliente manda el resto del perfil sin tocar la cámara.
+    if (dto.entryCameraId !== undefined) {
+      data.entryCameraId = dto.entryCameraId;
+    }
+    if (dto.entryCameraLabel !== undefined) {
+      data.entryCameraLabel = dto.entryCameraLabel;
+    }
 
     // Dirección estructurada: columnas planas de `tenants`, no `settings`.
     // `location.formatted` se aplica DESPUÉS del `address` plano a propósito:

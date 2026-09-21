@@ -39,6 +39,8 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
     status: 'active',
     settings: {},
     lprImageRetentionDays: 30,
+    entryCameraId: null,
+    entryCameraLabel: null,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
     ...overrides,
   };
@@ -205,6 +207,54 @@ describe('EntitiesService', () => {
       };
       expect(updateArg.data.lprImageRetentionDays).toBe(60);
       expect(profile.lprImageRetentionDays).toBe(60);
+    });
+
+    it('vincula la cámara de ingreso al estacionamiento', async () => {
+      const linked = tenant({
+        entryCameraId: 'cam-entrada',
+        entryCameraLabel: 'Portón Rivadavia',
+      });
+      mockPrisma.tenant.findUnique.mockResolvedValue(linked);
+      mockPrisma.tenant.update.mockResolvedValue(linked);
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      const profile = await service.updateProfile('t-1', owner, {
+        entryCameraId: 'cam-entrada',
+        entryCameraLabel: 'Portón Rivadavia',
+      });
+
+      const updateArg = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: { entryCameraId?: string | null };
+      };
+      expect(updateArg.data.entryCameraId).toBe('cam-entrada');
+      expect(profile.entryCameraId).toBe('cam-entrada');
+      expect(profile.entryCameraLabel).toBe('Portón Rivadavia');
+    });
+
+    /**
+     * La distinción que importa: `null` desvincula, ausente no toca nada.
+     *
+     * Si el service usara `?? null` en vez de comparar contra `undefined`,
+     * cualquier guardado del perfil —cambiar el teléfono, por ejemplo— borraría
+     * la cámara en silencio y la detección automática dejaría de atribuirse.
+     */
+    it('distingue desvincular la cámara de no tocarla', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, { entryCameraId: null });
+      const unlink = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(unlink.data.entryCameraId).toBeNull();
+
+      mockPrisma.tenant.update.mockClear();
+      await service.updateProfile('t-1', owner, { phone: '1122334455' });
+      const untouched = mockPrisma.tenant.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect('entryCameraId' in untouched.data).toBe(false);
     });
 
     it('merges capacity into settings and sets status', async () => {

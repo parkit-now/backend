@@ -116,14 +116,24 @@ fi
 
 base_latest_ts="${base_latest:0:14}"
 
-# Solo lo que ESTA rama agrega respecto del ancestro común, para no marcar
-# migraciones viejas que ya están mergeadas.
+# Lo que hay AHORA en el directorio menos lo que la rama base ya conocía.
+#
+# Se mira el disco y no `git diff base...HEAD` a propósito: en el pre-commit el
+# archivo nuevo está en el índice pero todavía NO en HEAD, así que un diff entre
+# commits no lo ve y el hook dejaba pasar justo el commit que introduce el
+# problema. Mirar el working tree cubre los tres casos —sin agregar, staged y
+# commiteado— que es lo que el hook necesita.
+base_files="$(
+  git ls-tree --name-only "$base_ref" -- "$MIGRATIONS_DIR/" \
+    | xargs -r -n1 basename \
+    | grep -E '\.sql$' || true
+)"
+
 added=()
 while IFS= read -r path; do
-  [[ -n "$path" ]] && added+=("$(basename "$path")")
-done < <(
-  git diff --name-only --diff-filter=A "$base_ref...HEAD" -- "$MIGRATIONS_DIR/" || true
-)
+  name="$(basename "$path")"
+  grep -qxF "$name" <<<"$base_files" || added+=("$name")
+done < <(find "$MIGRATIONS_DIR" -maxdepth 1 -name '*.sql' | sort)
 
 if [[ ${#added[@]} -eq 0 ]]; then
   echo "✓ Migraciones OK (esta rama no agrega ninguna)"
