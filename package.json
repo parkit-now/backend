@@ -5,6 +5,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "postinstall": "prisma generate",
     "build": "prisma generate && nest build",
     "typecheck": "prisma generate && tsc --noEmit",

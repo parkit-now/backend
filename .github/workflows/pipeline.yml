@@ -49,6 +49,30 @@ env:
 
 jobs:
   # ===========================================================================
+  # CI: MIGRATIONS — el orden de supabase/migrations tiene que ser aplicable
+  # ===========================================================================
+  #
+  # Va PRIMERO y sin `needs:`: es el chequeo más barato (segundos, sin instalar
+  # nada) y el único que protege producción de un merge que después no se puede
+  # desplegar. Una migración con timestamp anterior a la última ya mergeada
+  # hace que `supabase db push` se plante y exija `--include-all`, que la aplica
+  # fuera de orden. Ya pasó: dejó producción 5 migraciones atrás y el backend
+  # desplegado devolviendo 404 porque Prisma pedía columnas inexistentes.
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # El chequeo compara contra la rama base: sin historia completa no hay
+          # con qué comparar y el script se saltea el control en silencio.
+          fetch-depth: 0
+
+      - name: Check migration order
+        run: ./scripts/check-migrations.sh
+
+  # ===========================================================================
   # CI: LINT — formatting and static rules
   # ===========================================================================
   lint:
