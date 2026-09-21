@@ -184,13 +184,35 @@ export interface MpOrder {
   readonly statusDetail: string | null;
   /** Debería volver igual al que mandamos: sirve para detectar un cruce de órdenes. */
   readonly externalReference: string | null;
+  /**
+   * `last_updated_date` de la orden, ya parseado. Es el instante en el que MP
+   * la movió al `status` que estamos leyendo — y por eso es lo que se guarda en
+   * `payment_intents.approved_at` cuando llega `processed`.
+   *
+   * Nuestro reloj NO sirve para eso: entre que el cliente paga y el webhook nos
+   * llega puede haber minutos (reintentos de MP, un deploy nuestro, el
+   * reconciliador corriendo horas después), y el comprobante tiene que decir
+   * cuándo se pagó, no cuándo nos enteramos. Es además ESTABLE: releer la orden
+   * dos veces da el mismo valor, mientras que `new Date()` escribiría uno
+   * distinto en cada pasada.
+   *
+   * `null` si no vino o no parsea: es un campo de conveniencia, nunca una
+   * precondición. Quien lo use cae a su propio reloj.
+   */
+  readonly lastUpdatedDate: Date | null;
 }
 
 /** Identifica una operación para traducir su fallo a un ProblemDetails. */
 interface MpOperation {
   /** Qué se estaba haciendo. Va al log y al `detail`, en inglés. */
   readonly label: string;
-  /** El `code` del ProblemDetails cuando la operación falla. */
+  /**
+   * El `code` del ProblemDetails cuando MERCADO PAGO RECHAZÓ el request (4xx).
+   * Sólo ese caso: los otros tres —sin respuesta, 429/5xx, 2xx inservible—
+   * llevan codes transversales, porque lo que los distingue no es qué
+   * operación era sino si el recurso existe del otro lado. Ver la tabla de la
+   * cabecera de la clase.
+   */
   readonly code: ErrorCode;
   /** El `instance` del ProblemDetails: patrón de ruta, no ruta concreta. */
   readonly instance: string;
@@ -217,13 +239,45 @@ interface MpOperation {
  *
  * Traduce todo fallo a `FormattedException`, siguiendo el patrón de
  * `StorageService`: destructurar la respuesta, `logger.error(...)` con
- * contexto, y recién ahí tirar. Tres casos:
+ * contexto, y recién ahí tirar. Cuatro casos:
  *
- * | Qué pasó                                   | Status | Code                  |
- * | ------------------------------------------ | ------ | --------------------- |
- * | No hubo respuesta (red caída, timeout, DNS) | 502    | el de la operación    |
- * | MP contestó 429 / 5xx (está caído)          | 503    | `MP_UNAVAILABLE`      |
- * | MP contestó cualquier otro error (4xx)      | 502    | el de la operación    |
+ * | Qué pasó                                   | Status | Code                    |
+ * | ------------------------------------------ | ------ | ----------------------- |
+ * | No hubo respuesta (red caída, timeout, DNS) | 502    | `MP_UNREACHABLE`        |
+ * | MP contestó 429 / 5xx (está caído)          | 503    | `MP_UNAVAILABLE`        |
+ * | MP contestó cualquier otro error (4xx)      | 502    | el de la operación      |
+ * | MP contestó 2xx con un cuerpo inservible    | 502    | `MP_MALFORMED_RESPONSE` |
+ *
+ * ## 🔴 Por qué los tres codes transversales y no sólo el de la operación
+ *
+ * Porque la columna "¿EXISTE EL RECURSO DEL OTRO LADO?" NO es la misma en las
+ * cuatro filas, y quien llama necesita esa respuesta para decidir:
+ *
+ *  - 4xx → NO existe. Mercado Pago leyó el request y lo rechazó.
+ *  - 429/5xx y sin respuesta → NO SABEMOS. El POST pudo haber llegado igual y
+ *    haberse ejecutado; lo que se perdió fue la respuesta.
+ *  - 2xx inservible → SÍ EXISTE, y lo que perdimos es cómo nombrarlo.
+ *
+ * Eso es exactamente lo que separa, en `PaymentIntentsService.create`, un
+ * intento de cobro que queda recuperable en `created` de uno terminal en
+ * `failed`. Y `failed` libera `payment_intents_tenant_live_idx`: marcarlo
+ * cuando la orden pudo haber quedado viva sobre el QR estático de la caja
+ * termina con el cliente del auto siguiente pagando el monto del anterior.
+ *
+ * Antes de esto, la rama del `catch` del `fetch` y la rama `!response.ok`
+ * no-unavailable tiraban EL MISMO `502` + el mismo code, y lo único que
+ * cambiaba era el texto en inglés del `detail`. Una máquina de estados que
+ * decide sobre plata no puede leer un string de prosa: el discriminador tiene
+ * que ser el `code`, que es typesafe contra el catálogo y es el campo que el
+ * contrato de errores del repo declara estable.
+ *
+ * Son codes TRANSVERSALES (uno para las seis operaciones) y no uno por
+ * operación (`MP_ORDER_CREATE_UNREACHABLE`, `MP_STORE_CREATE_UNREACHABLE`, …)
+ * porque el hecho que describen —"no llegamos a Mercado Pago"— es idéntico en
+ * todas, `send` es UN solo lugar, y multiplicarlos por operación agregaría seis
+ * entradas al catálogo (y a los `CODE_MESSAGES` de los tres frontends) para
+ * decir seis veces lo mismo. Qué operación era ya viaja en el `detail` y en el
+ * log, que es donde sirve.
  *
  * El 503 tiene su propio code porque es el único caso donde REINTENTAR tiene
  * sentido: el cliente puede mostrar "Mercado Pago no está disponible, probá en
@@ -627,12 +681,16 @@ export class MpApiClient implements OnModuleInit {
         `Mercado Pago is unreachable: ${method} ${path} failed to ${operation.label}`,
         redact(reason),
       );
+      // 🔴 `MP_UNREACHABLE` y NO `operation.code`: acá NO SABEMOS si el request
+      // llegó. Un POST que murió esperando la respuesta pudo haberse ejecutado
+      // igual del otro lado. Quien llama tiene que poder distinguir esto de un
+      // rechazo 4xx sin leer el `detail` — ver la tabla de la cabecera.
       throw new FormattedException(
         'Bad Gateway',
         HttpStatus.BAD_GATEWAY,
         `Could not reach Mercado Pago to ${operation.label}: ${redact(reason)}`,
         operation.instance,
-        operation.code,
+        ErrorCodes.MP_UNREACHABLE,
       );
     }
 
@@ -761,10 +819,21 @@ export class MpApiClient implements OnModuleInit {
       status: str(payload.status),
       statusDetail: str(payload.status_detail),
       externalReference: str(payload.external_reference),
+      lastUpdatedDate: date(payload.last_updated_date),
     };
   }
 
-  /** Respuesta 2xx pero con una forma que no sirve: se trata como fallo. */
+  /**
+   * Respuesta 2xx pero con una forma que no sirve: se trata como fallo.
+   *
+   * Lleva `MP_MALFORMED_RESPONSE` y NO el code de la operación porque acá
+   * Mercado Pago SÍ ejecutó lo que le pedimos —contestó 2xx— y lo que se perdió
+   * es el identificador. Es lo contrario de un rechazo: el recurso existe. Para
+   * un `POST /v1/orders` eso significa una orden viva sobre el QR de la caja
+   * que no podemos nombrar, y la única forma de recuperar su id es re-POSTear
+   * con la misma `X-Idempotency-Key` — que es justamente lo que deja de pasar
+   * si el intento se marca `failed`.
+   */
   private malformed(
     operation: MpOperation,
     detail: string,
@@ -777,7 +846,7 @@ export class MpApiClient implements OnModuleInit {
       HttpStatus.BAD_GATEWAY,
       `Mercado Pago returned an unusable payload while trying to ${operation.label}: ${detail}`,
       operation.instance,
-      operation.code,
+      ErrorCodes.MP_MALFORMED_RESPONSE,
     );
   }
 }
@@ -827,6 +896,20 @@ function str(value: unknown): string | null {
 /** Número finito, o `null`. */
 function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Fecha ISO 8601 de Mercado Pago, o `null` si falta o es impresentable.
+ *
+ * El chequeo de `NaN` no es paranoia: `new Date('cualquier cosa')` NO tira,
+ * devuelve un `Invalid Date` que se persiste feliz y recién explota al
+ * serializarlo. Un campo de diagnóstico no puede romper nada.
+ */
+function date(value: unknown): Date | null {
+  const raw = str(value);
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /** Objeto plano, o `null` (arrays incluidos: un array no es un objeto útil acá). */

@@ -180,7 +180,11 @@ export class PaymentIntentsService {
    *    no queda ni rastro nuestro, y esa caja se traba hasta que MP la venza.
    * 7. La llamada a MP.
    * 8. Éxito: se guarda el `mp_order_id` y se pasa a `pending`.
-   * 9. Fallo: la fila queda en `failed` con el motivo, y el error se propaga.
+   * 9. Fallo: el error se propaga SIEMPRE, y la fila queda `failed` sólo si
+   *    Mercado Pago contestó y rechazó (4xx). Si no hubo respuesta, si MP
+   *    estaba caído o si contestó 2xx con un cuerpo inservible, se queda en
+   *    `created`: ahí la orden PUEDE existir y `failed` sería una mentira cara.
+   *    Ver el comentario del `catch`.
    */
   async create(
     tenantId: string,
@@ -326,21 +330,46 @@ export class PaymentIntentsService {
     } catch (error) {
       // ── 9. Fallo ────────────────────────────────────────────────────────
       //
-      // La fila NO se borra. Un `failed` con motivo es el rastro de que se
-      // intentó cobrar y no se pudo; borrarlo dejaría al operario mirando una
-      // pantalla que dice "no pasó nada" cuando quizás la orden sí se creó del
-      // otro lado. Además el índice único parcial deja de considerarlo vivo
-      // apenas pasa a `failed`, así que no bloquea el reintento.
+      // La fila NO se borra nunca. Un fallo con motivo es el rastro de que se
+      // intentó cobrar; borrarlo dejaría al operario mirando una pantalla que
+      // dice "no pasó nada" cuando quizás la orden sí se creó del otro lado.
+      //
+      // 🔴 LO QUE SE DECIDE ACÁ ES SI EL INTENTO ES TERMINAL, Y ES UNA DECISIÓN
+      // SOBRE PLATA.
+      //
+      // `failed` es TERMINAL y, además, saca la fila de
+      // `payment_intents_tenant_live_idx`: la caja queda libre para el auto
+      // siguiente. Eso sólo es correcto si sabemos que del otro lado NO quedó
+      // ninguna orden viva. Si la marcáramos `failed` ante un timeout, el
+      // operario cobra el auto siguiente contra el MISMO cartel impreso y
+      // **un cliente paga el monto del otro auto**: el mismo bug que el índice
+      // por caja previene, entrando por la otra puerta.
+      //
+      // Por eso `created` se queda, que es exactamente lo que ese estado
+      // significa —"la fila existe; la orden puede o no existir del lado de
+      // MP"— y es lo que habilita la recuperación: re-POSTear con la misma
+      // `X-Idempotency-Key` devuelve la orden original si existía (ventana de
+      // 24 h). Sin esto `created` era decorativo: NINGÚN camino de código lo
+      // dejaba escrito.
+      //
+      // El discriminador es el `code` del ProblemDetails y no el texto del
+      // `detail` (ver la tabla de la cabecera de `MpApiClient`).
+      const unknownWhetherOrderExists = isAmbiguousMpFailure(error);
       await this.prisma.paymentIntent.updateMany({
         where: {
           id: intent.id,
           tenantId,
           status: { in: [PaymentIntentStatus.created] },
         },
-        data: {
-          status: PaymentIntentStatus.failed,
-          failureReason: describeFailure(error),
-        },
+        // El motivo se persiste en LOS DOS casos: cuando queda en `created` es
+        // lo único que le cuenta al reconciliador (tanda 3b) por qué esta fila
+        // quedó sin `mp_order_id`.
+        data: unknownWhetherOrderExists
+          ? { failureReason: describeFailure(error) }
+          : {
+              status: PaymentIntentStatus.failed,
+              failureReason: describeFailure(error),
+            },
       });
       throw error;
     }
@@ -729,6 +758,54 @@ function idempotencyKeyFor(
   intentId: string,
 ): string {
   return createHash('sha256').update(`${operation}:${intentId}`).digest('hex');
+}
+
+/**
+ * Los tres codes con los que `MpApiClient` dice "Mercado Pago pudo haber
+ * ejecutado la operación igual".
+ *
+ * NO es una lista de "errores transitorios": es la lista de los casos en los
+ * que **no sabemos si la orden existe del otro lado**, que es otra pregunta.
+ *
+ *  - `MP_UNREACHABLE`: no hubo respuesta (timeout, DNS, socket). El POST pudo
+ *    haber llegado igual.
+ *  - `MP_UNAVAILABLE`: MP contestó 429/5xx. Un 500 después de haber creado la
+ *    orden se ve exactamente igual que uno antes de crearla.
+ *  - `MP_MALFORMED_RESPONSE`: MP contestó 2xx sin `id`. Acá la orden casi
+ *    seguro EXISTE y lo que falta es cómo nombrarla — el caso más peligroso de
+ *    los tres, y el que menos parece.
+ *
+ * Todo lo demás —un 4xx de MP, un error nuestro antes de salir a la red— deja
+ * el intento `failed`, que es terminal.
+ */
+const AMBIGUOUS_MP_CODES: readonly string[] = [
+  ErrorCodes.MP_UNREACHABLE,
+  ErrorCodes.MP_UNAVAILABLE,
+  ErrorCodes.MP_MALFORMED_RESPONSE,
+];
+
+/**
+ * ¿Este fallo deja la existencia de la orden en duda?
+ *
+ * Lee el `code` del ProblemDetails, NUNCA el `detail`: el `detail` es prosa en
+ * inglés pensada para un log y cambia sin aviso; el `code` es el único campo
+ * que el contrato de errores del repo declara estable.
+ *
+ * Un error que no sea `FormattedException` (un `TypeError` nuestro, digamos)
+ * NO es ambiguo: si el proceso explotó antes de `fetch`, no hay nada del otro
+ * lado. El default conservador acá es `failed`, porque el otro default —dejar
+ * todo en `created`— trabaría la caja con filas vivas que nadie va a resolver.
+ */
+function isAmbiguousMpFailure(error: unknown): boolean {
+  if (!(error instanceof FormattedException)) return false;
+
+  const body: unknown = error.getResponse();
+  if (body === null || typeof body !== 'object' || !('code' in body)) {
+    return false;
+  }
+
+  const code: unknown = (body as Record<string, unknown>).code;
+  return typeof code === 'string' && AMBIGUOUS_MP_CODES.includes(code);
 }
 
 /**

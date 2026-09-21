@@ -189,7 +189,10 @@ describe('PaymentIntentsService', () => {
       expect(prisma.paymentIntent.create).not.toHaveBeenCalled();
     });
 
-    it('si MP rechaza la order, el intent queda failed con motivo y la fila NO se borra', async () => {
+    it('si MP RECHAZA la order (4xx), el intent queda failed con motivo y la fila NO se borra', async () => {
+      // `MP_ORDER_CREATE_FAILED` es el code que `MpApiClient` emite sólo cuando
+      // Mercado Pago contestó y rechazó: la orden NO existe, así que el intento
+      // es terminal y la caja queda libre.
       mpApi.createOrder.mockRejectedValue(
         new FormattedException(
           'Bad Gateway',
@@ -224,6 +227,42 @@ describe('PaymentIntentsService', () => {
           status: PaymentIntentStatus.failed,
           failureReason: 'MP_ORDER_CREATE_FAILED (HTTP 502)',
         },
+      });
+    });
+
+    it('si MP no contesta, el intent SE QUEDA en created: la orden puede existir', async () => {
+      // 🔴 El caso caro. Con un timeout no sabemos si `POST /v1/orders` llegó.
+      // Marcarlo `failed` lo saca de `payment_intents_tenant_live_idx`, el
+      // operario cobra el auto siguiente contra el MISMO cartel impreso y un
+      // cliente termina pagando el monto del otro auto.
+      mpApi.createOrder.mockRejectedValue(
+        new FormattedException(
+          'Bad Gateway',
+          502,
+          'Could not reach Mercado Pago',
+          '/tenants/:tenantId/payment-intents',
+          ErrorCodes.MP_UNREACHABLE,
+        ),
+      );
+
+      const problem = await problemOf(
+        service.create(TENANT, user, {
+          id: INTENT,
+          entryId: ENTRY,
+          amount: 1500,
+        }),
+      );
+
+      expect(problem).toMatchObject({ code: ErrorCodes.MP_UNREACHABLE });
+      // Se anota el motivo —lo necesita el reconciliador— pero NO se toca el
+      // estado: `created` es justamente "la orden puede o no existir".
+      expect(prisma.paymentIntent.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: INTENT,
+          tenantId: TENANT,
+          status: { in: [PaymentIntentStatus.created] },
+        },
+        data: { failureReason: 'MP_UNREACHABLE (HTTP 502)' },
       });
     });
   });

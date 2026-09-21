@@ -133,7 +133,7 @@ describe('MpApiClient', () => {
     expect(bodyOf().redirect_uri).toBe(mockConfig.oauthRedirectUri);
   });
 
-  it('falla con 502 si la respuesta no trae refresh_token', async () => {
+  it('falla con 502 MP_MALFORMED_RESPONSE si la respuesta no trae refresh_token', async () => {
     // Una cuenta sin refresh_token queda muerta al primer vencimiento, y nadie
     // se entera hasta que el dueño no puede cobrar.
     fetchMock.mockResolvedValue(
@@ -144,16 +144,20 @@ describe('MpApiClient', () => {
       await problemOf(client.exchangeAuthorizationCode('c', 'v')),
     ).toMatchObject({
       status: HttpStatus.BAD_GATEWAY,
-      code: ErrorCodes.MP_OAUTH_CODE_EXCHANGE_FAILED,
+      code: ErrorCodes.MP_MALFORMED_RESPONSE,
     });
   });
 
-  it('un fallo de red (o el timeout) da 502 con el code de la operación', async () => {
+  // 🔴 Este code es lo que separa "la orden NO existe" de "no sabemos si
+  // existe". Si vuelve a ser el de la operación, `PaymentIntentsService` no
+  // puede distinguir un rechazo de un timeout y marca `failed` una orden que
+  // quizás quedó viva sobre el QR de la caja.
+  it('un fallo de red (o el timeout) da 502 MP_UNREACHABLE, no el code de la operación', async () => {
     fetchMock.mockRejectedValue(new Error('The operation timed out.'));
 
     expect(await problemOf(createPos())).toMatchObject({
       status: HttpStatus.BAD_GATEWAY,
-      code: ErrorCodes.MP_POS_CREATE_FAILED,
+      code: ErrorCodes.MP_UNREACHABLE,
     });
   });
 

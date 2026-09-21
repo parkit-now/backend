@@ -162,6 +162,21 @@ export const ErrorCodes = {
   // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
   // el cliente deberia reintentar mas tarde (503).
   MP_UNAVAILABLE: 'MP_UNAVAILABLE',
+  // NO HUBO RESPUESTA de Mercado Pago: timeout, DNS caido, socket cortado
+  // (502). Es el hermano de `MP_UNAVAILABLE` y NO es un detalle cosmetico:
+  // cuando la operacion que murio era un POST, la peticion PUDO HABER LLEGADO
+  // igual, asi que el recurso del otro lado puede existir. Eso es lo que
+  // separa un intento de cobro recuperable (queda en `created` y se re-POSTea
+  // con la misma `X-Idempotency-Key`) de uno terminal (`failed`), y por eso la
+  // maquina de estados necesita distinguirlo por `code` y no leyendo el
+  // `detail` en ingles. Ver `PaymentIntentsService.create`.
+  MP_UNREACHABLE: 'MP_UNREACHABLE',
+  // Mercado Pago contesto 2xx pero con un cuerpo inservible: falta el `id`, o
+  // no es JSON (502). Mismo problema que `MP_UNREACHABLE` y por eso es un code
+  // aparte y no el de la operacion: la operacion SI se ejecuto del otro lado
+  // —la orden existe— y lo que perdimos es como nombrarla, asi que tratarla
+  // como rechazo terminal dejaria una orden viva en la caja.
+  MP_MALFORMED_RESPONSE: 'MP_MALFORMED_RESPONSE',
   // La cuenta esta vinculada y operativa pero le falta el POS (`external_pos_id`
   // en NULL): sin caja no hay QR contra el cual cobrar (409). Se arregla con
   // `POST /tenants/{id}/mercado-pago/pos/resync`, no re-vinculando, y por eso
@@ -189,6 +204,14 @@ export const ErrorCodes = {
   PAYMENT_INTENT_NOT_CANCELABLE: 'PAYMENT_INTENT_NOT_CANCELABLE',
   // Se intento cobrar con QR una estadia que ya tiene salida registrada (409).
   PAYMENT_INTENT_ENTRY_CLOSED: 'PAYMENT_INTENT_ENTRY_CLOSED',
+  // Llego una notificacion firmada de Mercado Pago pero no pudimos releer la
+  // orden para confirmar su estado real (503). NINGUN cliente nuestro ve este
+  // code: el unico que lo recibe es Mercado Pago, y lo unico que le importa es
+  // que sea 5xx para reintentar. Existe igual —en vez de dejar propagar el 409
+  // de una cuenta rota— porque el contrato del webhook es "el unico 4xx es el
+  // 401 de firma invalida", y porque un 200 sin haber leido el estado real
+  // seria dar por procesado un pago que nadie verifico.
+  MP_WEBHOOK_ORDER_UNVERIFIED: 'MP_WEBHOOK_ORDER_UNVERIFIED',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
