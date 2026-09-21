@@ -5,13 +5,30 @@
  *
  * `vehicle-brands.ts` (y el `vehicleBrands.ts` del desktop del que salió) trae
  * marca y modelo, nada más: no existía ninguna fuente en el proyecto que supiera
- * que una Hilux es una pickup. Este mapa se construyó a mano, modelo por modelo,
- * contra el mercado argentino.
+ * que una Hilux es una pickup. `MODEL_TYPES` se construyó a mano, modelo por
+ * modelo, contra el mercado argentino.
  *
- * DELIBERADAMENTE NO HAY DEFAULT. `gen-vehicle-catalog.ts` falla si un modelo de
- * `vehicle-brands.ts` no aparece acá. Un default (`auto`, o `null`) haría que
- * agregar modelos nuevos los tipifique mal en silencio, y como los globales son
- * read-only para los tenants, nadie podría corregirlos desde la app.
+ * DE DÓNDE SALE EL TIPO AHORA
+ *
+ * Desde el backfill del catálogo, el grueso de los modelos lo aporta
+ * `vehicle-catalog.json` (importado con `make catalog-import`), que ya trae la
+ * carrocería publicada por la fuente. `CARROCERIA_TO_TYPE` la traduce.
+ *
+ * `MODEL_TYPES` dejó de ser el catálogo entero y pasó a ser la CAPA DE
+ * OVERRIDES: lo que está acá gana siempre. Sirve para los modelos curados que
+ * la fuente no tiene (T-Cross, Great Wall, Lifan) y para corregirle la mano
+ * cuando clasifica distinto a como opera una playa.
+ *
+ * Orden de resolución en `gen-vehicle-catalog.ts`:
+ *
+ *   1. MODEL_TYPES[marca][modelo]          ← el override curado
+ *   2. CARROCERIA_TO_TYPE[carrocería]      ← el bulk importado
+ *   3. throw
+ *
+ * DELIBERADAMENTE NO HAY DEFAULT EN NINGUNO DE LOS DOS PASOS. Un default
+ * (`auto`, o `null`) haría que agregar modelos nuevos los tipifique mal en
+ * silencio, y como los globales son read-only para los tenants, nadie podría
+ * corregirlos desde la app. Es preferible un generador que no corre.
  *
  * CRITERIO (carrocería, el dato de origen):
  *   auto   - sedán, hatchback, coupé, familiar, monovolumen
@@ -26,6 +43,88 @@
  * fuente, y la información ya no se recupera.
  */
 export type CatalogVehicleType = 'auto' | 'suv' | 'pickup' | 'van';
+
+/**
+ * Carrocería publicada por la fuente -> nuestra clasificación.
+ *
+ * Las claves son los valores literales del campo "Tipo de carrocería" de
+ * thecarsbase, tal como los escribe (con acentos). Los once confirmados salieron
+ * de muestrear 87 modelos; `Familiar` se incluye porque el criterio de arriba ya
+ * lo nombra, aunque no haya aparecido en la muestra.
+ *
+ * SIN DEFAULT, igual que `MODEL_TYPES`: si la fuente publica una carrocería que
+ * no está acá, `gen-vehicle-catalog.ts` falla y la lista. Agregar la clave es
+ * una línea; descubrir seis meses después que 40 modelos entraron como `auto`
+ * porque hubo un `?? 'auto'` no se arregla con una línea.
+ *
+ * `Chasis` (Jumper, Transit chasis cabina) va a `van` y no a `pickup`: no tiene
+ * caja de carga abierta, es un utilitario al que se le monta una carrocería.
+ */
+/**
+ * Carrocerías que se descartan del catálogo a propósito.
+ *
+ * El alcance del catálogo son AUTOS. La fuente mete diez camiones livianos
+ * (Foton Aumark, JMC N900, Kia Bongo…) dentro del dataset de autos; no son lo
+ * que estaciona en una playa y no justifican sembrarle a cada cuenta diez
+ * modelos que nadie va a tipear. Una playa que reciba uno lo carga a mano.
+ *
+ * ESTO NO ES UN ESCAPE PARA CARROCERÍAS NUEVAS. Excluir es una decisión
+ * explícita que se toma acá; lo que NO esté ni en este array ni en
+ * `CARROCERIA_TO_TYPE` sigue haciendo fallar al generador. La diferencia entre
+ * "decidimos que no va" y "no sabemos qué es" tiene que seguir siendo visible.
+ *
+ * Si algún día entran los camiones de verdad, el camino es la sitemap de
+ * camiones (21 modelos) + `camion` en `CatalogVehicleType`, no sacar esta línea.
+ */
+export const EXCLUDED_CARROCERIAS: readonly string[] = ['Camión liviano'];
+
+/**
+ * Fichas sueltas que se descartan, por slug `marca/modelo` de la URL de origen.
+ *
+ * POR QUÉ POR SLUG Y NO POR NOMBRE
+ *
+ * Estos existen justamente porque DOS fichas distintas comparten el mismo
+ * nombre display. `('Chevrolet', 'Sonic')` no alcanza para decir cuál de las dos
+ * se va; el slug sí, y además es lo que la fuente usa como identidad.
+ *
+ * POR QUÉ ACÁ Y NO BORRANDO LA FILA DEL JSON
+ *
+ * `vehicle-catalog.json` lo reescribe entero `make catalog-import`. Una fila
+ * borrada a mano vuelve en la próxima importación y nadie se entera. Esto
+ * sobrevive.
+ *
+ * El generador FALLA si alguno de estos slugs no aparece en el import: un slug
+ * que no matchea es una exclusión que no se aplica, y el modelo que creíamos
+ * afuera termina adentro.
+ */
+export const EXCLUDED_MODELS: readonly string[] = [
+  // El sitio tiene el sedán 2016 (`chevrolet/sonic`) y un SUV 2026 con el mismo
+  // nombre. La PK (brand, model) de vehicle_catalog_defaults no admite los dos,
+  // y para un autocompletado "Chevrolet Sonic" es una sola entrada.
+  'chevrolet/sonic-suv',
+  // Acá el Corsa es Chevrolet, y `chevrolet/corsa` ya está en el catálogo.
+  'opel/corsa',
+  'opel/corsa-f',
+];
+
+export const CARROCERIA_TO_TYPE: Record<string, CatalogVehicleType> = {
+  Sedán: 'auto',
+  Hatchback: 'auto',
+  Coupé: 'auto',
+  Familiar: 'auto',
+  Rural: 'auto',
+  Monovolumen: 'auto',
+  Microcar: 'auto',
+  Cabrio: 'auto',
+  Roadster: 'auto',
+  SUV: 'suv',
+  Pickup: 'pickup',
+  // La fuente escribe las dos grafías. Son la misma carrocería.
+  'Pick-up': 'pickup',
+  Furgón: 'van',
+  Van: 'van',
+  Chasis: 'van',
+};
 
 /**
  * Carrocería -> nombre del tipo por defecto con el que se siembra cada cuenta.
@@ -61,6 +160,19 @@ export const DEFAULT_TYPE_NAMES = [
   'Otro',
 ] as const;
 
+/**
+ * Overrides curados: marca -> modelo -> tipo. Le ganan siempre a la carrocería
+ * importada.
+ *
+ * No hace falta que estén los ~1.150 modelos del JSON. Lo que va acá es lo que
+ * la fuente no sabe o sabe distinto. No es obligatorio que un modelo figure:
+ * si no está, se resuelve por `CARROCERIA_TO_TYPE`.
+ *
+ * Lo que SÍ es obligatorio es que todo lo que esté acá exista en el catálogo
+ * final (`vehicle-brands.ts` ∪ `vehicle-catalog.json`). El generador falla con
+ * los huérfanos: una clasificación que no le corresponde a ningún modelo es casi
+ * siempre un typo en el nombre.
+ */
 export const MODEL_TYPES: Record<string, Record<string, CatalogVehicleType>> = {
   Volkswagen: {
     Gol: 'auto',

@@ -66,8 +66,8 @@ Hay **tres** caminos de creación de estacionamientos:
 
 Los tres convergen en el trigger `AFTER INSERT ON tenants`
 (`bootstrap_tenant_defaults()`, migración `20260901013345`), que siembra los
-siete tipos de vehículo, el catálogo de 244 modelos, el servicio de reserva
-anticipada y los dos métodos de pago del sistema.
+siete tipos de vehículo, el catálogo de modelos completo (ver §7.1), el servicio
+de reserva anticipada y los dos métodos de pago del sistema.
 
 **Si hay que agregar un default nuevo, va en el trigger y en ningún otro lado.**
 Antes esto se hacía a mano en `approve()` y el alta directa del admin se lo
@@ -257,6 +257,48 @@ bun test
 - Auth + memberships: `make seed-auth` (`scripts/seed-auth.ts`)
 - Tenant-local negocio: `make seed-tenant` (`scripts/seed-tenant.ts`)
 - Completo: `make seed-all`
+
+### 7.1) Catálogo de vehículos (NO es un seed)
+
+`vehicle_catalog_defaults` es la plantilla desde la que cada tenant recibe su
+copia editable de modelos. **Vive en migraciones, no en `seed.sql`**: `seed.sql`
+es local-only y `supabase db push` nunca lo aplica, así que producción nacería
+sin catálogo.
+
+| Comando                 | Qué hace                                                |
+| ----------------------- | ------------------------------------------------------- |
+| `make catalog-import`   | Importa el catálogo de thecarsbase. **Único script del repo que toca la red.** ~20 min. Acepta `LIMIT=20` |
+| `make catalog-sql`      | Emite a stdout el SQL de la plantilla. Puro              |
+| `make catalog-migration`| Escribe la migración completa (plantilla + backfill)     |
+
+```
+scripts/import-vehicle-catalog.ts   (red)
+        ↓
+scripts/data/vehicle-catalog.json   (importado, versionado)
+        +  scripts/data/vehicle-brands.ts   (curado)
+        +  scripts/data/vehicle-types.ts    (overrides + mapeo de carrocerías)
+        ↓
+scripts/gen-vehicle-catalog.ts      (puro: merge + guards)
+        ↓
+supabase/migrations/<ts>_backfill_vehicle_catalog.sql
+```
+
+Reglas:
+
+- **El catálogo final es la UNIÓN, no el import.** Lo curado gana en nombre y en
+  tipo. Hay modelos que se venden mucho acá y la fuente no tiene (T-Cross, Great
+  Wall, Lifan): reemplazar en vez de unir los borraría.
+- **No hay default en ningún paso.** Un modelo sin tipo o una carrocería sin
+  mapear hacen fallar al generador con la lista. Los globales son read-only para
+  el tenant: un modelo mal tipificado en silencio no lo puede corregir nadie
+  desde la app.
+- **Nunca un UPDATE masivo sobre `vehicles`.** `set_vehicles_sync_fields` es un
+  `BEFORE UPDATE` que bumpea `sync_seq` **y** `version`, así que invalidaría las
+  `version` cacheadas de todos los clientes offline. El backfill es un INSERT.
+- El backfill a tenants existentes lleva un `NOT EXISTS` además del
+  `ON CONFLICT`: el índice único de `vehicles` es **parcial**
+  (`WHERE deleted_at IS NULL`), así que sin él resucitaría los modelos que el
+  dueño borró.
 
 ## 8) Pipeline CI/CD (qué no romper)
 
