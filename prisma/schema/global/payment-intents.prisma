@@ -1,6 +1,6 @@
 // Payment intents — el intento de cobro con QR de Mercado Pago.
 //
-// Migración 20260920233000_payment_intents.sql. Una fila por "el operador
+// Migración 20260921140000_payment_intents.sql. Una fila por "el operador
 // apretó Cobrar con QR sobre esta estadía": el puente entre una `Entry` y una
 // `Order` de Mercado Pago.
 //

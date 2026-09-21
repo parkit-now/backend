@@ -1,6 +1,6 @@
 -- Un solo intento de cobro VIVO por CAJA (`tenant_id`), no sólo por estadía.
 --
--- Corrige un hueco de 20260920233000_payment_intents.sql. Ese archivo dejó
+-- Corrige un hueco de 20260921140000_payment_intents.sql. Ese archivo dejó
 -- `payment_intents_entry_live_idx`, que es UNIQUE sobre `entry_id`: impide
 -- cobrarle dos veces al MISMO auto, pero NO impide que DOS autos distintos
 -- tengan cada uno su orden viva en la MISMA caja. Y eso, con QR estático, es un
