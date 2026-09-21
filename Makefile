@@ -19,6 +19,7 @@ ENV_PROD  := .env.production
 
 .PHONY: help install up down dev prod build test lint format \
         migration migration-check migration-apply generate reset seed-all seed-global seed-auth seed-tenant \
+        catalog-import catalog-sql catalog-migration \
         env-check env-print env-use-local env-use-prod \
         push push-dry-run push-linked status studio logs clean
 
@@ -199,6 +200,34 @@ seed-auth: env-check ## Cargar usuarios/memberships de demo en Supabase Auth (so
 
 seed-tenant: env-check ## Cargar datos tenant-locales de demo (entries por tenant)
 	@bun run scripts/seed-tenant.ts
+
+seed-demo: env-check ## Llenar los dashboards: 60 días de entries, pagos, LPR y auditoría (relativo a hoy)
+	@bun run scripts/seed-demo-data.ts
+
+## ──────────────────────────────────────────────────────────────────
+## Catálogo de vehículos (plantilla de la plataforma)
+## ──────────────────────────────────────────────────────────────────
+
+catalog-import: ## Importar el catálogo de autos (RED, ~20 min). Uso: make catalog-import [LIMIT=20]
+	@bun run scripts/import-vehicle-catalog.ts $(if $(LIMIT),--limit $(LIMIT),)
+
+catalog-sql: ## Emitir a stdout el SQL de la plantilla (puro: no toca red ni base)
+	@bun run scripts/gen-vehicle-catalog.ts
+
+catalog-migration: ## Escribir la migración del catálogo, lista para `make migration-apply`
+	@if [ -z "$$(ls supabase/migrations/*_backfill_vehicle_catalog.sql 2>/dev/null)" ]; then \
+		supabase migration new backfill_vehicle_catalog >/dev/null; fi
+	@f=$$(ls supabase/migrations/*_backfill_vehicle_catalog.sql | tail -1); \
+	 tmp=$$(mktemp); \
+	 bun run scripts/gen-vehicle-catalog.ts --with-backfill > "$$tmp"; \
+	 cat "$$tmp" > "$$f"; \
+	 rm -f "$$tmp"; \
+	 n=$$(grep -c "^  ('" "$$f"); \
+	 echo "✓ Migración escrita: $$f ($$n modelos)"; \
+	 echo ""; \
+	 echo "Próximos pasos:"; \
+	 echo "  1. Revisá el SQL"; \
+	 echo "  2. Corré: make migration-apply"
 
 push: ## Aplicar migraciones a DB remota usando DIRECT_URL de `.env` (sin `supabase link`)
 	@if [ ! -f .env ]; then \

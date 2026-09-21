@@ -55,6 +55,10 @@ lerna-debug.log*
 .temp
 .tmp
 
+# Caché de HTML de `make catalog-import` (el resultado versionado es
+# scripts/data/vehicle-catalog.json, no las páginas de las que salió)
+/scripts/.cache/
+
 # Runtime data
 pids
 *.pid
