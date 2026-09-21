@@ -153,9 +153,83 @@ export const ErrorCodes = {
   MP_STORE_CREATE_FAILED: 'MP_STORE_CREATE_FAILED',
   // Fallo la creacion (o la lectura) del `POS` en Mercado Pago (502).
   MP_POS_CREATE_FAILED: 'MP_POS_CREATE_FAILED',
+  // Fallo la creacion, la lectura o la cancelacion de la `Order` de Mercado
+  // Pago: la playa no puede cobrar con QR ahora mismo (502). UN SOLO code para
+  // las tres operaciones a proposito: al cliente le sirve lo mismo ("no se
+  // pudo generar el cobro con QR") y el detalle de cual fallo ya esta en el
+  // `detail` y en el log.
+  MP_ORDER_CREATE_FAILED: 'MP_ORDER_CREATE_FAILED',
   // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
   // el cliente deberia reintentar mas tarde (503).
   MP_UNAVAILABLE: 'MP_UNAVAILABLE',
+  // NO HUBO RESPUESTA de Mercado Pago: timeout, DNS caido, socket cortado
+  // (502). Es el hermano de `MP_UNAVAILABLE` y NO es un detalle cosmetico:
+  // cuando la operacion que murio era un POST, la peticion PUDO HABER LLEGADO
+  // igual, asi que el recurso del otro lado puede existir. Eso es lo que
+  // separa un intento de cobro recuperable (queda en `created` y se re-POSTea
+  // con la misma `X-Idempotency-Key`) de uno terminal (`failed`), y por eso la
+  // maquina de estados necesita distinguirlo por `code` y no leyendo el
+  // `detail` en ingles. Ver `PaymentIntentsService.create`.
+  MP_UNREACHABLE: 'MP_UNREACHABLE',
+  // Mercado Pago contesto 2xx pero con un cuerpo inservible: falta el `id`, o
+  // no es JSON (502). Mismo problema que `MP_UNREACHABLE` y por eso es un code
+  // aparte y no el de la operacion: la operacion SI se ejecuto del otro lado
+  // —la orden existe— y lo que perdimos es como nombrarla, asi que tratarla
+  // como rechazo terminal dejaria una orden viva en la caja.
+  MP_MALFORMED_RESPONSE: 'MP_MALFORMED_RESPONSE',
+  // La cuenta esta vinculada y operativa pero le falta el POS (`external_pos_id`
+  // en NULL): sin caja no hay QR contra el cual cobrar (409). Se arregla con
+  // `POST /tenants/{id}/mercado-pago/pos/resync`, no re-vinculando, y por eso
+  // NO comparte code con `MP_NOT_LINKED`: la accion de salida es otra.
+  MP_POS_NOT_PROVISIONED: 'MP_POS_NOT_PROVISIONED',
+
+  // Mercado Pago · intentos de cobro con QR (`payment_intents`)
+  // El intento pedido no existe o es de otro estacionamiento (404). UN SOLO
+  // code para los dos casos, igual que `CASH_SESSION_NOT_FOUND`: distinguirlos
+  // le confirmaria a un tercero que el id existe.
+  PAYMENT_INTENT_NOT_FOUND: 'PAYMENT_INTENT_NOT_FOUND',
+  // Ya hay un cobro vivo para ESA estadia (409): lo frena
+  // `payment_intents_entry_live_idx`, que es lo que evita cobrarle dos veces al
+  // mismo auto.
+  PAYMENT_INTENT_ALREADY_OPEN: 'PAYMENT_INTENT_ALREADY_OPEN',
+  // Ya hay un cobro en curso en LA CAJA, sobre otra estadia (409): lo frena
+  // `payment_intents_tenant_live_idx`. Con QR estatico el cartel impreso esta
+  // atado a un POS y esa caja sostiene una sola orden a la vez. Es un code
+  // distinto de `PAYMENT_INTENT_ALREADY_OPEN` a proposito: el operario tiene
+  // que saber si el bloqueo es de este auto o del de al lado, porque lo que
+  // tiene que hacer es distinto.
+  PAYMENT_INTENT_POS_BUSY: 'PAYMENT_INTENT_POS_BUSY',
+  // Se intento cancelar un intento que ya no esta vivo (409): ya se pago, ya
+  // vencio, ya se cancelo o ya se consumio.
+  PAYMENT_INTENT_NOT_CANCELABLE: 'PAYMENT_INTENT_NOT_CANCELABLE',
+  // Se intento cobrar con QR una estadia que ya tiene salida registrada (409).
+  PAYMENT_INTENT_ENTRY_CLOSED: 'PAYMENT_INTENT_ENTRY_CLOSED',
+  // El cierre de estadia mando un `paymentIntentId` que NO se puede consumir
+  // (409). UN SOLO code para los cinco casos malos, y es a proposito: ya se
+  // consumio, es de otra estadia, es de otra playa, el monto no coincide con el
+  // de la linea, o nunca llego a `approved`. Los cinco se detectan con la MISMA
+  // sentencia —un `updateMany` con guarda que actualiza 0 filas— y no se puede
+  // saber cual fue sin una lectura extra que ademas abriria una carrera entre
+  // el SELECT y el UPDATE.
+  //
+  // Distinguirlos tampoco le serviria a nadie: la accion del operario es
+  // identica en los cinco (mirar el estado real del cobro y, si hace falta,
+  // generar uno nuevo), y "de otra playa" es justamente el caso donde contar
+  // mas seria filtrar la existencia de la fila.
+  //
+  // El mensaje en espanol lo pone el cliente (`CODE_MESSAGES`), no el `detail`:
+  // el operario esta con el cliente adelante, asi que tiene que leer algo como
+  // "ese cobro con QR ya se aplico o no corresponde a esta estadia", no una
+  // cadena en ingles.
+  PAYMENT_INTENT_NOT_CONSUMABLE: 'PAYMENT_INTENT_NOT_CONSUMABLE',
+  // Llego una notificacion firmada de Mercado Pago pero no pudimos releer la
+  // orden para confirmar su estado real (503). NINGUN cliente nuestro ve este
+  // code: el unico que lo recibe es Mercado Pago, y lo unico que le importa es
+  // que sea 5xx para reintentar. Existe igual —en vez de dejar propagar el 409
+  // de una cuenta rota— porque el contrato del webhook es "el unico 4xx es el
+  // 401 de firma invalida", y porque un 200 sin haber leido el estado real
+  // seria dar por procesado un pago que nadie verifico.
+  MP_WEBHOOK_ORDER_UNVERIFIED: 'MP_WEBHOOK_ORDER_UNVERIFIED',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',

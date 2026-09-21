@@ -40,6 +40,28 @@ export const AuditActions = {
   MP_ACCOUNT_LINKED: 'mp_account.linked',
   MP_ACCOUNT_UNLINKED: 'mp_account.unlinked',
   MP_ACCOUNT_LINK_FAILED: 'mp_account.link_failed',
+  // Renovación exitosa del par de tokens (`MpTokenService`). Es `info`: no hay
+  // nada que hacer, pero deja el rastro de cuándo rotaron los tokens, que es lo
+  // primero que se mira cuando una playa deja de cobrar.
+  MP_ACCOUNT_TOKEN_REFRESHED: 'mp_account.token_refreshed',
+  // La cuenta se degradó a `token_expired` y se apagó el medio de pago. Es el
+  // único `crit` de Mercado Pago: la playa perdió un medio de cobro y NO se
+  // recupera sola, hace falta que el dueño re-vincule.
+  MP_ACCOUNT_TOKEN_EXPIRED: 'mp_account.token_expired',
+  // Se canceló el intento de nuestro lado pero Mercado Pago NO aceptó cancelar
+  // la orden. Es `warn` y no `info` porque puede haber quedado una orden viva
+  // sobre el QR de la caja: el próximo cliente que escanee el cartel impreso
+  // podría llegar a pagar el monto del auto anterior. Alguien tiene que mirar
+  // esto. El porqué de cancelar igual del lado nuestro está en
+  // `PaymentIntentsService.cancel`.
+  PAYMENT_INTENT_CANCEL_MP_FAILED: 'payment_intent.cancel_mp_failed',
+  // Mercado Pago devolvió la plata de un cobro que ya estaba acreditado. Lo
+  // escribe el webhook y es el único evento del que la playa pierde plata que
+  // ya había dado por buena. La severidad la decide DESDE DÓNDE venía el
+  // intento (ver `MpWebhookService.refund`): `crit` si ya estaba `consumed`
+  // —el arqueo de ese turno contó esa plata y ahora está mal— y `warn` si
+  // todavía estaba en `approved`, donde nadie lo había contado.
+  PAYMENT_INTENT_REFUNDED: 'payment_intent.refunded',
 } as const;
 
 export interface RecordAuditInput {

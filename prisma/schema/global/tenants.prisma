@@ -89,6 +89,8 @@ model Tenant {
   // `@unique` sobre `MpAccount.tenantId`: una playa vincula a lo sumo una.
   mpAccount            MpAccount?
   mpOauthStates        MpOauthState[]
+  // Intentos de cobro con QR (global/payment-intents.prisma).
+  paymentIntents       PaymentIntent[]
 
   @@index([cuit])
   @@map("tenants")

@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { MembershipRole, Prisma } from '@prisma/client';
+import { MembershipRole, PaymentIntentStatus, Prisma } from '@prisma/client';
 import type { PaymentMethodType, User, UserMembership } from '@prisma/client';
 import { AuditActions } from '../audit/audit.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
@@ -204,6 +204,100 @@ async function resolvePaymentLineTypes(
   }
 
   return resolved;
+}
+
+/**
+ * Quema los `payment_intents` que financian este cierre: `approved` →
+ * `consumed`, DENTRO de la transacción que cierra la estadía.
+ *
+ * ## Por qué va acá adentro y no en un endpoint aparte
+ *
+ * Porque cerrar la estadía y quemar el intento tienen que ser ATÓMICOS, y las
+ * dos mitades rotas cuestan plata en direcciones opuestas:
+ *
+ *   · Si la estadía cierra y el intento queda en `approved`, ese mismo cobro se
+ *     puede volver a mandar en el cierre de OTRA estadía. El arqueo cuenta dos
+ *     veces una plata que entró una sola vez, y el faltante se lo come el
+ *     operador del turno.
+ *   · Si el intento se quema y el cierre falla, el cliente pagó y la estadía
+ *     sigue abierta: el auto no sale sin que alguien cobre de nuevo a mano.
+ *
+ * Van juntos o no va ninguno. Por eso recibe el `tx` y no el cliente de Prisma.
+ *
+ * ## Por qué `updateMany` con guarda y no `update` + `if`
+ *
+ * Porque el `WHERE` completo —id, playa, estadía, `approved` y monto— viaja en
+ * la MISMA sentencia que el `SET`, así que Postgres lo resuelve bajo el lock de
+ * la fila. Un `findFirst` seguido de un `update` dejaría una ventana entre la
+ * lectura y la escritura, y esa ventana es exactamente el doble consumo que
+ * estamos evitando: dos cierres concurrentes leerían `approved` los dos.
+ *
+ * `count === 0` cubre de una los cinco casos malos —ya consumido, de otra
+ * estadía, de otra playa, monto distinto, nunca aprobado— y todos salen por el
+ * mismo 409. El porqué de no distinguirlos está en
+ * `ErrorCodes.PAYMENT_INTENT_NOT_CONSUMABLE`.
+ *
+ * ## El `tenantId` explícito no es decorativo
+ *
+ * ⚠️ `PaymentIntent` NO está en `TENANT_MODELS` (`src/database/prisma-tenant.ts`)
+ * a propósito: sus dos escritores principales —el webhook público de Mercado
+ * Pago y el reconciliador— corren sin tenant en el `AsyncLocalStorage`. La
+ * extensión de Prisma NO inyecta `WHERE tenant_id` acá. Sacarlo del `where` de
+ * abajo convierte esto en una fuga entre playas sin red debajo.
+ *
+ * ## El epsilon
+ *
+ * `amount` es `Decimal(12,2)` en Postgres y `number` en JS. `MONEY_EPSILON`
+ * (medio centavo) evita que un desfasaje de representación trabe un cobro
+ * legítimo; es la misma tolerancia que ya usa el detector de subcobro. El rango
+ * sigue siendo mucho más chico que un centavo, así que no deja pasar un intent
+ * de $2.000 contra una línea de $2.001.
+ */
+async function consumePaymentIntents(
+  tx: Pick<Prisma.TransactionClient, 'paymentIntent'>,
+  tenantId: string,
+  entryId: string,
+  leftAt: Date,
+  lines: PaymentLineDto[],
+): Promise<void> {
+  // El 99% de los cierres son en efectivo y no mandan ningún intento: se van
+  // por acá sin pagar una sola query de más.
+  const withIntent = lines.filter((line) => line.paymentIntentId);
+  if (withIntent.length === 0) return;
+
+  for (const line of withIntent) {
+    const burned = await tx.paymentIntent.updateMany({
+      where: {
+        id: line.paymentIntentId,
+        tenantId,
+        entryId,
+        status: PaymentIntentStatus.approved,
+        amount: {
+          gte: line.amount - MONEY_EPSILON,
+          lte: line.amount + MONEY_EPSILON,
+        },
+      },
+      data: {
+        status: PaymentIntentStatus.consumed,
+        consumedAt: leftAt,
+        // El `payment_transaction` que acaba de nacer. El id lo generó el
+        // cliente (UUIDv7, ver `PaymentLineDto.id`), así que ya lo tenemos sin
+        // releer nada. No hay FK: `payment_transactions` es tenant-local y con
+        // borrado lógico, ver el docblock del modelo.
+        paymentTransactionId: line.id,
+      },
+    });
+
+    if (burned.count === 0) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        `Payment intent ${line.paymentIntentId} cannot be consumed: it was already consumed, belongs to another entry or entity, is not approved, or its amount does not match the payment line.`,
+        `/tenants/:tenantId/entries/${entryId}`,
+        ErrorCodes.PAYMENT_INTENT_NOT_CONSUMABLE,
+      );
+    }
+  }
 }
 
 function activePayments(entry: EntryWithAuditRelations): PaymentSnapshot[] {
@@ -477,7 +571,9 @@ export class EntriesService {
         );
       }
 
-      // Create payment transaction records if payments were provided.
+      // Create payment transaction records if payments were provided, and burn
+      // the Mercado Pago intents that funded them — todo dentro de esta misma
+      // transacción, ver `consumePaymentIntents`.
       if (data.payments && data.payments.length > 0) {
         const cashSessionId =
           data.cashSessionId ??
@@ -507,6 +603,14 @@ export class EntriesService {
             amount: p.amount,
           })),
         });
+
+        await consumePaymentIntents(
+          tx,
+          tenantId,
+          entryId,
+          leftAt,
+          data.payments,
+        );
       }
 
       if (computedAmount !== undefined) {

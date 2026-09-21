@@ -61,4 +61,32 @@ export class PaymentLineDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   amount: number;
+
+  /**
+   * El `payment_intent` de Mercado Pago que financia ESTA línea.
+   *
+   * VA EN LA LÍNEA Y NO EN EL BODY porque una estadía se puede pagar dividida
+   * —$2.000 en efectivo y $3.000 con QR es un cobro de todos los días— y el
+   * intent pertenece a UNA de esas partes, no al cierre. Colgarlo de la raíz
+   * obligaría a adivinar contra qué línea validar el monto, y adivinar mal
+   * significa aceptar un intent de $5.000 contra una línea de $2.000.
+   *
+   * Cuando viene, `closeEntry` lo quema dentro de la MISMA transacción que
+   * cierra la estadía (`approved` → `consumed`). Cuando no viene —el 99% de los
+   * cierres, que son en efectivo— no se toca `payment_intents` ni con una
+   * query: el camino de cobro de las playas que no usan Mercado Pago queda
+   * exactamente como estaba.
+   *
+   * NO es el `mp_order_id` de Mercado Pago: es NUESTRO id (UUIDv7, el mismo que
+   * el desktop generó al apretar "Cobrar con QR" y que viajó a MP como
+   * `external_reference`).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Mercado Pago payment intent that funds THIS line. When present, closeEntry burns it (approved -> consumed) in the same transaction that closes the entry.',
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsUUID()
+  paymentIntentId?: string;
 }

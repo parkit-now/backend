@@ -19,6 +19,7 @@ import {
 import { MpApiClient } from './mp-api.client';
 import { MpConfigService } from './mp-config.service';
 import { MpCryptoService } from './mp-crypto.service';
+import { MpTokenService } from './mp-token.service';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const USER = '22222222-2222-7222-8222-222222222222';
@@ -56,6 +57,10 @@ describe('MpAccountsService', () => {
     createPos: jest.fn(),
     getPos: jest.fn(),
   };
+  // Mockeado y no el real: el ciclo de vida del token lo cubre
+  // `mp-token.service.spec.ts`. Acá sólo importa que el resync le pida el token
+  // a ÉL y no descifre por su cuenta.
+  const tokens = { getUsableAccessToken: jest.fn() };
 
   const user: User = {
     id: USER,
@@ -162,6 +167,7 @@ describe('MpAccountsService', () => {
         },
         { provide: MpCryptoService, useValue: crypto },
         { provide: MpApiClient, useValue: mpApi },
+        { provide: MpTokenService, useValue: tokens },
       ],
     }).compile();
 
