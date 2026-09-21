@@ -48,6 +48,13 @@ export const AuditActions = {
   // único `crit` de Mercado Pago: la playa perdió un medio de cobro y NO se
   // recupera sola, hace falta que el dueño re-vincule.
   MP_ACCOUNT_TOKEN_EXPIRED: 'mp_account.token_expired',
+  // Se canceló el intento de nuestro lado pero Mercado Pago NO aceptó cancelar
+  // la orden. Es `warn` y no `info` porque puede haber quedado una orden viva
+  // sobre el QR de la caja: el próximo cliente que escanee el cartel impreso
+  // podría llegar a pagar el monto del auto anterior. Alguien tiene que mirar
+  // esto. El porqué de cancelar igual del lado nuestro está en
+  // `PaymentIntentsService.cancel`.
+  PAYMENT_INTENT_CANCEL_MP_FAILED: 'payment_intent.cancel_mp_failed',
 } as const;
 
 export interface RecordAuditInput {

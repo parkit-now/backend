@@ -163,11 +163,20 @@ model PaymentIntent {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  // Los otros TRES índices son PARCIALES y Prisma no sabe expresarlos, así que
-  // viven sólo en SQL (mismo caso que `mp_accounts_token_expiry_idx`):
+  // Los otros CUATRO índices son PARCIALES y Prisma no sabe expresarlos, así
+  // que viven sólo en SQL (mismo caso que `mp_accounts_token_expiry_idx`):
   //   · `payment_intents_entry_live_idx`     UNIQUE (entry_id) WHERE status vivo
+  //   · `payment_intents_tenant_live_idx`    UNIQUE (tenant_id) WHERE created|pending
   //   · `payment_intents_mp_order_id_key`    UNIQUE (mp_order_id) WHERE NOT NULL
   //   · `payment_intents_open_expiring_idx`  (expires_at) WHERE status abierto
+  //
+  // Los dos UNIQUE de arriba guardan invariantes DISTINTAS y hay que tener las
+  // dos presentes al escribir el service: `entry_live_idx` evita cobrarle dos
+  // veces al MISMO auto (por eso incluye `approved`), y `tenant_live_idx` evita
+  // encolar dos órdenes en la MISMA caja, que con QR estático hace que el
+  // cliente del primer auto pague el monto del segundo (por eso NO incluye
+  // `approved`: con el pago acreditado la caja ya quedó libre). El porqué largo
+  // está en la cabecera de la migración 20260921030000.
   @@index([tenantId, status], map: "payment_intents_tenant_status_idx")
   @@map("payment_intents")
 }

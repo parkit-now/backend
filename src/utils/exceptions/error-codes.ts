@@ -150,6 +150,33 @@ export const ErrorCodes = {
   // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
   // el cliente deberia reintentar mas tarde (503).
   MP_UNAVAILABLE: 'MP_UNAVAILABLE',
+  // La cuenta esta vinculada y operativa pero le falta el POS (`external_pos_id`
+  // en NULL): sin caja no hay QR contra el cual cobrar (409). Se arregla con
+  // `POST /tenants/{id}/mercado-pago/pos/resync`, no re-vinculando, y por eso
+  // NO comparte code con `MP_NOT_LINKED`: la accion de salida es otra.
+  MP_POS_NOT_PROVISIONED: 'MP_POS_NOT_PROVISIONED',
+
+  // Mercado Pago · intentos de cobro con QR (`payment_intents`)
+  // El intento pedido no existe o es de otro estacionamiento (404). UN SOLO
+  // code para los dos casos, igual que `CASH_SESSION_NOT_FOUND`: distinguirlos
+  // le confirmaria a un tercero que el id existe.
+  PAYMENT_INTENT_NOT_FOUND: 'PAYMENT_INTENT_NOT_FOUND',
+  // Ya hay un cobro vivo para ESA estadia (409): lo frena
+  // `payment_intents_entry_live_idx`, que es lo que evita cobrarle dos veces al
+  // mismo auto.
+  PAYMENT_INTENT_ALREADY_OPEN: 'PAYMENT_INTENT_ALREADY_OPEN',
+  // Ya hay un cobro en curso en LA CAJA, sobre otra estadia (409): lo frena
+  // `payment_intents_tenant_live_idx`. Con QR estatico el cartel impreso esta
+  // atado a un POS y esa caja sostiene una sola orden a la vez. Es un code
+  // distinto de `PAYMENT_INTENT_ALREADY_OPEN` a proposito: el operario tiene
+  // que saber si el bloqueo es de este auto o del de al lado, porque lo que
+  // tiene que hacer es distinto.
+  PAYMENT_INTENT_POS_BUSY: 'PAYMENT_INTENT_POS_BUSY',
+  // Se intento cancelar un intento que ya no esta vivo (409): ya se pago, ya
+  // vencio, ya se cancelo o ya se consumio.
+  PAYMENT_INTENT_NOT_CANCELABLE: 'PAYMENT_INTENT_NOT_CANCELABLE',
+  // Se intento cobrar con QR una estadia que ya tiene salida registrada (409).
+  PAYMENT_INTENT_ENTRY_CLOSED: 'PAYMENT_INTENT_ENTRY_CLOSED',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',

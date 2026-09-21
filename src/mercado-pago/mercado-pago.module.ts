@@ -9,6 +9,8 @@ import { MpCryptoService } from './mp-crypto.service';
 import { MpOauthController } from './mp-oauth.controller';
 import { MpSignatureService } from './mp-signature.service';
 import { MpTokenService } from './mp-token.service';
+import { PaymentIntentsController } from './payment-intents.controller';
+import { PaymentIntentsService } from './payment-intents.service';
 
 /**
  * Integración con Mercado Pago: configuración validada al boot, cifrado de
@@ -49,7 +51,11 @@ import { MpTokenService } from './mp-token.service';
  */
 @Module({
   imports: [PrismaModule, AuditModule],
-  controllers: [MpAccountsController, MpOauthController],
+  controllers: [
+    MpAccountsController,
+    MpOauthController,
+    PaymentIntentsController,
+  ],
   providers: [
     MpConfigService,
     MpCryptoService,
@@ -57,6 +63,7 @@ import { MpTokenService } from './mp-token.service';
     MpApiClient,
     MpTokenService,
     MpAccountsService,
+    PaymentIntentsService,
   ],
   exports: [
     MpConfigService,
@@ -65,6 +72,7 @@ import { MpTokenService } from './mp-token.service';
     MpApiClient,
     MpTokenService,
     MpAccountsService,
+    PaymentIntentsService,
   ],
 })
 export class MercadoPagoModule {}
