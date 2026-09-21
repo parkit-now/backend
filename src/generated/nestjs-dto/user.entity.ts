@@ -6,6 +6,7 @@ import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {MpOauthStateEntity} from './mp-oauth-state.entity'
+import {PaymentIntentEntity} from './payment-intent.entity'
 
 
 export class UserEntity {
@@ -28,4 +29,5 @@ auditLogs?: AuditLogEntity[] ;
 reviewedLprDetectionEvents?: LprDetectionEventEntity[] ;
 archivedLprDetectionEvents?: LprDetectionEventEntity[] ;
 mpOauthStates?: MpOauthStateEntity[] ;
+createdPaymentIntents?: PaymentIntentEntity[] ;
 }

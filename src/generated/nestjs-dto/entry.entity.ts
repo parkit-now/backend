@@ -6,6 +6,7 @@ import {RateEntity} from './rate.entity'
 import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
+import {PaymentIntentEntity} from './payment-intent.entity'
 import {TenantEntity} from './tenant.entity'
 
 
@@ -87,6 +88,7 @@ rate?: RateEntity  | null;
 cashSession?: CashSessionEntity  | null;
 paymentTransactions?: PaymentTransactionEntity[] ;
 lprDetectionEvents?: LprDetectionEventEntity[] ;
+paymentIntents?: PaymentIntentEntity[] ;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

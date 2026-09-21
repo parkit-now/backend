@@ -141,6 +141,12 @@ export const ErrorCodes = {
   MP_STORE_CREATE_FAILED: 'MP_STORE_CREATE_FAILED',
   // Fallo la creacion (o la lectura) del `POS` en Mercado Pago (502).
   MP_POS_CREATE_FAILED: 'MP_POS_CREATE_FAILED',
+  // Fallo la creacion, la lectura o la cancelacion de la `Order` de Mercado
+  // Pago: la playa no puede cobrar con QR ahora mismo (502). UN SOLO code para
+  // las tres operaciones a proposito: al cliente le sirve lo mismo ("no se
+  // pudo generar el cobro con QR") y el detalle de cual fallo ya esta en el
+  // `detail` y en el log.
+  MP_ORDER_CREATE_FAILED: 'MP_ORDER_CREATE_FAILED',
   // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
   // el cliente deberia reintentar mas tarde (503).
   MP_UNAVAILABLE: 'MP_UNAVAILABLE',

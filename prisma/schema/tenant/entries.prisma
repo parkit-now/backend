@@ -47,6 +47,11 @@ model Entry {
 
   paymentTransactions PaymentTransaction[]
   lprDetectionEvents  LprDetectionEvent[]
+  // Intentos de cobro con QR de Mercado Pago (global/payment-intents.prisma).
+  // Es una lista, pero a lo sumo UNO puede estar vivo a la vez: lo garantiza el
+  // índice único parcial `payment_intents_entry_live_idx`, que es lo que evita
+  // el doble cobro de la misma estadía.
+  paymentIntents      PaymentIntent[]
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])

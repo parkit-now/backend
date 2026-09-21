@@ -38,6 +38,10 @@ model User {
   // Flujos de vinculación de Mercado Pago que inició esta persona
   // (global/mercado-pago.prisma).
   mpOauthStates              MpOauthState[]
+  // Intentos de cobro con QR que mandó a generar esta persona
+  // (global/payment-intents.prisma). Back-relation de `createdByUserId`, que es
+  // `SET NULL` al borrar: el historial de cobros sobrevive al empleado.
+  createdPaymentIntents      PaymentIntent[]
 
   @@map("users")
 }

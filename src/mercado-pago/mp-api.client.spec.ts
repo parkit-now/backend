@@ -50,6 +50,39 @@ describe('MpApiClient', () => {
   const createPos = () =>
     client.createPos('token', { name: 'POS', storeId: '1', externalId: 'EXT' });
 
+  const headersOf = (): Record<string, string> => {
+    const [, init] = fetchMock.mock.calls[0] as [
+      string,
+      { headers: Record<string, string> },
+    ];
+    return init.headers;
+  };
+
+  /** El id del intent (UUIDv7) es el `external_reference`: opaco y sin PII. */
+  const INTENT_ID = '0199c2a0-7f3b-7c1d-9e2a-3f4b5c6d7e8f';
+
+  const createOrder = () =>
+    client.createOrder(
+      'token',
+      {
+        externalReference: INTENT_ID,
+        externalPosId: 'PARKITPOS1',
+        totalAmount: '1500.00',
+        // 🔴 Genérica y fija: la patente es un dato personal y MP prohíbe PII acá.
+        description: 'Estadía de estacionamiento',
+        expirationTime: 'PT5M',
+        items: [
+          {
+            title: 'Estadía de estacionamiento',
+            unitPrice: '1500.00',
+            quantity: 1,
+            unitMeasure: 'unit',
+          },
+        ],
+      },
+      `create:${INTENT_ID}`,
+    );
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -214,5 +247,78 @@ describe('MpApiClient', () => {
       state_name: 'Buenos Aires',
     });
     expect(store.id).toBe('1234567');
+  });
+
+  it('crea la Order en modo QR estático, con montos string y sin PII', async () => {
+    fetchMock.mockResolvedValue(
+      respond(201, {
+        id: 'ORD01K0',
+        status: 'created',
+        status_detail: 'created',
+        external_reference: INTENT_ID,
+      }),
+    );
+
+    const order = await createOrder();
+
+    const body = bodyOf();
+    expect(body.type).toBe('qr');
+    // `static` = el QR impreso de la caja. Si esto pasa a `dynamic` o `hybrid`,
+    // el PDF del cartel que generamos al vincular queda inservible.
+    expect(body.config).toEqual({
+      qr: { external_pos_id: 'PARKITPOS1', mode: 'static' },
+    });
+    expect(body.processing_mode).toBe('automatic');
+    // STRING decimal, no number: los tres montos.
+    expect(body.total_amount).toBe('1500.00');
+    expect(body.transactions).toEqual({ payments: [{ amount: '1500.00' }] });
+    expect(body.items).toEqual([
+      {
+        title: 'Estadía de estacionamiento',
+        unit_price: '1500.00',
+        quantity: 1,
+        unit_measure: 'unit',
+      },
+    ]);
+    // Duración RELATIVA, no un timestamp: es lo que la hace estable entre
+    // reintentos con la misma idempotency key.
+    expect(body.expiration_time).toBe('PT5M');
+    expect(body.external_reference).toBe(INTENT_ID);
+    // `notification_url` no existe en Orders: el webhook se configura a nivel
+    // aplicación.
+    expect(body.notification_url).toBeUndefined();
+    // 🔴 Ni la descripción ni el ítem pueden llevar la patente (dato personal).
+    expect(JSON.stringify(body)).not.toContain('ABC123');
+    expect(order.status).toBe('created');
+  });
+
+  it('createOrder manda la X-Idempotency-Key que recibe, sin inventarla', async () => {
+    fetchMock.mockResolvedValue(respond(201, { id: 'ORD01K0' }));
+
+    await createOrder();
+
+    // La key la deriva el service del id del intent y la namespacea por
+    // operación: determinística para que el reintento devuelva la orden
+    // original en vez de duplicarla.
+    expect(headersOf()['X-Idempotency-Key']).toBe(`create:${INTENT_ID}`);
+  });
+
+  it('getOrder NO manda X-Idempotency-Key: los GET no la llevan', async () => {
+    fetchMock.mockResolvedValue(respond(200, { id: 'ORD01K0' }));
+
+    await client.getOrder('token', 'ORD01K0');
+
+    expect(headersOf()['X-Idempotency-Key']).toBeUndefined();
+  });
+
+  it('un error de MP creando la Order da 502 MP_ORDER_CREATE_FAILED', async () => {
+    fetchMock.mockResolvedValue(
+      respond(400, { message: 'invalid external_reference' }),
+    );
+
+    expect(await problemOf(createOrder())).toMatchObject({
+      status: HttpStatus.BAD_GATEWAY,
+      code: ErrorCodes.MP_ORDER_CREATE_FAILED,
+    });
   });
 });
