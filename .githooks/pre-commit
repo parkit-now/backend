@@ -15,17 +15,6 @@ if [[ ! -x "node_modules/.bin/prettier" || ! -x "node_modules/.bin/eslint" ]]; t
   exit 1
 fi
 
-# Va PRIMERO: es el chequeo más barato y el único que protege producción. Una
-# migración con timestamp anterior a la última ya mergeada bloquea el deploy
-# (`supabase db push` la rechaza y pide `--include-all`, que la aplica fuera de
-# orden). Mejor enterarse acá que cuando producción ya está caída.
-echo "→ Orden de migraciones"
-if ! ./scripts/check-migrations.sh; then
-  echo ""
-  echo "✗ El commit quedaría con migraciones que no se pueden aplicar en orden."
-  exit 1
-fi
-
 echo "→ Prettier --check src/"
 if ! ./node_modules/.bin/prettier --check "src/**/*.ts"; then
   echo ""

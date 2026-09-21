@@ -48,18 +48,6 @@ export const ErrorCodes = {
   MEMBERSHIP_ALREADY_EXISTS: 'MEMBERSHIP_ALREADY_EXISTS',
   MEMBERSHIP_NOT_FOUND: 'MEMBERSHIP_NOT_FOUND',
 
-  // Staff (ABM de empleados hecho por el dueño de la playa).
-  // Estos dos hablan del TARGET de la operación, no del caller: por eso no
-  // sirven `ENTITY_NO_ACCESS` ni `ENTITY_INSUFFICIENT_ROLE`, que significan
-  // "vos no podés" cuando acá el caller tiene permisos de sobra.
-  //
-  // El caller apuntó a su propio userId. Ni PATCH ni DELETE sobre uno mismo:
-  // evita que alguien se auto-degrade o se auto-borre y pierda el acceso.
-  STAFF_SELF_MANAGEMENT: 'STAFF_SELF_MANAGEMENT',
-  // La operación dejaría al estacionamiento sin ningún owner (degradar, mover
-  // o borrar al último). Siempre tiene que quedar al menos un dueño.
-  STAFF_LAST_OWNER: 'STAFF_LAST_OWNER',
-
   // Entity (tenant)
   ENTITY_NOT_FOUND: 'ENTITY_NOT_FOUND',
   ENTITY_NOT_OWNER: 'ENTITY_NOT_OWNER',
