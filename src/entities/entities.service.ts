@@ -1,4 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
+import { MpAccountStatus, PaymentMethodType } from '@prisma/client';
 import type { Prisma, User } from '@prisma/client';
 import { PaginatedAuditDto } from '../audit/dto/paginated-audit.dto';
 import { AuditActions, AuditService } from '../audit/audit.service';
@@ -19,6 +20,48 @@ import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
 import { toEntityProfileDto, toPaymentMethodDto } from './entities.mappers';
 import { readCapacity, withCapacity } from './entity-settings';
 import { addressUpdateData } from './tenant-address';
+
+/**
+ * Un medio de pago que NO existe por sí solo: atrás hay una integración externa
+ * que tiene que estar vinculada y viva para que el cobro pueda ocurrir.
+ *
+ * POR QUÉ ESTO ES UN MAPA Y NO UNA LISTA DE TIPOS
+ *
+ * Porque un tipo listado sin su chequeo al lado sería un agujero silencioso: el
+ * medio quedaría "integrado" para la guarda y aun así se podría prender. Cada
+ * entrada trae su propia verificación, así que sumar el segundo tipo es agregar
+ * UNA entrada acá y nada más — no hay que tocar `togglePaymentMethod`.
+ *
+ * Hoy hay uno solo: `mercadopago_qr`, que nace al vincular la cuenta
+ * (`MpAccountsService.link`) y se apaga al desvincularla
+ * (`MpAccountsService.unlink`). Sin esta guarda, el dueño lo volvía a prender
+ * por API sin cuenta vinculada, el operario lo veía en el modal de egreso y no
+ * había con qué cobrar.
+ *
+ * OJO CON EL AISLAMIENTO POR TENANT: `MpAccount` NO está en `TENANT_MODELS`
+ * (`src/database/prisma-tenant.ts`), así que la extensión de Prisma NO le
+ * inyecta el `WHERE tenant_id`. El filtro va EXPLÍCITO en el `where`, a mano,
+ * con el `:tenantId` de la ruta que el `TenantMembershipGuard` ya validó. Mismo
+ * patrón que `LprImageRetentionService` y que documenta la cabecera de
+ * `prisma/schema/global/mercado-pago.prisma`. Olvidarse de ese filtro acá es
+ * una fuga entre playas, sin red abajo.
+ */
+const INTEGRATION_BACKED_TYPES: Partial<
+  Record<
+    PaymentMethodType,
+    (prisma: PrismaService, tenantId: string) => Promise<boolean>
+  >
+> = {
+  [PaymentMethodType.mercadopago_qr]: async (prisma, tenantId) => {
+    const account = await prisma.mpAccount.findUnique({
+      // `tenantId` EXPLÍCITO: es todo el aislamiento que hay para este modelo.
+      where: { tenantId },
+      select: { status: true },
+    });
+    // `token_expired` y `revoked` tampoco cobran: sólo `linked` sirve.
+    return account?.status === MpAccountStatus.linked;
+  },
+};
 
 /**
  * Manages the entity (tenant) profile, its payment methods and audit trail.
@@ -196,6 +239,39 @@ export class EntitiesService {
         '/tenants/:tenantId/payment-methods',
         ErrorCodes.PAYMENT_METHOD_NOT_FOUND,
       );
+    }
+
+    // Las DOS acciones que ponen el medio EN CIRCULACIÓN piden la cuenta viva:
+    // prenderlo lo devuelve a la pantalla de cobro, y marcarlo predeterminado
+    // lo deja PRESELECCIONADO en el modal de egreso. Marcar como default no es
+    // neutral respecto de la disponibilidad: es el que el operario se
+    // encuentra puesto. Sin esto, un QR muerto vuelve a la caja por la puerta
+    // del `isDefault`.
+    //
+    // Siempre permitido, con cuenta o sin ella: renombrar (es cosmético),
+    // `enabled: false` y `isDefault: false`. Apagarlo sin la cuenta vinculada
+    // es JUSTO la salida de emergencia del dueño para sacar el medio muerto de
+    // la pantalla de cobro; bloquearlo lo dejaría encerrado con el QR roto.
+    const requiresLinkedIntegration = INTEGRATION_BACKED_TYPES[method.type];
+    // Se resuelve UNA sola vez aunque el DTO traiga las dos banderas prendidas:
+    // el chequeo es una query, no se paga dos veces por el mismo PATCH.
+    const rejectedAction =
+      dto.enabled === true
+        ? 'enabling it'
+        : dto.isDefault === true
+          ? 'making it the default'
+          : null;
+    if (rejectedAction && requiresLinkedIntegration) {
+      const linked = await requiresLinkedIntegration(this.prisma, tenantId);
+      if (!linked) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          `Payment method ${paymentMethodId} is backed by the ${method.type} integration, which is not linked for this entity; link the account again from Integrations before ${rejectedAction}`,
+          '/tenants/:tenantId/payment-methods',
+          ErrorCodes.PAYMENT_METHOD_INTEGRATION_NOT_LINKED,
+        );
+      }
     }
 
     const data: Prisma.PaymentMethodUpdateInput = {};

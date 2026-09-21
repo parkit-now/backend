@@ -71,7 +71,7 @@ export class PaymentMethodSummaryDto {
 
   @ApiProperty({
     description:
-      'Whether this is a built-in system method (`cash`, `transfer`). System methods can be enabled/disabled but never deleted.',
+      'Whether this is a built-in system method — `cash` and `transfer` (seeded with the entity), plus `mercadopago_qr` (created when the Mercado Pago account is linked). System methods can be renamed and enabled/disabled, but never deleted. Enabling an integration-backed one (`mercadopago_qr`) requires its account to be linked.',
     example: true,
   })
   isSystem: boolean;

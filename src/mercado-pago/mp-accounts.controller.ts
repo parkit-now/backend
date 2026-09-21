@@ -152,7 +152,7 @@ export class MpAccountsController {
     description: [
       'Marks the account as revoked and DISABLES the `mercadopago_qr` payment method — it is never deleted, because closed shifts and past transactions still reference it.',
       '',
-      'Linking again later re-enables the same payment method, keeping whatever name the owner gave it.',
+      'Linking again later re-enables the same payment method, keeping whatever name the owner gave it. Until then the method stays disabled: turning it back on via `PATCH /tenants/{tenantId}/payment-methods/{id}` is rejected with 409 PAYMENT_METHOD_INTEGRATION_NOT_LINKED, so nobody can offer a QR that cannot charge.',
     ].join('\n'),
   })
   @ApiNoContentResponse()
