@@ -186,6 +186,23 @@ export class EntityProfileDto {
   lprImageRetentionDays: number;
 
   @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      "Stable identifier of this parking lot's entrance camera, or null when none is configured. It is what every LPR detection of this lot carries as `cameraId`.",
+    example: 'cam-entrada',
+  })
+  entryCameraId: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Human-readable name of the entrance camera, or null.',
+    example: 'Portón Rivadavia',
+  })
+  entryCameraLabel: string | null;
+
+  @ApiProperty({
     type: [PaymentMethodSummaryDto],
     description: 'Payment methods configured for this entity.',
   })

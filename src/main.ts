@@ -109,6 +109,17 @@ async function bootstrap() {
       raw({ type: 'image/jpeg', limit: '2mb' }),
     );
 
+    // Mercado Pago notifications keep their body raw so it never reaches the
+    // global ValidationPipe below: `forbidNonWhitelisted: true` would answer
+    // 400 the day Mercado Pago adds a field to the payload, and a 4xx makes it
+    // retry the notification every 15 minutes forever (and fails the
+    // `webhooks_ipn` quality check). `MpWebhookService` parses it by hand.
+    // Capped at 256kb — these payloads are a handful of scalars.
+    app.use(
+      '/integrations/mercadopago/webhook',
+      raw({ type: 'application/json', limit: '256kb' }),
+    );
+
     app.useGlobalPipes(
       new ValidationPipe({
         transform: true,

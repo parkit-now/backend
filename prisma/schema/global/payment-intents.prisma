@@ -1,0 +1,182 @@
+// Payment intents — el intento de cobro con QR de Mercado Pago.
+//
+// Migración 20260921140000_payment_intents.sql. Una fila por "el operador
+// apretó Cobrar con QR sobre esta estadía": el puente entre una `Entry` y una
+// `Order` de Mercado Pago.
+//
+// ## Por qué este archivo y no dentro de `mercado-pago.prisma`
+//
+// Porque son DOS capas distintas de la misma integración y mezclarlas hace que
+// ninguna de las dos cabeceras se pueda leer. `mercado-pago.prisma` es la capa
+// de CREDENCIALES: la cuenta vinculada y el `state` del OAuth en vuelo — su
+// cabecera habla de tokens cifrados, de PKCE y del cron de refresh, y arranca
+// diciendo "Dos tablas". Esto de acá es la capa TRANSACCIONAL: vive de otra
+// migración, se relaciona con `Entry` y con `User` (no con OAuth), y sus
+// razones para estar en `global/` son OTRAS (el webhook público y el
+// reconciliador, no el cron de tokens). El repo ya separa por concern —
+// `audit`, `auth`, `memberships`, `payment-methods`— y esto sigue esa línea.
+//
+// ## Por qué está en `global/` y NO en `tenant/`, pese a tener `tenantId`
+//
+// 1. SUS DOS ESCRITORES PRINCIPALES SON CROSS-TENANT POR DEFINICIÓN. El
+//    webhook de Mercado Pago es un endpoint PÚBLICO: llega sin sesión, sin
+//    `:tenantId` en la ruta y sin nada en el `AsyncLocalStorage` — la playa se
+//    DEDUCE de la fila del intent, que es justamente lo que se está buscando. Y
+//    el reconciliador es un cron: no hay request, así que tampoco hay tenant.
+//    `getTenantClient()` exige un tenant en el `AsyncLocalStorage` que pone el
+//    `TenantInterceptor` en cada request HTTP; sin él el cliente scopeado o
+//    explota o —peor— filtra un `WHERE tenant_id` con `undefined`.
+//
+//    Es el MISMO argumento que ya está escrito textual para `mp_accounts` (el
+//    cron de refresh) y para `mp_oauth_states` (el callback sin `:tenantId`).
+//
+// 2. LOS 10 MODELOS DE `prisma/schema/tenant/` LLEVAN `syncSeq`, SIN UNA SOLA
+//    EXCEPCIÓN. Éste no lo lleva (ver abajo). Ponerlo en `tenant/` rompería un
+//    invariante que hoy se cumple en el 100% de los casos, y el próximo que
+//    escriba un endpoint de `/changes` asumiendo que todo lo de `tenant/` tiene
+//    cursor se va a comer un `undefined` en producción.
+//
+// Consecuencia directa, y hay que tenerla presente al escribir el service:
+// `PaymentIntent` NO va en `TENANT_MODELS` (`src/database/prisma-tenant.ts`).
+// El aislamiento no desaparece, cambia de lugar: deja de ser automático (la
+// extensión de Prisma inyecta el `WHERE tenant_id`) y pasa a ser EXPLÍCITO — el
+// service filtra a mano por el `:tenantId` de la ruta, que el
+// `TenantMembershipGuard` ya validó. Mismo precedente que `PaymentMethod` y
+// `MpAccount`; el razonamiento está en `src/entities/entities.service.ts:22-27`.
+// Olvidarse de ese filtro acá es una fuga entre playas, sin red abajo.
+//
+// ## Por qué no lleva `syncSeq` ni `version`
+//
+// SIN `syncSeq`: el desktop NO sincroniza esta tabla por `/changes`. La
+// consulta por un endpoint dedicado, con polling cada ~5 segundos, y sólo
+// mientras el modal de cobro está abierto. Un intent vive minutos y le importa
+// a UNA pantalla; no justifica un cursor permanente.
+//
+// SIN `version`: no hay optimistic locking porque no hay edición concurrente
+// desde clientes. TODAS las transiciones de estado son `updateMany` con una
+// guarda `WHERE status IN (...)` en la misma sentencia: el primero que llega
+// gana y el segundo actualiza 0 filas y se entera por el `count`. Eso ya es
+// control de concurrencia, y acá es mejor que un `version`, porque el webhook y
+// el cron no tienen de dónde sacar la versión que leyeron — no leyeron nada,
+// llegan con un `mp_order_id` y nada más.
+//
+// Backend-only: RLS prendida y CERO policies, inalcanzable desde PostgREST.
+
+enum PaymentIntentStatus {
+  // Vivos: los tres que entran al índice único por estadía.
+  created // la fila existe; la Order puede o no existir todavía del lado de MP
+  pending // la Order existe en MP y espera el escaneo del cliente
+  approved // MP acreditó el pago; falta consumirlo
+
+  // Terminales.
+  consumed // ya generó su `PaymentTransaction` y cerró la estadía
+  expired
+  canceled
+  failed
+  refunded
+  /// Contracargo del comprador. TODAVÍA NO SE ESCRIBE: entra al enum desde
+  /// ahora porque Mercado Pago tiene una acción de webhook `order.charged_back`
+  /// y sumarle un valor a un enum YA EXISTENTE en Postgres obliga a partirlo en
+  /// dos migraciones (`ALTER TYPE ... ADD VALUE` no puede usarse en la misma
+  /// transacción que lo agrega). Un valor que nadie escribe no cuesta nada.
+  charged_back
+
+  @@map("payment_intent_status")
+}
+
+/// Intento de cobro con QR de Mercado Pago sobre una estadía.
+model PaymentIntent {
+  /// UUIDv7 generado por el cliente, igual que `Entry` y `CashSession`: sin
+  /// `@default` a propósito. Es además el `external_reference` que viaja a
+  /// Mercado Pago — 36 chars de hex y guiones, dentro del máximo de 64 y del
+  /// charset que MP exige (letras, números, `-` y `_`), y SIN datos personales.
+  id String @id @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// La estadía que se está cobrando. Un solo intento VIVO por estadía,
+  /// garantizado por el índice único parcial `payment_intents_entry_live_idx`:
+  /// es lo que evita el doble cobro cuando el operador hace doble click o el
+  /// desktop reintenta tras un timeout. Un `SELECT` previo desde la aplicación
+  /// NO alcanza: entre el `SELECT` y el `INSERT` hay una ventana.
+  entryId String @map("entry_id") @db.Uuid
+  entry   Entry  @relation(fields: [entryId], references: [id])
+
+  /// NUESTRO estado, el que manda el comportamiento del sistema.
+  status PaymentIntentStatus @default(created)
+
+  /// El monto a cobrar, congelado al crear el intento. NO se recalcula nunca:
+  /// la recuperación de un intent en `created` re-POSTea el MISMO body a MP con
+  /// la misma `X-Idempotency-Key`, y un monto recalculado —aunque sea por un
+  /// minuto más de estadía— cambia el body y hace que MP conteste
+  /// `409 idempotency_key_already_used` en vez de devolver la orden original.
+  /// Ver el docblock de `MpApiClient.createOrder`.
+  amount Decimal @db.Decimal(12, 2)
+
+  /// El `id` de la Order del lado de Mercado Pago. NULL entre el INSERT y la
+  /// respuesta de `POST /v1/orders` — y también cuando esa llamada murió por
+  /// timeout y no sabemos si la orden existe. Ese hueco es exactamente el caso
+  /// que resuelve el re-POST idempotente.
+  mpOrderId String? @map("mp_order_id")
+  /// El `status` CRUDO de Mercado Pago (`created`, `processed`, `canceled`,
+  /// `refunded`, `expired`). `String` y no enum a propósito: MP puede sumar un
+  /// valor mañana y eso no puede tirar abajo el webhook. Diagnóstico, no
+  /// fuente de verdad.
+  mpStatus String? @map("mp_status")
+  /// El `status_detail` CRUDO de MP (`created`, `canceled`, `accredited`,
+  /// `refunded`, `expired`, `partially_refunded`). Mismo criterio que `mpStatus`.
+  mpStatusDetail String? @map("mp_status_detail")
+
+  /// Cuándo deja de servir este intento. Se calcula UNA vez al crearlo, del
+  /// mismo TTL que viaja a MP como `expiration_time` (duración relativa ISO
+  /// 8601, p. ej. `PT5M`). Lo barre el reconciliador.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  /// Cuándo Mercado Pago acreditó el pago: el instante que reporta MP, no el de
+  /// nuestro reloj. Entre que el cliente paga y el webhook llega puede haber
+  /// minutos, y el comprobante tiene que decir cuándo se pagó.
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(6)
+  /// Cuándo el intento se convirtió en una `PaymentTransaction`. Junto con
+  /// `paymentTransactionId` es el candado de un solo uso: se consume UNA vez,
+  /// con un UPDATE condicional sobre el estado, y el segundo intento de
+  /// consumirlo actualiza 0 filas.
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  /// El cobro que este intento generó al consumirse. Se llena en B5. SIN
+  /// `@relation` y SIN FK en la base a propósito: `payment_transactions` es
+  /// tenant-local y tiene borrado lógico, así que una FK ataría una tabla
+  /// global a una tenant-local para ganar nada. El vínculo se navega desde el
+  /// service, que ya filtra por tenant.
+  paymentTransactionId String? @map("payment_transaction_id") @db.Uuid
+
+  /// Por qué falló, en texto libre y para humanos. NUNCA lleva tokens ni datos
+  /// personales del pagador: lo lee soporte y termina en logs y exports.
+  failureReason String? @map("failure_reason")
+
+  /// Qué operador mandó a cobrar. `onDelete: SetNull` igual que
+  /// `AuditLog.actorUserId`: borrar un empleado no puede borrar ni bloquear el
+  /// historial de cobros que generó. Nullable además porque el webhook y el
+  /// reconciliador también escriben filas, y ahí no hay usuario.
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  createdBy       User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Los otros CUATRO índices son PARCIALES y Prisma no sabe expresarlos, así
+  // que viven sólo en SQL (mismo caso que `mp_accounts_token_expiry_idx`):
+  //   · `payment_intents_entry_live_idx`     UNIQUE (entry_id) WHERE status vivo
+  //   · `payment_intents_tenant_live_idx`    UNIQUE (tenant_id) WHERE created|pending
+  //   · `payment_intents_mp_order_id_key`    UNIQUE (mp_order_id) WHERE NOT NULL
+  //   · `payment_intents_open_expiring_idx`  (expires_at) WHERE status abierto
+  //
+  // Los dos UNIQUE de arriba guardan invariantes DISTINTAS y hay que tener las
+  // dos presentes al escribir el service: `entry_live_idx` evita cobrarle dos
+  // veces al MISMO auto (por eso incluye `approved`), y `tenant_live_idx` evita
+  // encolar dos órdenes en la MISMA caja, que con QR estático hace que el
+  // cliente del primer auto pague el monto del segundo (por eso NO incluye
+  // `approved`: con el pago acreditado la caja ya quedó libre). El porqué largo
+  // está en la cabecera de la migración 20260921030000.
+  @@index([tenantId, status], map: "payment_intents_tenant_status_idx")
+  @@map("payment_intents")
+}

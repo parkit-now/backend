@@ -17,6 +17,7 @@ import {WhitelistEntity} from './whitelist.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {MpAccountEntity} from './mp-account.entity'
 import {MpOauthStateEntity} from './mp-oauth-state.entity'
+import {PaymentIntentEntity} from './payment-intent.entity'
 
 
 export class TenantEntity {
@@ -43,6 +44,8 @@ settings: Prisma.JsonValue ;
   format: `int32`,
 })
 lprImageRetentionDays: number ;
+entryCameraId: string  | null;
+entryCameraLabel: string  | null;
 @ApiProperty({
   description: `Nombre de la calle, sin altura.`,
 })
@@ -103,4 +106,5 @@ whitelists?: WhitelistEntity[] ;
 lprDetectionEvents?: LprDetectionEventEntity[] ;
 mpAccount?: MpAccountEntity  | null;
 mpOauthStates?: MpOauthStateEntity[] ;
+paymentIntents?: PaymentIntentEntity[] ;
 }

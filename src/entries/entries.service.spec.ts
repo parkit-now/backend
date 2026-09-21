@@ -687,4 +687,266 @@ describe('EntriesService', () => {
       }
     });
   });
+
+  /**
+   * EL CONSUMO DEL PAYMENT INTENT (B5) — la parte de más riesgo del cierre.
+   *
+   * `closeEntry` es el camino de cobro de TODAS las playas, incluidas las que
+   * no tocan Mercado Pago. Estos cinco casos cubren las dos cosas que hay que
+   * garantizar: que el intento aprobado se queme UNA sola vez y bajo las cinco
+   * guardas, y que el cierre en efectivo siga funcionando exactamente igual.
+   *
+   * El mock de `paymentIntent.updateMany` EVALÚA el `where` contra una fila
+   * fixture en vez de devolver un `count` fijo. Es a propósito: si devolviera
+   * `{ count: 0 }` a secas, los casos de "monto distinto" y "otra estadía"
+   * serían el mismo test escrito tres veces y pasarían aunque alguien borrara
+   * esas guardas del `where`. Acá, borrarlas los pone en rojo.
+   */
+  describe('consumo del payment intent al cerrar la estadia', () => {
+    const INTENT = 'aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa';
+    const LINE = 'bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb';
+    const OTHER_ENTRY = 'cccccccc-cccc-7ccc-8ccc-cccccccccccc';
+    const CASH_SESSION = '55555555-5555-7555-8555-555555555555';
+    const AMOUNT = 5000;
+
+    type IntentRow = {
+      id: string;
+      tenantId: string;
+      entryId: string;
+      status: string;
+      amount: number;
+    };
+    type IntentWhere = {
+      id?: string;
+      tenantId?: string;
+      entryId?: string;
+      status?: string;
+      amount?: { gte?: number; lte?: number };
+    };
+
+    function makeIntent(overrides: Partial<IntentRow> = {}): IntentRow {
+      return {
+        id: INTENT,
+        tenantId: TENANT,
+        entryId: ENTRY,
+        status: 'approved',
+        amount: AMOUNT,
+        ...overrides,
+      };
+    }
+
+    // El `WHERE` del `updateMany`, resuelto contra la fila. Si falta la guarda
+    // de monto no se inventa una: el test que la cuida es el de "monto
+    // distinto", y el feliz asserta el `where` completo aparte.
+    function matches(where: IntentWhere, row: IntentRow): boolean {
+      if (where.id !== row.id) return false;
+      if (where.tenantId !== row.tenantId) return false;
+      if (where.entryId !== row.entryId) return false;
+      if (where.status !== row.status) return false;
+      const { gte, lte } = where.amount ?? {};
+      if (gte !== undefined && row.amount < gte) return false;
+      if (lte !== undefined && row.amount > lte) return false;
+      return true;
+    }
+
+    function makeCloseService(intent: IntentRow | null) {
+      const current = {
+        id: ENTRY,
+        tenantId: TENANT,
+        plate: 'ABC123',
+        enteredAt: new Date('2026-09-08T10:00:00.000Z'),
+        leftAt: null,
+        amountPaid: null,
+        rateId: null,
+        rateSnapshotName: 'Auto',
+        rateSnapshotHourPriceArs: 2500,
+        rateSnapshotStayPriceArs: 20000,
+        rateSnapshotFractionPriceArs: 500,
+        cashSessionId: CASH_SESSION,
+        ticketNumber: 7,
+      };
+      const state = { rolledBack: false };
+      const tx = {
+        entry: {
+          findFirst: jest.fn().mockResolvedValue(current),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            ...current,
+            leftAt: new Date('2026-09-08T12:00:00.000Z'),
+            amountPaid: AMOUNT,
+          }),
+        },
+        paymentMethod: { findMany: jest.fn().mockResolvedValue([]) },
+        paymentTransaction: {
+          createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        paymentIntent: {
+          updateMany: jest.fn((args: { where: IntentWhere }) =>
+            Promise.resolve({
+              count: intent && matches(args.where, intent) ? 1 : 0,
+            }),
+          ),
+        },
+        auditLog: { create: jest.fn().mockResolvedValue(undefined) },
+      };
+      const prisma = {
+        // Modela el rollback: si el callback tira, Prisma aborta la
+        // transacción entera. En un unit test con `tx` mockeado no hay base que
+        // revierta, así que lo que se puede probar —y lo que importa— es que la
+        // excepción ESCAPA del callback. Eso es exactamente lo que hace que el
+        // `UPDATE entries` no commitee.
+        $transaction: jest.fn(async (cb: (txArg: typeof tx) => unknown) => {
+          try {
+            return await cb(tx);
+          } catch (error) {
+            state.rolledBack = true;
+            throw error;
+          }
+        }),
+      };
+      const tenantContext = { getTenantIdOrThrow: () => TENANT };
+      return {
+        tx,
+        state,
+        service: new EntriesService(
+          prisma as unknown as PrismaService,
+          tenantContext as unknown as TenantContextService,
+        ),
+      };
+    }
+
+    function close(
+      subject: EntriesService,
+      line: Record<string, unknown>,
+    ): Promise<unknown> {
+      return subject.closeEntry(
+        ENTRY,
+        1,
+        {
+          leftAt: '2026-09-08T12:00:00.000Z',
+          cashSessionId: CASH_SESSION,
+          payments: [line] as never,
+        },
+        USER as never,
+        { role: 'operator' } as never,
+      );
+    }
+
+    function qrLine(overrides: Record<string, unknown> = {}) {
+      return {
+        id: LINE,
+        paymentMethodName: 'Mercado Pago QR',
+        paymentMethodType: 'other',
+        amount: AMOUNT,
+        paymentIntentId: INTENT,
+        ...overrides,
+      };
+    }
+
+    it('quema el intento aprobado y cierra la estadia en la misma transaccion', async () => {
+      const { service: subject, tx } = makeCloseService(makeIntent());
+
+      await close(subject, qrLine());
+
+      const call = tx.paymentIntent.updateMany.mock.calls[0][0] as {
+        where: IntentWhere;
+        data: {
+          status: string;
+          consumedAt: Date;
+          paymentTransactionId: string;
+        };
+      };
+
+      // Las cinco guardas viajan en la MISMA sentencia que el SET. El
+      // `tenantId` explícito no es opcional: `payment_intents` NO está en
+      // `TENANT_MODELS`, así que la extensión de Prisma no lo inyecta.
+      expect(call.where).toMatchObject({
+        id: INTENT,
+        tenantId: TENANT,
+        entryId: ENTRY,
+        status: 'approved',
+      });
+      expect(call.where.amount?.gte).toBeLessThan(AMOUNT);
+      expect(call.where.amount?.lte).toBeGreaterThan(AMOUNT);
+
+      expect(call.data.status).toBe('consumed');
+      expect(call.data.consumedAt.toISOString()).toBe(
+        '2026-09-08T12:00:00.000Z',
+      );
+      // El id de la línea es el de la `payment_transaction` que se acaba de
+      // insertar: lo genera el cliente (UUIDv7), no hace falta releer nada.
+      expect(call.data.paymentTransactionId).toBe(LINE);
+      expect(tx.entry.updateMany).toHaveBeenCalled();
+    });
+
+    it('doble consumo: un intento ya consumido da 409 y la estadia NO se cierra', async () => {
+      const { service: subject, state } = makeCloseService(
+        makeIntent({ status: 'consumed' }),
+      );
+
+      await expectRejectDetail(close(subject, qrLine()), 'cannot be consumed');
+      // La excepción escapó del callback de `$transaction`: Prisma aborta y el
+      // `UPDATE entries` nunca commitea. Sin esto, el mismo cobro se aplicaría
+      // a dos estadías y el arqueo contaría dos veces una plata que entró una.
+      expect(state.rolledBack).toBe(true);
+    });
+
+    it('monto distinto del de la linea: 409', async () => {
+      // Fuera del epsilon (medio centavo), no un centavo de redondeo.
+      const { service: subject, state } = makeCloseService(
+        makeIntent({ amount: AMOUNT + 1000 }),
+      );
+
+      await expectRejectDetail(close(subject, qrLine()), 'cannot be consumed');
+      expect(state.rolledBack).toBe(true);
+    });
+
+    it('intento de OTRA estadia: 409', async () => {
+      const { service: subject, state } = makeCloseService(
+        makeIntent({ entryId: OTHER_ENTRY }),
+      );
+
+      await expectRejectDetail(close(subject, qrLine()), 'cannot be consumed');
+      expect(state.rolledBack).toBe(true);
+    });
+
+    /**
+     * EL TEST MÁS IMPORTANTE DE LOS CINCO.
+     *
+     * El 99% de los cierres son en efectivo y vienen de playas que no tienen
+     * Mercado Pago vinculado. Si B5 les agrega una query, un 409 o cualquier
+     * cambio de comportamiento, la regresión no es de la integración nueva: es
+     * del cobro de todo el negocio.
+     */
+    it('cierre normal en efectivo, sin paymentIntentId: intacto', async () => {
+      const { service: subject, tx } = makeCloseService(null);
+
+      await close(subject, {
+        id: LINE,
+        paymentMethodName: 'Efectivo',
+        paymentMethodType: 'cash',
+        amount: AMOUNT,
+      });
+
+      // Ni una query de más contra `payment_intents`.
+      expect(tx.paymentIntent.updateMany).not.toHaveBeenCalled();
+      expect(tx.entry.updateMany).toHaveBeenCalled();
+
+      const rows = (
+        tx.paymentTransaction.createMany.mock.calls[0][0] as {
+          data: Array<{
+            id: string;
+            amount: number;
+            paymentMethodType: string;
+          }>;
+        }
+      ).data;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        id: LINE,
+        amount: AMOUNT,
+        paymentMethodType: 'cash',
+      });
+    });
+  });
 });

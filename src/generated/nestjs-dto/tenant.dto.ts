@@ -27,6 +27,8 @@ settings: Prisma.JsonValue ;
   format: `int32`,
 })
 lprImageRetentionDays: number ;
+entryCameraId: string  | null;
+entryCameraLabel: string  | null;
 @ApiProperty({
   description: `Nombre de la calle, sin altura.`,
 })

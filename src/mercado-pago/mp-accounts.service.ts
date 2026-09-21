@@ -23,6 +23,7 @@ import { toMpAccountDto } from './mercado-pago.mappers';
 import { MpApiClient, type MpPos, type MpStoreLocation } from './mp-api.client';
 import { MpCryptoService } from './mp-crypto.service';
 import { MpConfigService } from './mp-config.service';
+import { MpTokenService } from './mp-token.service';
 
 /**
  * Host de AUTORIZACIÓN de Mercado Pago. OJO: NO es `MP_API_BASE_URL`.
@@ -117,6 +118,10 @@ export class MpAccountsService {
     private readonly config: MpConfigService,
     private readonly crypto: MpCryptoService,
     private readonly mpApi: MpApiClient,
+    // 🔴 La dependencia va SIEMPRE en este sentido: este service usa el de
+    // tokens, nunca al revés. `MpTokenService` no sabe nada de OAuth ni de
+    // Store/POS justamente para que no se arme el ciclo.
+    private readonly tokens: MpTokenService,
   ) {}
 
   /** La cuenta vinculada de la playa. 404 si nunca se vinculó. */
@@ -361,15 +366,17 @@ export class MpAccountsService {
    * Vuelve a pedirle a Mercado Pago los datos del POS y refresca las URLs del
    * QR. La fuente de verdad del QR es Mercado Pago, no nuestra copia: las URLs
    * son públicas y las puede regenerar.
+   *
+   * El token sale de `MpTokenService`, que es el único camino habilitado para
+   * conseguir uno vivo. Antes esto hacía `assertOperational()` + `decrypt()` a
+   * mano, y ese guard cortaba con 409 en cuanto el access token vencía por
+   * reloj — o sea que una playa con el token vencido no podía ni reintentar el
+   * resync, aunque su `refresh_token` siguiera sirviendo seis meses. Ahora ese
+   * mismo caso renueva y el resync simplemente funciona.
    */
   async resyncPos(tenantId: string, user: User): Promise<MpAccountDto> {
-    const account = await this.requireAccount(tenantId);
-    this.assertOperational(account);
-
-    const accessToken = this.crypto.decrypt(
-      account.accessToken,
-      account.tokenKeyVersion,
-    );
+    const { account, accessToken } =
+      await this.tokens.getUsableAccessToken(tenantId);
 
     let storeId = account.storeId;
     let externalPosId = account.externalPosId;
@@ -640,31 +647,6 @@ export class MpAccountsService {
       );
     }
     return tenant;
-  }
-
-  /** Sólo una cuenta `linked` y con token vigente puede hablar con MP. */
-  private assertOperational(account: MpAccount): void {
-    if (account.status === MpAccountStatus.revoked) {
-      throw new FormattedException(
-        'Conflict',
-        HttpStatus.CONFLICT,
-        `Mercado Pago account of entity ${account.tenantId} was revoked. Link it again.`,
-        TENANT_INSTANCE,
-        ErrorCodes.MP_ACCOUNT_REVOKED,
-      );
-    }
-    if (
-      account.status === MpAccountStatus.token_expired ||
-      account.accessTokenExpiresAt.getTime() <= Date.now()
-    ) {
-      throw new FormattedException(
-        'Conflict',
-        HttpStatus.CONFLICT,
-        `Mercado Pago access token of entity ${account.tenantId} expired. The owner must authorize again.`,
-        TENANT_INSTANCE,
-        ErrorCodes.MP_ACCOUNT_TOKEN_EXPIRED,
-      );
-    }
   }
 
   /**

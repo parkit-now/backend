@@ -37,6 +37,12 @@ model Tenant {
   // (days after the stay exit). One of 30/60/90 by a DB CHECK; default 30.
   lprImageRetentionDays Int @default(30) @map("lpr_image_retention_days") @db.SmallInt
 
+  // Cámara de ingreso. Solo la IDENTIDAD: la URL RTSP y la contraseña viven en
+  // el equipo (una IP de LAN no sirve fuera de la playa y la credencial no gana
+  // nada viajando a la nube). Ver 20260921030000_tenant_entry_camera.sql.
+  entryCameraId    String? @map("entry_camera_id") @db.VarChar(100)
+  entryCameraLabel String? @map("entry_camera_label") @db.VarChar(120)
+
   // Dirección estructurada (migración 20260913164617). Mercado Pago necesita
   // la ubicación del `Store` con los campos SEPARADOS; una ubicación mal
   // cargada le rompe el cálculo de impuestos al dueño. Todas nullable: no
@@ -83,6 +89,8 @@ model Tenant {
   // `@unique` sobre `MpAccount.tenantId`: una playa vincula a lo sumo una.
   mpAccount            MpAccount?
   mpOauthStates        MpOauthState[]
+  // Intentos de cobro con QR (global/payment-intents.prisma).
+  paymentIntents       PaymentIntent[]
 
   @@index([cuit])
   @@map("tenants")
