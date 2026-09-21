@@ -204,6 +204,24 @@ export const ErrorCodes = {
   PAYMENT_INTENT_NOT_CANCELABLE: 'PAYMENT_INTENT_NOT_CANCELABLE',
   // Se intento cobrar con QR una estadia que ya tiene salida registrada (409).
   PAYMENT_INTENT_ENTRY_CLOSED: 'PAYMENT_INTENT_ENTRY_CLOSED',
+  // El cierre de estadia mando un `paymentIntentId` que NO se puede consumir
+  // (409). UN SOLO code para los cinco casos malos, y es a proposito: ya se
+  // consumio, es de otra estadia, es de otra playa, el monto no coincide con el
+  // de la linea, o nunca llego a `approved`. Los cinco se detectan con la MISMA
+  // sentencia —un `updateMany` con guarda que actualiza 0 filas— y no se puede
+  // saber cual fue sin una lectura extra que ademas abriria una carrera entre
+  // el SELECT y el UPDATE.
+  //
+  // Distinguirlos tampoco le serviria a nadie: la accion del operario es
+  // identica en los cinco (mirar el estado real del cobro y, si hace falta,
+  // generar uno nuevo), y "de otra playa" es justamente el caso donde contar
+  // mas seria filtrar la existencia de la fila.
+  //
+  // El mensaje en espanol lo pone el cliente (`CODE_MESSAGES`), no el `detail`:
+  // el operario esta con el cliente adelante, asi que tiene que leer algo como
+  // "ese cobro con QR ya se aplico o no corresponde a esta estadia", no una
+  // cadena en ingles.
+  PAYMENT_INTENT_NOT_CONSUMABLE: 'PAYMENT_INTENT_NOT_CONSUMABLE',
   // Llego una notificacion firmada de Mercado Pago pero no pudimos releer la
   // orden para confirmar su estado real (503). NINGUN cliente nuestro ve este
   // code: el unico que lo recibe es Mercado Pago, y lo unico que le importa es
