@@ -8,6 +8,7 @@ import { MpConfigService } from './mp-config.service';
 import { MpCryptoService } from './mp-crypto.service';
 import { MpOauthController } from './mp-oauth.controller';
 import { MpSignatureService } from './mp-signature.service';
+import { MpTokenService } from './mp-token.service';
 
 /**
  * Integración con Mercado Pago: configuración validada al boot, cifrado de
@@ -38,6 +39,13 @@ import { MpSignatureService } from './mp-signature.service';
  * `TenantMembershipGuard` (ver el docblock de `MpOauthController`), así que el
  * chequeo de `owner` lo hace el service a mano — con la MISMA fuente de verdad
  * que usaría el guard, no con una regla paralela.
+ *
+ * ## Por qué `MpTokenService` se EXPORTA
+ *
+ * Porque es el único camino para conseguir un access token vivo, y los payment
+ * intents y el webhook lo van a inyectar desde afuera de este módulo. Si no se
+ * exporta, el primero que lo necesite va a terminar descifrando el token por su
+ * cuenta y salteándose el refresh perezoso y la degradación.
  */
 @Module({
   imports: [PrismaModule, AuditModule],
@@ -47,6 +55,7 @@ import { MpSignatureService } from './mp-signature.service';
     MpCryptoService,
     MpSignatureService,
     MpApiClient,
+    MpTokenService,
     MpAccountsService,
   ],
   exports: [
@@ -54,6 +63,7 @@ import { MpSignatureService } from './mp-signature.service';
     MpCryptoService,
     MpSignatureService,
     MpApiClient,
+    MpTokenService,
     MpAccountsService,
   ],
 })

@@ -40,6 +40,14 @@ export const AuditActions = {
   MP_ACCOUNT_LINKED: 'mp_account.linked',
   MP_ACCOUNT_UNLINKED: 'mp_account.unlinked',
   MP_ACCOUNT_LINK_FAILED: 'mp_account.link_failed',
+  // Renovación exitosa del par de tokens (`MpTokenService`). Es `info`: no hay
+  // nada que hacer, pero deja el rastro de cuándo rotaron los tokens, que es lo
+  // primero que se mira cuando una playa deja de cobrar.
+  MP_ACCOUNT_TOKEN_REFRESHED: 'mp_account.token_refreshed',
+  // La cuenta se degradó a `token_expired` y se apagó el medio de pago. Es el
+  // único `crit` de Mercado Pago: la playa perdió un medio de cobro y NO se
+  // recupera sola, hace falta que el dueño re-vincule.
+  MP_ACCOUNT_TOKEN_EXPIRED: 'mp_account.token_expired',
 } as const;
 
 export interface RecordAuditInput {
