@@ -23,6 +23,151 @@ export class EntityCapacityDto {
   total: number;
 }
 
+export class TicketTemplateFieldDto {
+  @ApiProperty({
+    description: 'Stable ticket field identifier.',
+    enum: [
+      'parkingName',
+      'parkingAddress',
+      'parkingCuit',
+      'grossIncome',
+      'nonFiscalControl',
+      'ticketNumber',
+      'plate',
+      'vehicleBrand',
+      'vehicleModel',
+      'color',
+      'rate',
+      'entryDate',
+      'entryTime',
+      'cochera',
+      'notes',
+    ],
+    example: 'plate',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Whether the field is printed.',
+    example: true,
+  })
+  visible: boolean;
+
+  @ApiProperty({
+    description: 'Font size in points.',
+    minimum: 6,
+    maximum: 32,
+    example: 13,
+  })
+  fontSizePt: number;
+
+  @ApiProperty({
+    description: 'Text emphasis.',
+    enum: ['normal', 'bold'],
+    example: 'bold',
+  })
+  emphasis: 'normal' | 'bold';
+}
+
+export class TicketTemplateDto {
+  @ApiProperty({
+    type: 'integer',
+    enum: [1],
+    description: 'Template schema version.',
+    example: 1,
+  })
+  version: 1;
+
+  @ApiProperty({
+    type: [TicketTemplateFieldDto],
+    description: 'Ordered ticket fields.',
+  })
+  fields: TicketTemplateFieldDto[];
+
+  @ApiProperty({
+    description: 'Optional CUIT override printed on the ticket.',
+    example: '30-12345678-9',
+  })
+  cuitOverride: string;
+
+  @ApiProperty({
+    description: 'Gross income registration text printed on the ticket.',
+    example: 'IIBB: 1027025-06',
+  })
+  grossIncomeText: string;
+
+  @ApiProperty({
+    description: 'Non-fiscal control legend printed on the ticket.',
+    example: 'Control no fiscal',
+  })
+  nonFiscalControlText: string;
+}
+
+export class DesktopCameraConfigDto {
+  @ApiProperty({
+    enum: ['webcam', 'ip'],
+    description: 'Video source mode.',
+    example: 'ip',
+  })
+  mode: 'webcam' | 'ip';
+
+  @ApiProperty({
+    type: 'integer',
+    minimum: 0,
+    description: 'OpenCV webcam index.',
+    example: 0,
+  })
+  deviceIndex: number;
+
+  @ApiProperty({
+    description: 'IP camera host. Empty for webcam mode.',
+    example: '192.168.1.26',
+  })
+  host: string;
+
+  @ApiProperty({
+    type: 'integer',
+    minimum: 1,
+    maximum: 65535,
+    description: 'IP camera RTSP port.',
+    example: 554,
+  })
+  port: number;
+
+  @ApiProperty({
+    description: 'IP camera username. Password is intentionally not persisted.',
+    example: 'admin',
+  })
+  username: string;
+
+  @ApiProperty({
+    description: 'IP camera stream path.',
+    example: '/h264_stream',
+  })
+  streamPath: string;
+
+  @ApiProperty({
+    description: 'Stable camera identifier sent with LPR detections.',
+    example: 'entrada-rivadavia',
+  })
+  cameraId: string;
+
+  @ApiProperty({
+    enum: ['entrada', 'salida'],
+    description: 'Camera location.',
+    example: 'entrada',
+  })
+  location: 'entrada' | 'salida';
+
+  @ApiProperty({
+    type: Object,
+    nullable: true,
+    description:
+      'Camera detection tuning, including ROI. Passwords are never stored here.',
+  })
+  tuning: Record<string, unknown> | null;
+}
+
 /**
  * Summary of a tenant payment method exposed to the entity portal.
  */
@@ -175,6 +320,22 @@ export class EntityProfileDto {
       'Per-vehicle-type spot capacity of the lot. Defaults to zeros when not configured.',
   })
   capacity: EntityCapacityDto;
+
+  @ApiProperty({
+    type: TicketTemplateDto,
+    nullable: true,
+    description:
+      'Ticket template owned by the entity. Null means clients should use their built-in default or a local fallback.',
+  })
+  ticketTemplate: TicketTemplateDto | null;
+
+  @ApiProperty({
+    type: DesktopCameraConfigDto,
+    nullable: true,
+    description:
+      'Desktop camera configuration owned by the entity, excluding the camera password.',
+  })
+  desktopCameraConfig: DesktopCameraConfigDto | null;
 
   @ApiProperty({
     type: 'integer',

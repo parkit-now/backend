@@ -96,13 +96,14 @@ const CALLBACK_INSTANCE = '/mercado-pago/oauth/callback';
  *
  * ## Orden de las llamadas externas
  *
- * Las tres llamadas a Mercado Pago (token, store, pos) ocurren AFUERA de la
- * transacción de base, y la transacción se abre recién con los tres resultados
- * en la mano. Dos motivos:
+ * TODAS las llamadas a Mercado Pago (el canje del token y el find-or-create del
+ * Store y del POS: entre tres y cinco round-trips según cuánto haya que adoptar)
+ * ocurren AFUERA de la transacción de base, y la transacción se abre recién con
+ * los resultados en la mano. Dos motivos:
  *
  *  1. Nunca se sostiene una transacción de Postgres a través de un round-trip
- *     de red: con timeout de 10s por llamada, eso es hasta 30s de locks
- *     tomados y una conexión del pool secuestrada.
+ *     de red: con timeout de 10s por llamada, eso serían casi un minuto de
+ *     locks tomados y una conexión del pool secuestrada.
  *  2. Si Mercado Pago falla, no se escribió NADA: no queda una cuenta a medio
  *     vincular que el panel muestre como si anduviera. Hay un test que lo
  *     afirma.
@@ -300,7 +301,16 @@ export class MpAccountsService {
           actorUserId: user.id,
           tenantId: claimed.tenantId,
           severity: 'warn',
-          metadata: { reason: describeFailure(error) },
+          metadata: {
+            reason: describeFailure(error),
+            // 🔴 El `detail` va ACÁ y no sólo al log de Cloud Run. Sin él, cada
+            // fallo de vinculación es una caja negra: el `reason` dice
+            // `MP_POS_CREATE_FAILED`, que es el QUÉ, pero el POR QUÉ —el
+            // mensaje textual de Mercado Pago— vive únicamente en el detail.
+            // Fue exactamente lo que faltó para diagnosticar el fallo de POS de
+            // producción, y obligó a ir a buscar el log del request.
+            ...detailOfFailure(error),
+          },
         })
         .catch((auditError: unknown) => {
           this.logger.error(
@@ -386,8 +396,8 @@ export class MpAccountsService {
       pos = await this.mpApi.getPos(accessToken, account.posId);
     } else {
       // Sin POS no hay nada que releer: se provisiona. En el camino feliz esto
-      // no pasa —las tres llamadas a Mercado Pago corren ANTES de escribir la
-      // fila, así que nunca queda una cuenta a medio vincular— pero una fila
+      // no pasa —las llamadas a Mercado Pago corren ANTES de escribir la fila,
+      // así que nunca queda una cuenta a medio vincular— pero una fila
       // cargada a mano o una migración futura sí podría dejarla así, y el dueño
       // merece un botón que lo arregle sin re-autorizar.
       const tenant = await this.requireTenant(tenantId);
@@ -481,29 +491,161 @@ export class MpAccountsService {
   }
 
   /**
-   * Crea el Store y el POS de la playa en Mercado Pago. Devuelve todo lo que
-   * hay que persistir, sin tocar la base: lo llaman tanto la vinculación como
-   * el resync.
+   * Deja listos el Store y el POS de la playa en Mercado Pago. Devuelve todo lo
+   * que hay que persistir, sin tocar la base: lo llaman tanto la vinculación
+   * como el resync.
+   *
+   * ## 🔴 ADOPTA, no crea a ciegas
+   *
+   * Los dos `external_id` son DETERMINÍSTICOS (`storeExternalId` /
+   * `posExternalId` salen del `tenant_id`): la misma playa pide siempre los
+   * mismos dos recursos. Eso los hace idempotentes POR DISEÑO — pero Mercado
+   * Pago no los trata así, y crear uno que ya existe devuelve
+   * `400 external id '...' is already assigned to this user`.
+   *
+   * Antes esto creaba las dos cosas a ciegas, y el resultado en producción fue
+   * un callejón sin salida:
+   *
+   * ```
+   * 22:56:22  MP_POS_CREATE_FAILED     ← el Store se creó BIEN, murió en el POS
+   * 22:56:47  MP_STORE_CREATE_FAILED   ← el reintento choca con su propio Store
+   * ```
+   *
+   * Como el flujo NO PERSISTE NADA SI FALLA (`link()` corre después de las tres
+   * llamadas, a propósito), ese primer Store quedó huérfano: vivo en la cuenta
+   * de MP y sin que nosotros tuviéramos su id. Y como el `state` del OAuth se
+   * consume en la primera línea de `handleCallback` y nunca se revierte, cada
+   * reintento le costaba al dueño un paseo completo por la pantalla de
+   * autorización de Mercado Pago... para chocar contra el mismo muro.
+   *
+   * Con find-or-create ese estado es RECUPERABLE solo: el reintento encuentra
+   * el Store huérfano, lo adopta y sigue con el POS.
+   *
+   * El resultado es INDISTINGUIBLE entre "lo creé" y "lo adopté" —misma forma,
+   * QR incluido— porque quien llama no tiene por qué saber cuál de los dos pasó.
    */
   private async provision(
     accessToken: string,
     mpUserId: string,
     tenant: Tenant,
   ): Promise<{ storeId: string; pos: MpPos; externalPosId: string }> {
-    const store = await this.mpApi.createStore(accessToken, mpUserId, {
-      name: storeName(tenant),
-      externalId: storeExternalId(tenant.id),
-      location: this.requireStoreLocation(tenant),
-    });
+    const externalStoreId = storeExternalId(tenant.id);
+    const store = await this.adoptOrCreate(
+      `store ${externalStoreId}`,
+      () =>
+        this.mpApi.findStoreByExternalId(
+          accessToken,
+          mpUserId,
+          externalStoreId,
+        ),
+      () =>
+        this.mpApi.createStore(accessToken, mpUserId, {
+          name: storeName(tenant),
+          externalId: externalStoreId,
+          // Adentro del callback de creación y no afuera: la dirección
+          // estructurada sólo hace falta para CREAR la sucursal. Si ya existe,
+          // adoptarla no necesita nada del tenant, y el resync de una playa con
+          // la dirección a medio cargar deja de fallar por una razón que no
+          // viene al caso. (En la vinculación esto ni se nota:
+          // `handleCallback` ya corrió `assertAddressComplete` antes.)
+          location: this.requireStoreLocation(tenant),
+        }),
+    );
 
     const externalPosId = posExternalId(tenant.id);
-    const pos = await this.mpApi.createPos(accessToken, {
-      name: posName(tenant),
-      storeId: store.id,
-      externalId: externalPosId,
-    });
+    const pos = await this.adoptOrCreate(
+      `POS ${externalPosId}`,
+      () => this.mpApi.findPosByExternalId(accessToken, externalPosId),
+      () =>
+        this.mpApi.createPos(accessToken, {
+          name: posName(tenant),
+          storeId: store.id,
+          externalId: externalPosId,
+        }),
+    );
 
-    return { storeId: store.id, pos, externalPosId };
+    // La caja es la fuente de verdad de a qué sucursal pertenece: si adoptamos
+    // una preexistente, manda SU `store_id` y no el que acabamos de resolver.
+    // Persistir el nuestro cuando difieren dejaría `mp_accounts.store_id`
+    // apuntando a una sucursal que no es la del QR que el dueño va a imprimir.
+    return { storeId: pos.storeId ?? store.id, pos, externalPosId };
+  }
+
+  /**
+   * Find-or-create contra Mercado Pago: si el recurso ya existe, se ADOPTA.
+   *
+   * ## Por qué se re-busca ante CUALQUIER fallo de la creación
+   *
+   * La búsqueda previa cubre el caso normal (el recurso quedó de un intento
+   * anterior). La re-búsqueda del `catch` cubre los dos casos en los que esa
+   * primera búsqueda no alcanza:
+   *
+   *  1. CARRERA: entre nuestro `find` y nuestro `create` alguien más lo creó
+   *     —un doble click, el retry de un proxy—. MP contesta 400 "already
+   *     assigned".
+   *  2. EL POST MURIÓ DESPUÉS DE EJECUTARSE: timeout o socket cortado
+   *     (`MP_UNREACHABLE`). Ahí NO SABEMOS si el recurso existe; preguntarlo es
+   *     literalmente la única forma de averiguarlo.
+   *
+   * 🔴 Y por eso se re-busca ante cualquier error, en vez de parsear el mensaje
+   * de MP buscando "already assigned": ese texto es prosa que MP puede cambiar
+   * mañana sin avisar, y colgar la recuperación de un `includes()` sobre un
+   * string en inglés es exactamente la clase de acoplamiento que se rompe en
+   * silencio. El mecanismo real es preguntar; el mensaje de MP queda para el
+   * `detail` y el audit, que es donde sirve.
+   *
+   * Si la re-búsqueda tampoco lo encuentra, se propaga el error ORIGINAL de la
+   * creación —nunca el de la búsqueda—: el que explica de verdad qué pasó es el
+   * primero, y pisarlo con un "no pude buscar" convierte un diagnóstico en una
+   * caja negra.
+   *
+   * Un fallo de la búsqueda NUNCA corta el flujo por sí solo (se loguea y se
+   * sigue hacia la creación). El find-or-create es una MEJORA sobre crear a
+   * ciegas: si el endpoint de búsqueda estuviera caído, lo peor que puede pasar
+   * es volver al comportamiento anterior, no romper una vinculación primera que
+   * hoy funciona.
+   */
+  private async adoptOrCreate<T>(
+    label: string,
+    find: () => Promise<T | null>,
+    create: () => Promise<T>,
+  ): Promise<T> {
+    const existing = await this.findQuietly(label, find);
+    if (existing) {
+      this.logger.log(`Adopted the existing Mercado Pago ${label}`);
+      return existing;
+    }
+
+    try {
+      return await create();
+    } catch (error) {
+      const adopted = await this.findQuietly(label, find);
+      if (adopted) {
+        this.logger.warn(
+          `Creating the Mercado Pago ${label} failed but it exists: adopting it`,
+        );
+        return adopted;
+      }
+      throw error;
+    }
+  }
+
+  /** La búsqueda es best-effort: si falla, se loguea y se sigue. */
+  private async findQuietly<T>(
+    label: string,
+    find: () => Promise<T | null>,
+  ): Promise<T | null> {
+    try {
+      return await find();
+    } catch (error) {
+      // El mensaje de MP ya lo logueó `MpApiClient.send()` con su contexto: acá
+      // sólo queda registrado que la búsqueda no se pudo usar para decidir.
+      this.logger.warn(
+        `Could not search Mercado Pago for the ${label}; falling back to creating it`,
+        error instanceof Error ? error.name : 'unknown error',
+      );
+      return null;
+    }
   }
 
   /**
@@ -802,16 +944,52 @@ function decimalToNumber(value: unknown): number | null {
 
 /**
  * Resumen del fallo para el audit log. Sólo el `code` del ProblemDetails —que
- * es estable y no lleva datos— o el nombre del error. NUNCA el mensaje crudo:
- * podría arrastrar un fragmento de respuesta de Mercado Pago.
+ * es estable y no lleva datos— o el nombre del error. Nunca el mensaje crudo de
+ * un error cualquiera: para el mensaje está `detailOfFailure`, que es selectivo.
  */
 function describeFailure(error: unknown): string {
-  if (error instanceof FormattedException) {
-    const body: unknown = error.getResponse();
-    if (body !== null && typeof body === 'object' && 'code' in body) {
-      const code: unknown = (body as Record<string, unknown>).code;
-      if (typeof code === 'string') return code;
-    }
-  }
+  return problemDetails(error)?.code ?? errorName(error);
+}
+
+/**
+ * El `detail` del ProblemDetails, para que el audit log diga POR QUÉ falló y no
+ * sólo QUÉ falló. Devuelve un fragmento para spreadear: `{}` cuando no hay nada
+ * que agregar, así no se escribe un `detail: null` en el JSON.
+ *
+ * ## 🔴 Sólo de un `FormattedException`, y no es una limitación arbitraria
+ *
+ * El `detail` de un `FormattedException` de este módulo es una de dos cosas: un
+ * texto fijo que escribimos nosotros, o el mensaje de Mercado Pago YA PASADO
+ * POR `redact()` en `MpApiClient` (tokens enmascarados y corte a 300
+ * caracteres). Las dos son seguras de persistir.
+ *
+ * El `message` de un `Error` cualquiera —un `PrismaClientKnownRequestError`,
+ * pongamos— NO tiene ninguna de esas dos garantías: puede traer valores de
+ * columnas, y el audit log lo lee más gente que la base. Por eso ahí se cae al
+ * `name`, que es lo que ya hacía `describeFailure`.
+ */
+function detailOfFailure(error: unknown): { detail?: string } {
+  const detail = problemDetails(error)?.detail;
+  return detail ? { detail } : {};
+}
+
+/** El cuerpo del ProblemDetails de un `FormattedException`, o `null`. */
+function problemDetails(
+  error: unknown,
+): { code?: string; detail?: string } | null {
+  if (!(error instanceof FormattedException)) return null;
+
+  const body: unknown = error.getResponse();
+  if (body === null || typeof body !== 'object') return null;
+
+  const { code, detail } = body as Record<string, unknown>;
+  return {
+    ...(typeof code === 'string' ? { code } : {}),
+    ...(typeof detail === 'string' ? { detail } : {}),
+  };
+}
+
+/** Nombre del error para el audit, sin filtrar el mensaje. */
+function errorName(error: unknown): string {
   return error instanceof Error ? error.name : 'UnknownError';
 }

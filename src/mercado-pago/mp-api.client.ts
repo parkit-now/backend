@@ -75,6 +75,15 @@ export interface MpPosInput {
 export interface MpPos {
   readonly id: string;
   readonly externalId: string | null;
+  /**
+   * Sucursal a la que pertenece la caja.
+   *
+   * ⚠️ Mercado Pago manda este campo como STRING (`"store_id": "1234567"`)
+   * mientras que el `id` del Store viene como NÚMERO (`"id": 1234567`). Los dos
+   * pasan por `readId`, que los normaliza a string: compararlos crudos —uno
+   * contra el otro— es comparar `'1234567'` con `1234567` y no coincidir nunca.
+   */
+  readonly storeId: string | null;
   /** URL de la imagen del QR estático de esta caja. */
   readonly qrImageUrl: string | null;
   /** URL del PDF imprimible con el QR (el cartel del mostrador). */
@@ -271,7 +280,7 @@ interface MpOperation {
  * que ser el `code`, que es typesafe contra el catálogo y es el campo que el
  * contrato de errores del repo declara estable.
  *
- * Son codes TRANSVERSALES (uno para las seis operaciones) y no uno por
+ * Son codes TRANSVERSALES (uno para TODAS las operaciones) y no uno por
  * operación (`MP_ORDER_CREATE_UNREACHABLE`, `MP_STORE_CREATE_UNREACHABLE`, …)
  * porque el hecho que describen —"no llegamos a Mercado Pago"— es idéntico en
  * todas, `send` es UN solo lugar, y multiplicarlos por operación agregaría seis
@@ -415,6 +424,67 @@ export class MpApiClient implements OnModuleInit {
   }
 
   /**
+   * Busca la sucursal de la playa por su `external_id`. Es la mitad "find" del
+   * find-or-create de `MpAccountsService.provision()`.
+   *
+   * ## Por qué existe
+   *
+   * Nuestros `external_id` son DETERMINÍSTICOS: salen del `tenant_id`, así que
+   * la misma playa pide SIEMPRE el mismo Store. Eso los hace idempotentes por
+   * diseño, pero Mercado Pago no lo trata así: si el recurso ya existe contesta
+   * `400 external id '...' is already assigned to this user`. Sin esta
+   * búsqueda, un intento de vinculación que crea el Store y después muere
+   * creando el POS deja el Store HUÉRFANO —vivo en la cuenta de MP, sin que
+   * nosotros tengamos su id, porque el flujo no persiste nada si falla— y cada
+   * reintento posterior choca contra ese mismo muro. Para siempre.
+   *
+   * ## ⚠️ `results`, no `data`
+   *
+   * Este endpoint devuelve los resultados en `results`; el de cajas
+   * (`findPosByExternalId`) los devuelve en `data`. Son dos APIs distintas de
+   * MP, no un typo. Confundirlas da "no encontré nada" SIEMPRE, que es el peor
+   * fallo posible acá: silencioso y que reproduce el bug original.
+   *
+   * ## No encontrar nada NO es un error
+   *
+   * Devuelve `null`, no tira: "no existe" es la mitad NORMAL del find-or-create
+   * (es lo que pasa en toda vinculación primera). Los fallos de verdad —MP
+   * caído, token vencido, respuesta ilegible— sí salen por `send()`.
+   */
+  async findStoreByExternalId(
+    accessToken: string,
+    mpUserId: string,
+    externalId: string,
+  ): Promise<MpStore | null> {
+    const operation: MpOperation = {
+      label: 'search Mercado Pago store by external id',
+      code: ErrorCodes.MP_STORE_CREATE_FAILED,
+      instance: '/mercado-pago/oauth/callback',
+    };
+
+    const payload = await this.send<Record<string, unknown>>(
+      operation,
+      'GET',
+      `/users/${encodeURIComponent(mpUserId)}/stores/search` +
+        `?external_id=${encodeURIComponent(externalId)}`,
+      undefined,
+      accessToken,
+    );
+
+    const match = matchByExternalId(payload.results, externalId);
+    if (!match) return null;
+
+    const id = readId(match.id);
+    if (!id) {
+      // Encontramos la sucursal pero no podemos nombrarla: crear tampoco va a
+      // andar (MP la va a rechazar por `external_id` repetido), así que el
+      // camino honesto es cortar acá con el code que dice justamente eso.
+      throw this.malformed(operation, 'store search result has no store id');
+    }
+    return { id };
+  }
+
+  /**
    * Crea el `POS` (caja) contra el que se genera el QR de la playa.
    *
    * `operating_mode: 'pdv'` es el modo atendido: hay alguien en el mostrador
@@ -441,6 +511,50 @@ export class MpApiClient implements OnModuleInit {
     );
 
     return this.readPos(payload, operation);
+  }
+
+  /**
+   * Busca la caja de la playa por su `external_id`. Gemela de
+   * `findStoreByExternalId`, con dos diferencias que hay que tener presentes.
+   *
+   * ## ⚠️ 1) Acá los resultados vienen en `data`, no en `results`
+   *
+   * `GET /users/{id}/stores/search` → `{ results: [...] }`
+   * `GET /v2/pos`                   → `{ data: [...] }`
+   *
+   * La asimetría es de Mercado Pago y está verificada contra la referencia
+   * oficial. Leer la clave equivocada devuelve `null` siempre.
+   *
+   * ## 🔴 2) El `qr_response` viene en la búsqueda igual que en la creación
+   *
+   * Por eso la respuesta pasa por el MISMO `readPos()` que `createPos()`: una
+   * caja adoptada tiene que traer `image` y `template_document` igual que una
+   * recién creada. Si se adopta el POS y se pierde el QR, la vinculación queda
+   * "exitosa" y el dueño no puede imprimir el cartel del mostrador —que es lo
+   * único que hace cobrable la playa.
+   *
+   * No encontrar nada devuelve `null`, no tira. Ver el docblock de la gemela.
+   */
+  async findPosByExternalId(
+    accessToken: string,
+    externalId: string,
+  ): Promise<MpPos | null> {
+    const operation: MpOperation = {
+      label: 'search Mercado Pago POS by external id',
+      code: ErrorCodes.MP_POS_CREATE_FAILED,
+      instance: '/mercado-pago/oauth/callback',
+    };
+
+    const payload = await this.send<Record<string, unknown>>(
+      operation,
+      'GET',
+      `/v2/pos?external_id=${encodeURIComponent(externalId)}`,
+      undefined,
+      accessToken,
+    );
+
+    const match = matchByExternalId(payload.data, externalId);
+    return match ? this.readPos(match, operation) : null;
   }
 
   /**
@@ -791,6 +905,9 @@ export class MpApiClient implements OnModuleInit {
     return {
       id,
       externalId: str(payload.external_id),
+      // `store_id` llega como string y el `id` del Store como número: los dos
+      // pasan por `readId` para que se puedan comparar entre sí.
+      storeId: readId(payload.store_id),
       qrImageUrl: str(qr.image),
       qrTemplateDocumentUrl: str(qr.template_document),
     };
@@ -910,6 +1027,31 @@ function date(value: unknown): Date | null {
   if (!raw) return null;
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * De la lista que devuelve una búsqueda, el ítem cuyo `external_id` coincide
+ * EXACTO.
+ *
+ * 🔴 Exacto, y no "el primero del array", a propósito. Mercado Pago NO
+ * documenta si el filtro `?external_id=` matchea exacto o por prefijo, y un
+ * mismo vendedor puede tener varias playas nuestras en la misma cuenta
+ * (`PARKITSTORE<uuid-A>`, `PARKITSTORE<uuid-B>`). Si MP algún día devuelve de
+ * más, quedarse con el primero significa adoptar la sucursal de OTRA playa: el
+ * QR de una terminaría colgado de la caja de la otra. Ante la duda NO se
+ * adopta, se crea — y si crear falla, el error de MP lo dice y queda auditado.
+ */
+function matchByExternalId(
+  value: unknown,
+  externalId: string,
+): Record<string, unknown> | null {
+  if (!Array.isArray(value)) return null;
+
+  for (const item of value) {
+    const row = obj(item);
+    if (row && str(row.external_id) === externalId) return row;
+  }
+  return null;
 }
 
 /** Objeto plano, o `null` (arrays incluidos: un array no es un objeto útil acá). */

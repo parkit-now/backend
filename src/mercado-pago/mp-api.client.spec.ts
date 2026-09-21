@@ -253,6 +253,93 @@ describe('MpApiClient', () => {
     expect(store.id).toBe('1234567');
   });
 
+  /**
+   * ⚠️ La asimetría de MP: stores devuelve `results`, pos devuelve `data`.
+   * Leer la clave equivocada no rompe nada visible — devuelve "no encontré
+   * nada" SIEMPRE— y con eso vuelve intacto el bug que esto viene a arreglar.
+   */
+  it('busca el Store por external_id y lee `results`', async () => {
+    fetchMock.mockResolvedValue(
+      respond(200, {
+        paging: { total: 1 },
+        results: [{ id: 1234567, external_id: 'PARKITSTORE1' }],
+      }),
+    );
+
+    const store = await client.findStoreByExternalId(
+      'token',
+      '446566691',
+      'PARKITSTORE1',
+    );
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe(
+      'https://api.mercadopago.com/users/446566691/stores/search?external_id=PARKITSTORE1',
+    );
+    expect(store).toEqual({ id: '1234567' });
+  });
+
+  it('busca el POS por external_id y lee `data`, con el QR de la búsqueda', async () => {
+    fetchMock.mockResolvedValue(
+      respond(200, {
+        paging: { total: 1 },
+        data: [
+          {
+            id: 2711382,
+            external_id: 'PARKITPOS1',
+            // MP lo manda como STRING acá; el `id` del Store viene como número.
+            store_id: '1234567',
+            qr_response: {
+              image: 'https://mp.test/qr.png',
+              template_document: 'https://mp.test/qr.pdf',
+            },
+          },
+        ],
+      }),
+    );
+
+    const pos = await client.findPosByExternalId('token', 'PARKITPOS1');
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe(
+      'https://api.mercadopago.com/v2/pos?external_id=PARKITPOS1',
+    );
+    expect(pos?.id).toBe('2711382');
+    expect(pos?.storeId).toBe('1234567');
+    // 🔴 Adoptar un POS sin QR deja al dueño sin cartel para imprimir, con la
+    // vinculación "exitosa". El QR viene en la búsqueda igual que en el alta.
+    expect(pos?.qrImageUrl).toBe('https://mp.test/qr.png');
+    expect(pos?.qrTemplateDocumentUrl).toBe('https://mp.test/qr.pdf');
+  });
+
+  // "No existe" es la mitad NORMAL del find-or-create: es lo que pasa en toda
+  // vinculación primera. Si tirara, ninguna playa nueva podría vincularse.
+  it('una búsqueda sin resultados devuelve null y NO es un error', async () => {
+    fetchMock.mockResolvedValue(respond(200, { paging: { total: 0 } }));
+
+    expect(
+      await client.findStoreByExternalId('token', '446566691', 'NOPE'),
+    ).toBeNull();
+    expect(await client.findPosByExternalId('token', 'NOPE')).toBeNull();
+  });
+
+  /**
+   * 🔴 Un vendedor puede tener varias playas nuestras en la misma cuenta de MP,
+   * y no está documentado que el filtro matchee exacto y no por prefijo.
+   * Adoptar la sucursal de OTRA playa cuelga su QR de la caja equivocada.
+   */
+  it('no adopta un recurso cuyo external_id no es EXACTAMENTE el pedido', async () => {
+    fetchMock.mockResolvedValue(
+      respond(200, {
+        results: [{ id: 999, external_id: 'PARKITSTORE1OTRAPLAYA' }],
+      }),
+    );
+
+    expect(
+      await client.findStoreByExternalId('token', '446566691', 'PARKITSTORE1'),
+    ).toBeNull();
+  });
+
   it('crea la Order en modo QR estático, con montos string y sin PII', async () => {
     fetchMock.mockResolvedValue(
       respond(201, {

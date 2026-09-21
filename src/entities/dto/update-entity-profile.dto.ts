@@ -1,12 +1,18 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
+  IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -14,6 +20,24 @@ import {
 } from 'class-validator';
 import type { BranchStatus } from '@prisma/client';
 import { UpdateEntityAddressDto } from './entity-address.dto';
+
+export const TICKET_TEMPLATE_FIELD_IDS = [
+  'parkingName',
+  'parkingAddress',
+  'parkingCuit',
+  'grossIncome',
+  'nonFiscalControl',
+  'ticketNumber',
+  'plate',
+  'vehicleBrand',
+  'vehicleModel',
+  'color',
+  'rate',
+  'entryDate',
+  'entryTime',
+  'cochera',
+  'notes',
+] as const;
 
 /**
  * Allowed values for `lprImageRetentionDays`. A closed set instead of a free
@@ -37,6 +61,172 @@ export class UpdateEntityCapacityDto {
   @IsInt()
   @Min(0)
   total?: number;
+}
+
+export class UpdateTicketTemplateFieldDto {
+  @ApiPropertyOptional({
+    enum: TICKET_TEMPLATE_FIELD_IDS,
+    description: 'Stable ticket field identifier.',
+    example: 'plate',
+  })
+  @IsIn(TICKET_TEMPLATE_FIELD_IDS)
+  id: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the field is printed.',
+    example: true,
+  })
+  @IsBoolean()
+  visible: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Font size in points.',
+    minimum: 6,
+    maximum: 32,
+    example: 13,
+  })
+  @IsNumber()
+  @Min(6)
+  @Max(32)
+  fontSizePt: number;
+
+  @ApiPropertyOptional({
+    enum: ['normal', 'bold'],
+    description: 'Text emphasis.',
+    example: 'bold',
+  })
+  @IsIn(['normal', 'bold'])
+  emphasis: 'normal' | 'bold';
+}
+
+export class UpdateTicketTemplateDto {
+  @ApiPropertyOptional({
+    type: 'integer',
+    enum: [1],
+    description: 'Template schema version.',
+    example: 1,
+  })
+  @IsIn([1])
+  version: 1;
+
+  @ApiPropertyOptional({
+    type: [UpdateTicketTemplateFieldDto],
+    description: 'Ordered ticket fields.',
+  })
+  @IsArray()
+  @ArrayMaxSize(TICKET_TEMPLATE_FIELD_IDS.length)
+  @ValidateNested({ each: true })
+  @Type(() => UpdateTicketTemplateFieldDto)
+  fields: UpdateTicketTemplateFieldDto[];
+
+  @ApiPropertyOptional({
+    description: 'Optional CUIT override printed on the ticket.',
+    maxLength: 80,
+  })
+  @IsString()
+  @MaxLength(80)
+  cuitOverride: string;
+
+  @ApiPropertyOptional({
+    description: 'Gross income registration text printed on the ticket.',
+    maxLength: 120,
+  })
+  @IsString()
+  @MaxLength(120)
+  grossIncomeText: string;
+
+  @ApiPropertyOptional({
+    description: 'Non-fiscal control legend printed on the ticket.',
+    maxLength: 120,
+  })
+  @IsString()
+  @MaxLength(120)
+  nonFiscalControlText: string;
+}
+
+export class UpdateDesktopCameraConfigDto {
+  @ApiPropertyOptional({
+    enum: ['webcam', 'ip'],
+    description: 'Video source mode.',
+    example: 'ip',
+  })
+  @IsIn(['webcam', 'ip'])
+  mode: 'webcam' | 'ip';
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    minimum: 0,
+    description: 'OpenCV webcam index.',
+    example: 0,
+  })
+  @IsInt()
+  @Min(0)
+  deviceIndex: number;
+
+  @ApiPropertyOptional({
+    description: 'IP camera host. Empty for webcam mode.',
+    maxLength: 160,
+    example: '192.168.1.26',
+  })
+  @IsString()
+  @MaxLength(160)
+  host: string;
+
+  @ApiPropertyOptional({
+    type: 'integer',
+    minimum: 1,
+    maximum: 65535,
+    description: 'IP camera RTSP port.',
+    example: 554,
+  })
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  port: number;
+
+  @ApiPropertyOptional({
+    description: 'IP camera username. Password is intentionally not persisted.',
+    maxLength: 120,
+  })
+  @IsString()
+  @MaxLength(120)
+  username: string;
+
+  @ApiPropertyOptional({
+    description: 'IP camera stream path.',
+    maxLength: 220,
+    example: '/h264_stream',
+  })
+  @IsString()
+  @MaxLength(220)
+  streamPath: string;
+
+  @ApiPropertyOptional({
+    description: 'Stable camera identifier sent with LPR detections.',
+    maxLength: 100,
+  })
+  @IsString()
+  @MaxLength(100)
+  cameraId: string;
+
+  @ApiPropertyOptional({
+    enum: ['entrada', 'salida'],
+    description: 'Camera location.',
+    example: 'entrada',
+  })
+  @IsIn(['entrada', 'salida'])
+  location: 'entrada' | 'salida';
+
+  @ApiPropertyOptional({
+    type: Object,
+    nullable: true,
+    description:
+      'Camera detection tuning, including ROI. Passwords are never stored here.',
+  })
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsObject()
+  tuning?: Record<string, unknown> | null;
 }
 
 /** Editable fields of an entity (tenant) profile. */
@@ -120,6 +310,26 @@ export class UpdateEntityProfileDto {
   @ValidateNested()
   @Type(() => UpdateEntityCapacityDto)
   capacity?: UpdateEntityCapacityDto;
+
+  @ApiPropertyOptional({
+    type: UpdateTicketTemplateDto,
+    description:
+      'Ticket template owned by this entity. Owner-only; local printer/device settings remain client-side.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateTicketTemplateDto)
+  ticketTemplate?: UpdateTicketTemplateDto;
+
+  @ApiPropertyOptional({
+    type: UpdateDesktopCameraConfigDto,
+    description:
+      'Desktop camera configuration owned by this entity, excluding the password.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateDesktopCameraConfigDto)
+  desktopCameraConfig?: UpdateDesktopCameraConfigDto;
 
   @ApiPropertyOptional({
     type: 'integer',
