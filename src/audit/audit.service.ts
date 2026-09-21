@@ -55,6 +55,13 @@ export const AuditActions = {
   // esto. El porqué de cancelar igual del lado nuestro está en
   // `PaymentIntentsService.cancel`.
   PAYMENT_INTENT_CANCEL_MP_FAILED: 'payment_intent.cancel_mp_failed',
+  // Mercado Pago devolvió la plata de un cobro que ya estaba acreditado. Lo
+  // escribe el webhook y es el único evento del que la playa pierde plata que
+  // ya había dado por buena. La severidad la decide DESDE DÓNDE venía el
+  // intento (ver `MpWebhookService.refund`): `crit` si ya estaba `consumed`
+  // —el arqueo de ese turno contó esa plata y ahora está mal— y `warn` si
+  // todavía estaba en `approved`, donde nadie lo había contado.
+  PAYMENT_INTENT_REFUNDED: 'payment_intent.refunded',
 } as const;
 
 export interface RecordAuditInput {

@@ -9,6 +9,8 @@ import { MpCryptoService } from './mp-crypto.service';
 import { MpOauthController } from './mp-oauth.controller';
 import { MpSignatureService } from './mp-signature.service';
 import { MpTokenService } from './mp-token.service';
+import { MpWebhookController } from './mp-webhook.controller';
+import { MpWebhookService } from './mp-webhook.service';
 import { PaymentIntentsController } from './payment-intents.controller';
 import { PaymentIntentsService } from './payment-intents.service';
 
@@ -48,6 +50,14 @@ import { PaymentIntentsService } from './payment-intents.service';
  * intents y el webhook lo van a inyectar desde afuera de este módulo. Si no se
  * exporta, el primero que lo necesite va a terminar descifrando el token por su
  * cuenta y salteándose el refresh perezoso y la degradación.
+ *
+ * ## El webhook va acá y NO en un módulo propio
+ *
+ * `MpWebhookController` es público (Mercado Pago no manda JWT) y su ruta vive
+ * fuera de `/tenants/:tenantId/*`, pero necesita las MISMAS cuatro piezas que
+ * ya viven en este módulo —firma, tokens, cliente HTTP y auditoría— y escribe
+ * la misma tabla que `PaymentIntentsService`. Sacarlo a un módulo aparte sería
+ * importar este entero desde allá para no ganar nada.
  */
 @Module({
   imports: [PrismaModule, AuditModule],
@@ -55,6 +65,7 @@ import { PaymentIntentsService } from './payment-intents.service';
     MpAccountsController,
     MpOauthController,
     PaymentIntentsController,
+    MpWebhookController,
   ],
   providers: [
     MpConfigService,
@@ -64,6 +75,7 @@ import { PaymentIntentsService } from './payment-intents.service';
     MpTokenService,
     MpAccountsService,
     PaymentIntentsService,
+    MpWebhookService,
   ],
   exports: [
     MpConfigService,

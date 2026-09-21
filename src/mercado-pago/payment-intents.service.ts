@@ -135,11 +135,11 @@ const ITEM_INSTANCE = '/tenants/:tenantId/payment-intents/:paymentIntentId';
  *
  * ## Qué NO está acá, a propósito
  *
- * El webhook de Mercado Pago y el reconciliador por cron. Los dos son
- * cross-tenant (llegan sin `:tenantId`) y los dos escriben esta misma tabla,
- * así que van a necesitar sus propias transiciones guardadas — pero con otro
- * ciclo de vida y otra superficie de ataque. Este service es el lado HTTP, el
- * que tiene un operario autenticado del otro lado.
+ * El webhook de Mercado Pago (ya vive en `MpWebhookService`) y el reconciliador
+ * por cron (todavía no existe). Los dos son cross-tenant —llegan sin
+ * `:tenantId`— y los dos escriben esta misma tabla con sus propias transiciones
+ * guardadas, pero con otro ciclo de vida y otra superficie de ataque. Este
+ * service es el lado HTTP, el que tiene un operario autenticado del otro lado.
  */
 @Injectable()
 export class PaymentIntentsService {

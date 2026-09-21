@@ -114,6 +114,24 @@ describe('MpCryptoService', () => {
     expect(raw).toHaveLength(CIPHERTEXT_OFFSET + Buffer.byteLength(TOKEN));
   });
 
+  /**
+   * El invariante más barato de todos y el que más habría servido: 28 bytes de
+   * overhead (iv 12 + tag 16) son 40 caracteres en base64 ANTES de meter un
+   * solo byte de texto, así que NADA que salga de `encrypt` puede medir menos.
+   *
+   * Existe porque ya pasó al revés: una fila sembrada a mano con "tokens" de 31
+   * caracteres —que no eran ciphertext de nada— entró a la base sin chistar y
+   * recién explotó en `decrypt()`, lejos del error. Un largo mínimo distingue
+   * un valor cifrado de cualquier string que alguien pegó ahí.
+   */
+  it('el ciphertext nunca mide menos de 40 caracteres (iv + tag ya son 28 bytes)', () => {
+    const service = makeService();
+
+    // Hasta el plaintext más corto posible arrastra el overhead completo.
+    expect(service.encrypt('x').ciphertext.length).toBeGreaterThanOrEqual(40);
+    expect(service.encrypt(TOKEN).ciphertext.length).toBeGreaterThanOrEqual(40);
+  });
+
   it('dos cifrados del mismo texto dan ciphertexts distintos (IV aleatorio)', () => {
     const service = makeService();
 
