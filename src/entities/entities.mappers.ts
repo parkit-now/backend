@@ -3,7 +3,11 @@ import {
   EntityProfileDto,
   PaymentMethodSummaryDto,
 } from './dto/entity-profile.dto';
-import { readCapacity } from './entity-settings';
+import {
+  readCapacity,
+  readDesktopCameraConfig,
+  readTicketTemplate,
+} from './entity-settings';
 import { toEntityAddressDto } from './tenant-address';
 
 export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
@@ -36,6 +40,8 @@ export function toEntityProfileDto(
     location: toEntityAddressDto(tenant),
     status: tenant.status,
     capacity: readCapacity(tenant.settings),
+    ticketTemplate: readTicketTemplate(tenant.settings),
+    desktopCameraConfig: readDesktopCameraConfig(tenant.settings),
     lprImageRetentionDays: tenant.lprImageRetentionDays,
     entryCameraId: tenant.entryCameraId,
     entryCameraLabel: tenant.entryCameraLabel,

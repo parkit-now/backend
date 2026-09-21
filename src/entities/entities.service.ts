@@ -18,7 +18,12 @@ import { PaymentMethodChangesResponseDto } from './dto/payment-method-changes-re
 import { TogglePaymentMethodDto } from './dto/toggle-payment-method.dto';
 import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
 import { toEntityProfileDto, toPaymentMethodDto } from './entities.mappers';
-import { readCapacity, withCapacity } from './entity-settings';
+import {
+  readCapacity,
+  withDesktopCameraConfig,
+  withCapacity,
+  withTicketTemplate,
+} from './entity-settings';
 import { addressUpdateData } from './tenant-address';
 
 /**
@@ -126,14 +131,34 @@ export class EntitiesService {
       }
     }
 
+    let nextSettings: Prisma.InputJsonValue =
+      tenant.settings as Prisma.InputJsonValue;
+    let settingsChanged = false;
+
     // Capacity lives in `settings.capacity`; merge so an omitted `total` keeps
     // the current value instead of resetting the lot to zero.
     if (dto.capacity !== undefined) {
       const current = readCapacity(tenant.settings);
-      data.settings = withCapacity(tenant.settings, {
+      nextSettings = withCapacity(nextSettings as Prisma.JsonValue, {
         total: dto.capacity.total ?? current.total,
       });
+      settingsChanged = true;
     }
+    if (dto.ticketTemplate !== undefined) {
+      nextSettings = withTicketTemplate(
+        nextSettings as Prisma.JsonValue,
+        dto.ticketTemplate,
+      );
+      settingsChanged = true;
+    }
+    if (dto.desktopCameraConfig !== undefined) {
+      nextSettings = withDesktopCameraConfig(nextSettings as Prisma.JsonValue, {
+        ...dto.desktopCameraConfig,
+        tuning: dto.desktopCameraConfig.tuning ?? null,
+      });
+      settingsChanged = true;
+    }
+    if (settingsChanged) data.settings = nextSettings;
 
     await this.prisma.tenant.update({ where: { id: tenantId }, data });
     await this.audit.record({

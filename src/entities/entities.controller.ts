@@ -43,9 +43,12 @@ import {
 import { EntitiesService } from './entities.service';
 import { EntityAuditQueryDto } from './dto/entity-audit-query.dto';
 import {
+  DesktopCameraConfigDto,
   EntityCapacityDto,
   EntityProfileDto,
   PaymentMethodSummaryDto,
+  TicketTemplateDto,
+  TicketTemplateFieldDto,
 } from './dto/entity-profile.dto';
 import { CreatePaymentMethodDto } from './dto/create-payment-method.dto';
 import { PaymentMethodChangesQueryDto } from './dto/payment-method-changes-query.dto';
@@ -59,6 +62,9 @@ import { UpdateEntityProfileDto } from './dto/update-entity-profile.dto';
   ValidationProblemDetailsDto,
   EntityProfileDto,
   EntityCapacityDto,
+  DesktopCameraConfigDto,
+  TicketTemplateDto,
+  TicketTemplateFieldDto,
   PaymentMethodSummaryDto,
   PaymentMethodChangesResponseDto,
   AuditEventDto,

@@ -1,4 +1,11 @@
-import { readCapacity, withCapacity } from './entity-settings';
+import {
+  readCapacity,
+  readDesktopCameraConfig,
+  readTicketTemplate,
+  withCapacity,
+  withDesktopCameraConfig,
+  withTicketTemplate,
+} from './entity-settings';
 
 describe('entity-settings', () => {
   describe('withCapacity', () => {
@@ -48,6 +55,82 @@ describe('entity-settings', () => {
           capacity: { carSpots: 40, motorcycleSpots: 10, bicycleSpots: 5 },
         }),
       ).toEqual({ total: 55 });
+    });
+  });
+
+  describe('ticketTemplate', () => {
+    const template = {
+      version: 1 as const,
+      fields: [
+        {
+          id: 'plate',
+          visible: true,
+          fontSizePt: 13,
+          emphasis: 'bold' as const,
+        },
+      ],
+      cuitOverride: '',
+      grossIncomeText: 'IIBB',
+      nonFiscalControlText: 'Control no fiscal',
+    };
+
+    it('conserva el resto de settings al guardar la plantilla', () => {
+      expect(withTicketTemplate({ capacity: { total: 55 } }, template)).toEqual(
+        {
+          capacity: { total: 55 },
+          ticketTemplate: template,
+        },
+      );
+    });
+
+    it('lee una plantilla válida', () => {
+      expect(readTicketTemplate({ ticketTemplate: template })).toEqual(
+        template,
+      );
+    });
+
+    it('ignora plantillas corruptas o sin campos válidos', () => {
+      expect(readTicketTemplate({ ticketTemplate: { fields: [] } })).toBeNull();
+      expect(
+        readTicketTemplate({
+          ticketTemplate: { fields: [{ id: 'campo-raro' }] },
+        }),
+      ).toBeNull();
+    });
+  });
+
+  describe('desktopCameraConfig', () => {
+    const camera = {
+      mode: 'ip' as const,
+      deviceIndex: 0,
+      host: '192.168.1.26',
+      port: 554,
+      username: 'admin',
+      streamPath: '/h264_stream',
+      cameraId: 'entrada',
+      location: 'entrada' as const,
+      tuning: { roi: [0, 0, 100, 100] },
+    };
+
+    it('conserva el resto de settings al guardar cámara', () => {
+      expect(
+        withDesktopCameraConfig({ capacity: { total: 12 } }, camera),
+      ).toEqual({
+        capacity: { total: 12 },
+        desktopCameraConfig: camera,
+      });
+    });
+
+    it('lee una config de cámara válida sin contraseña', () => {
+      expect(readDesktopCameraConfig({ desktopCameraConfig: camera })).toEqual(
+        camera,
+      );
+    });
+
+    it('ignora configs sin modo válido', () => {
+      expect(
+        readDesktopCameraConfig({ desktopCameraConfig: { mode: 'otra' } }),
+      ).toBeNull();
     });
   });
 });
