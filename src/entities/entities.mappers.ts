@@ -37,6 +37,8 @@ export function toEntityProfileDto(
     status: tenant.status,
     capacity: readCapacity(tenant.settings),
     lprImageRetentionDays: tenant.lprImageRetentionDays,
+    entryCameraId: tenant.entryCameraId,
+    entryCameraLabel: tenant.entryCameraLabel,
     paymentMethods: paymentMethods.map(toPaymentMethodDto),
     createdAt: tenant.createdAt.toISOString(),
   };

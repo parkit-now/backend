@@ -7,7 +7,9 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import type { BranchStatus } from '@prisma/client';
@@ -130,4 +132,30 @@ export class UpdateEntityProfileDto {
   @Type(() => Number)
   @IsIn(LPR_IMAGE_RETENTION_DAYS_OPTIONS)
   lprImageRetentionDays?: number;
+
+  @ApiPropertyOptional({
+    description:
+      "Stable identifier of this parking lot's entrance camera. The desktop app sends it as CAMERA_ID and it ends up in every LPR detection. Send null to unlink. Owner-only.",
+    example: 'cam-entrada',
+    maxLength: 100,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsString()
+  @MaxLength(100)
+  entryCameraId?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Human-readable name of the entrance camera, so the owner can tell it apart. Owner-only.',
+    example: 'Portón Rivadavia',
+    maxLength: 120,
+    nullable: true,
+  })
+  @IsOptional()
+  @ValidateIf((_o, value) => value !== null)
+  @IsString()
+  @MaxLength(120)
+  entryCameraLabel?: string | null;
 }

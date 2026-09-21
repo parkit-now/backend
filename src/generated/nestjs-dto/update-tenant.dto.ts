@@ -32,6 +32,12 @@ separadas de abajo.`,
 @IsOptional()
 @IsString()
 address?: string;
+@IsOptional()
+@IsString()
+entryCameraId?: string;
+@IsOptional()
+@IsString()
+entryCameraLabel?: string;
 @ApiProperty({
   description: `Nombre de la calle, sin altura.`,
 })

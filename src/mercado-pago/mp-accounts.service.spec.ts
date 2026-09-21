@@ -77,6 +77,8 @@ describe('MpAccountsService', () => {
     status: 'active',
     settings: {},
     lprImageRetentionDays: 30,
+    entryCameraId: null,
+    entryCameraLabel: null,
     streetName: 'Av. Corrientes',
     streetNumber: '1234',
     floor: null,
