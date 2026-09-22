@@ -94,7 +94,7 @@ export class CashSessionsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Close the current session and auto-open the next one. Active entries carry over.',
+      'Close the current session. Optionally open the next one and carry active entries over.',
   })
   @ApiOkResponse({ type: CloseCashSessionResponseDto })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
