@@ -67,6 +67,16 @@ const ORDER_ITEM_TITLE = 'Estadía de estacionamiento';
 const ORDER_ITEM_UNIT_MEASURE = 'unit';
 
 /**
+ * Largo máximo del `items[].external_code` de una orden según Mercado Pago.
+ *
+ * 🔴 Lo pagamos en producción: mandábamos el UUID de la estadía entero y MP
+ * contestaba `400 property_value` con
+ * `'$.items[0].external_code' - length must be <= 30, but got 36`, que acá sale
+ * como un `502 MP_ORDER_CREATE_FAILED` y deja la playa SIN PODER COBRAR.
+ */
+const MAX_ITEM_EXTERNAL_CODE_LENGTH = 30;
+
+/**
  * Los estados que el índice `payment_intents_tenant_live_idx` considera vivos:
  * la orden existe (o puede existir) del lado de Mercado Pago y el QR de la caja
  * está comprometido. `approved` queda AFUERA a propósito — con el pago ya
@@ -315,7 +325,7 @@ export class PaymentIntentsService {
           // El UUID de la estadía: opaco, estable y sin un dato personal
           // adentro. Sirve para cruzar un cobro con su estadía desde el panel
           // de Mercado Pago sin tener que exponer la patente.
-          externalCode: intent.entryId,
+          externalCode: itemExternalCode(intent.entryId),
         },
       ],
     };
@@ -736,6 +746,44 @@ export class PaymentIntentsService {
 }
 
 /**
+ * El `items[].external_code` de la orden: la estadía, recortada a lo que
+ * Mercado Pago acepta.
+ *
+ * ## Por qué hay que recortar y no mandar el UUID tal cual
+ *
+ * El tope de MP es de 30 caracteres y un UUID con guiones son 36: el alta
+ * moría con `400 property_value` y la playa quedaba sin cobrar. Sacarle los
+ * guiones da 32, que SIGUE sin entrar — la trampa de este bug es creer que con
+ * eso alcanza. Hay que truncar.
+ *
+ * Mismo patrón que `posExternalId()` en `mp-accounts.service.ts` para el tope
+ * de 40 del `external_id` de la caja: sacar guiones, mayúsculas, `.slice()`.
+ *
+ * ## Por qué truncar es seguro
+ *
+ * Quedan 30 caracteres hexadecimales, o sea 120 bits. Dos estadías distintas
+ * colisionando ahí no es improbable: es imposible en la práctica. Y el prefijo
+ * sigue siendo reconocible A OJO contra el UUID completo, que es exactamente
+ * para lo que existe el campo — reconciliar un cobro con su estadía MIRANDO el
+ * panel de Mercado Pago, sin exponer la patente (que es PII y MP prohíbe).
+ *
+ * ## 🔴 PURA Y DETERMINÍSTICA
+ *
+ * Sale de `entryId` y de NADA MÁS: ni reloj, ni random, ni nada calculado en el
+ * momento. Es lo que exige el docblock de `MpOrderInput` — el body tiene que
+ * ser reproducible byte a byte desde la fila persistida, porque la recuperación
+ * de un intento colgado en `created` re-POSTea con la MISMA
+ * `X-Idempotency-Key` y MP sólo devuelve la orden original si el body es
+ * idéntico.
+ */
+function itemExternalCode(entryId: string): string {
+  return entryId
+    .replace(/-/g, '')
+    .toUpperCase()
+    .slice(0, MAX_ITEM_EXTERNAL_CODE_LENGTH);
+}
+
+/**
  * La `X-Idempotency-Key` de una operación sobre un intento.
  *
  * DETERMINÍSTICA: sale de un hash del `id` del intento y nada más, así que
@@ -749,9 +797,14 @@ export class PaymentIntentsService {
  * justo el error que uno no quiere cuando está tratando de liberar la caja.
  *
  * Se hashea en vez de mandar `create:<uuid>` en crudo por higiene: la key viaja
- * en un header a un tercero y termina en SUS logs. Un sha256 en hex son 64
- * caracteres, entra en cualquier límite razonable, y no le cuenta a Mercado
+ * en un header a un tercero y termina en SUS logs, y no le cuenta a Mercado
  * Pago nada sobre la forma de nuestros ids.
+ *
+ * ⚠️ Un sha256 en hex son 64 caracteres. La referencia de Orders para QR NO
+ * documenta un tope para el header —lo más chico que MP documenta en toda la
+ * API es el 1-64 de `POST /v2/pos`—, así que 64 entra en todo lo conocido,
+ * pero con margen CERO. El namespace (`create:` / `cancel:`) va DENTRO del
+ * hash y no delante del hex justamente por eso.
  */
 function idempotencyKeyFor(
   operation: 'create' | 'cancel',

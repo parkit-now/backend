@@ -108,7 +108,15 @@ export interface MpOrderItemInput {
   readonly quantity: number;
   /** Obligatorio, máx 10 caracteres. Para una estadía: `'unit'`. */
   readonly unitMeasure: string;
-  /** Nuestro código del ítem. Es el que ANTES se llamaba `items[].id`. */
+  /**
+   * Nuestro código del ítem. Es el que ANTES se llamaba `items[].id`.
+   *
+   * 🔴 TOPE DE 30 CARACTERES, y es el más chico de toda la orden — más chico
+   * que el `external_reference` de la raíz, que es lo que hace que la trampa
+   * sea fácil de pisar. Un UUID con guiones (36) NO entra y sin guiones (32)
+   * TAMPOCO: hay que truncar. Ver `itemExternalCode()` en
+   * `payment-intents.service.ts`.
+   */
   readonly externalCode?: string;
 }
 
@@ -381,6 +389,34 @@ export class MpApiClient implements OnModuleInit {
    *
    * El `user_id` va en el PATH, no en el body: así lo documenta MP
    * (`POST /users/{user_id}/stores`).
+   *
+   * ## 🔴 `city_name` y `state_name` se validan contra un catálogo QUE MP NO
+   * ## PUBLICA, y ahí no hay tope que respetar: hay que manejar el rechazo
+   *
+   * Es la falla de producción que abrió esta serie. MP no documenta ningún
+   * largo máximo para los cuatro campos de `location` —los busqué: no
+   * existen—, pero sí documenta que los cruza entre sí:
+   * `400 VALIDATION_ERROR` con detalle `location.state_name was invalid`
+   * significa "esa ciudad no pertenece a esa provincia". La lista de valores
+   * buenos NO está publicada en ningún lado, así que NO se puede validar antes
+   * de llamar: es una caja negra y lo único honesto es que el rechazo llegue al
+   * dueño con el texto de MP (hoy sale como `MP_STORE_CREATE_FAILED`).
+   *
+   * MP también documenta —en la tabla de errores, no en la de parámetros—
+   * `INVALID_NAME`, `INVALID_CITY_NAME`, `INVALID_STATE_NAME` e
+   * `INVALID_STREET_NAME` como "sin números ni caracteres especiales". No lo
+   * saneamos, y es deliberado: esa prosa se contradice con los propios
+   * ejemplos de MP (su POS de muestra se llama `POS-001`), y recortarle los
+   * dígitos a "Playa 24hs" le rompería el nombre al dueño para prevenir un
+   * error que hoy no ocurre. Si algún día aparece, este es el comentario que
+   * dice dónde mirar.
+   *
+   * ## Topes verificados
+   *
+   * `external_id` tiene tope de 60 y charset alfanumérico (el nuestro son 43,
+   * ver `storeExternalId()`). El `name` NO tiene tope documentado — por eso
+   * `storeName()` usa el 45 del POS como cota conservadora. `street_number` va
+   * como STRING y no como número (`INVALID_STREET_NUMBER`).
    */
   async createStore(
     accessToken: string,
@@ -515,6 +551,24 @@ export class MpApiClient implements OnModuleInit {
    * adentro, digamos—, el service no lo puede ver y la key deja de distinguir
    * dos altas distintas: reaparece el `409 idempotency_key_already_used` que la
    * huella del body vino a eliminar. Todo lo que varíe va en `MpPosInput`.
+   *
+   * ## Topes de la caja, verificados contra la referencia
+   *
+   * | Campo                | Tope MP                                        |
+   * | -------------------- | ---------------------------------------------- |
+   * | `X-Idempotency-Key`  | 1 a 64 (el más chico de toda la API)           |
+   * | `name`               | 45; `[A-Za-z0-9 _-]`, sin espacio al principio ni al final |
+   * | `external_id`        | 40; SÓLO alfanumérico, único por usuario       |
+   * | `store_id`           | 20; sólo dígitos, y va como STRING             |
+   * | `config.qr.url`      | 200; AUSENTE con `operating_mode: 'pdv'`       |
+   *
+   * ⚠️ El charset del `name` y el del `external_id` NO son el mismo: el `name`
+   * acepta guiones y guiones bajos, el `external_id` no acepta ninguno de los
+   * dos. Por eso `posExternalId()` y `posName()` son dos funciones distintas.
+   *
+   * ⚠️ `fixed_amount` y `category` en la raíz YA NO EXISTEN en `/v2/pos` (eran
+   * del `POST /pos` v1, que hoy ni está documentado). `category` vive ahora en
+   * `config.qr.category`, y no la mandamos.
    */
   async createPos(
     accessToken: string,
@@ -639,6 +693,39 @@ export class MpApiClient implements OnModuleInit {
    *    pueda mandar más de uno.
    *
    * `processing_mode: 'automatic'` es el único valor válido para QR.
+   *
+   * ⚠️ TODO(sandbox): confirmar si `processing_mode` CORRESPONDE en el request.
+   * En el spec de `POST /v1/orders` para `type: 'qr'` el campo figura sólo en
+   * el `200`/`201`, NO entre los doce campos del `requestBody` (ahí sí está
+   * para `type: 'online'`). O sea que podríamos estar mandando una propiedad de
+   * respuesta, y MP documenta un `400 unsupported_properties` para eso. HOY NO
+   * PASA: el 400 que nos comimos en producción nombró SÓLO el `external_code`,
+   * así que MP lo está tolerando. No se saca a ciegas porque sacarlo cambia el
+   * body y eso toca la recuperación idempotente (ver el docblock de
+   * `MpOrderInput`): se prueba contra sandbox primero.
+   *
+   * ## Topes de los campos de la orden, verificados contra la referencia
+   *
+   * Los números están en la PROSA de cada parámetro, nunca en el schema —el
+   * spec de MP no tiene un solo `maxLength`—, así que hay que leerla entera:
+   *
+   * | Campo                  | Tope MP                          |
+   * | ---------------------- | -------------------------------- |
+   * | `external_reference`   | 64, charset `[A-Za-z0-9_-]`      |
+   * | `description`          | 150                              |
+   * | `items[]`              | 10 elementos                     |
+   * | `items[].title`        | 150                              |
+   * | `items[].unit_measure` | 10 (texto libre, en minúsculas)  |
+   * | `items[].external_code`| 30  ← el más chico de todos      |
+   * | `expiration_time`      | PT30S a 3600h (default PT15M)    |
+   * | `transactions.payments`| 1 transacción                    |
+   *
+   * Sin tope documentado (NO inferir uno): `config.qr.external_pos_id` —el
+   * techo real es el 40 del `external_id` de la caja, que es otro endpoint—,
+   * `X-Idempotency-Key` y los dígitos de los montos.
+   *
+   * ⚠️ El `items[].unit_price` de 18 caracteres que documenta MP es de
+   * `type: 'online'`. NO aplica acá y no hay que copiarlo por analogía.
    *
    * ## `X-Idempotency-Key`: la recibe, no la inventa
    *

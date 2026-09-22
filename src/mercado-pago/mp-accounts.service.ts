@@ -982,7 +982,14 @@ function posExternalId(tenantId: string): string {
  * `PaymentIntentsService`: si mañana aparece otra operación sobre la caja, no
  * hereda esta key. Y se hashea —en vez de mandar los campos en crudo— porque la
  * key viaja en un header a un tercero y termina en SUS logs; de paso, un sha256
- * entra en cualquier límite de largo sin importar cuánto mida el nombre.
+ * tiene largo FIJO sin importar cuánto mida el nombre de la playa.
+ *
+ * 🔴 Y ese largo fijo son 64 caracteres, que es EXACTAMENTE el tope que
+ * `POST /v2/pos` documenta para el header (`el header acepta valores entre 1 y
+ * 64 caracteres`). Entra, pero con margen CERO: el namespace `create-pos:` va
+ * DENTRO del hash y no delante del hex a propósito. Prefijarlo afuera daría 75
+ * caracteres y el alta de la caja moriría — que es el mismo `400` de header
+ * inválido que ya nos costó una falla de producción.
  *
  * ⚠️ La huella se arma con `JSON.stringify` y no concatenando con separadores:
  * el `name` es texto libre del dueño, y un separador que aparezca adentro haría
