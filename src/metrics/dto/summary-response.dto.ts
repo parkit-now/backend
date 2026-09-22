@@ -88,6 +88,53 @@ export class SummaryAlertsDto {
   pendingLprEvents: number;
 }
 
+export type ProjectionConfidence = 'low' | 'medium' | 'high';
+
+export class RevenueProjectionDto {
+  @ApiProperty({
+    type: Number,
+    description:
+      'Projected revenue in ARS. Orientative, not an accounting total.',
+    example: 245000,
+  })
+  value: number;
+
+  @ApiProperty({
+    type: 'integer',
+    description: 'Open entries included in the projection.',
+    example: 8,
+  })
+  openEntries: number;
+
+  @ApiProperty({
+    type: 'integer',
+    description: 'Historical days used by the trend model.',
+    example: 6,
+  })
+  historicalDays: number;
+
+  @ApiProperty({
+    enum: ['low', 'medium', 'high'],
+    description: 'Confidence level based on the amount of historical data.',
+    example: 'medium',
+  })
+  confidence: ProjectionConfidence;
+}
+
+export class MetricsProjectionsDto {
+  @ApiProperty({ type: RevenueProjectionDto })
+  todayWithOpenEntries: RevenueProjectionDto;
+
+  @ApiProperty({ type: RevenueProjectionDto })
+  todayHistoricalForecast: RevenueProjectionDto;
+
+  @ApiProperty({ type: RevenueProjectionDto })
+  monthWithOpenEntries: RevenueProjectionDto;
+
+  @ApiProperty({ type: RevenueProjectionDto })
+  monthHistoricalForecast: RevenueProjectionDto;
+}
+
 /**
  * Response of `GET /tenants/:tenantId/metrics/summary` — every KPI the owner
  * dashboard renders above the fold, in a single request.
@@ -134,4 +181,7 @@ export class MetricsSummaryDto {
 
   @ApiProperty({ type: SummaryAlertsDto })
   alerts: SummaryAlertsDto;
+
+  @ApiProperty({ type: MetricsProjectionsDto })
+  projections: MetricsProjectionsDto;
 }
