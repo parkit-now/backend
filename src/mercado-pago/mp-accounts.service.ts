@@ -20,7 +20,12 @@ import {
 } from './dto/mp-authorization-url.dto';
 import { MpOauthCallbackResultDto } from './dto/mp-oauth-callback.dto';
 import { toMpAccountDto } from './mercado-pago.mappers';
-import { MpApiClient, type MpPos, type MpStoreLocation } from './mp-api.client';
+import {
+  MpApiClient,
+  type MpPos,
+  type MpPosInput,
+  type MpStoreLocation,
+} from './mp-api.client';
 import { MpCryptoService } from './mp-crypto.service';
 import { MpConfigService } from './mp-config.service';
 import { MpTokenService } from './mp-token.service';
@@ -523,6 +528,16 @@ export class MpAccountsService {
    *
    * El resultado es INDISTINGUIBLE entre "lo creé" y "lo adopté" —misma forma,
    * QR incluido— porque quien llama no tiene por qué saber cuál de los dos pasó.
+   *
+   * ## La `X-Idempotency-Key` del POS se calcula ACÁ
+   *
+   * `POST /v2/pos` la exige (`createPos` no la inventa: la recibe), y este es el
+   * único lugar del código que crea una caja. Por eso los dos caminos que
+   * terminan creando POS —la vinculación y `resyncPos()` de una cuenta sin
+   * `pos_id`— la mandan sin tener que acordarse de nada: pasan por acá.
+   *
+   * Es un hash del body, no sólo del `external_id`: ver `posIdempotencyKey()`
+   * para por qué, y para por qué eso NO reabre la puerta a cajas duplicadas.
    */
   private async provision(
     accessToken: string,
@@ -556,12 +571,25 @@ export class MpAccountsService {
     const pos = await this.adoptOrCreate(
       `POS ${externalPosId}`,
       () => this.mpApi.findPosByExternalId(accessToken, externalPosId),
-      () =>
-        this.mpApi.createPos(accessToken, {
+      () => {
+        // 🔴 UN SOLO objeto para el body y para la key, y no dos armados por
+        // separado: la key es un hash de ESTE body, así que si los dos se
+        // construyeran aparte podrían divergir en cualquier refactor y una key
+        // que no describe el body que acompaña es justo el
+        // `409 idempotency_key_already_used` que esto viene a eliminar.
+        const input: MpPosInput = {
           name: posName(tenant),
           storeId: store.id,
           externalId: externalPosId,
-        }),
+        };
+        // La key la calcula el service, no el cliente HTTP: mismo reparto que
+        // `PaymentIntentsService` con las Orders.
+        return this.mpApi.createPos(
+          accessToken,
+          input,
+          posIdempotencyKey(input),
+        );
+      },
     );
 
     // La caja es la fuente de verdad de a qué sucursal pertenece: si adoptamos
@@ -908,6 +936,72 @@ function posExternalId(tenantId: string): string {
     0,
     MAX_POS_EXTERNAL_ID_LENGTH,
   );
+}
+
+/**
+ * La `X-Idempotency-Key` del alta del POS, que `POST /v2/pos` EXIGE (sin ella
+ * MP contesta `400 Missing X-Idempotency-Key header` y la caja no se crea).
+ *
+ * Es un HASH DEL BODY COMPLETO, y las dos mitades de eso son deliberadas.
+ *
+ * ## DETERMINÍSTICA: mismo body ⇒ misma key
+ *
+ * No hay nada aleatorio ni de reloj adentro. Reintentar el mismo alta produce
+ * la misma key, que es la mitad que hace que un reintento no fabrique una caja
+ * nueva. Un `randomUUID()` acá sería exactamente la clase de recurso huérfano
+ * que vino a resolver el find-or-create de `provision()`.
+ *
+ * ## SENSIBLE AL BODY: body distinto ⇒ key distinta
+ *
+ * La ventana de la key es de 24 h y Mercado Pago responde
+ * `409 idempotency_key_already_used` cuando le llega una key ya vista con un
+ * body que no coincide. Del body de `createPos`, dos campos pueden cambiar
+ * entre dos intentos de la MISMA playa: `name` (el dueño renombra la playa) y
+ * `store_id` (el Store se recreó). Con una key derivada sólo del `external_id`,
+ * ese cambio dejaba al dueño TRABADO 24 h, sin más salida que esperar.
+ *
+ * Metiendo el body en el hash ese 409 desaparece como CLASE, no se mitiga: un
+ * body distinto es, por construcción, una key distinta, y una key nueva no
+ * puede chocar con nada.
+ *
+ * ## Y NO, esto no reabre la puerta a las cajas duplicadas
+ *
+ * 🔴 Es la objeción obvia —"si la key cambia, ¿MP no crea una caja nueva?"— y
+ * la respuesta es que la `X-Idempotency-Key` NUNCA fue lo que frenaba el
+ * duplicado acá. Lo frena el `external_id`, que es DETERMINÍSTICO por playa:
+ * MP rechaza el alta con `400 ... is already assigned to this user`, y
+ * `adoptOrCreate` re-busca ante cualquier error del alta y ADOPTA la caja que
+ * ya existe. Ese camino está probado y es el que arregló el bug anterior.
+ *
+ * O sea que las dos garantías viven en lugares distintos y no compiten:
+ * el `external_id` impide la caja duplicada, la key impide el POST duplicado.
+ *
+ * ## Detalles de forma
+ *
+ * NAMESPACEADA (`create-pos:`) por la misma higiene que `create:` / `cancel:` en
+ * `PaymentIntentsService`: si mañana aparece otra operación sobre la caja, no
+ * hereda esta key. Y se hashea —en vez de mandar los campos en crudo— porque la
+ * key viaja en un header a un tercero y termina en SUS logs; de paso, un sha256
+ * entra en cualquier límite de largo sin importar cuánto mida el nombre.
+ *
+ * ⚠️ La huella se arma con `JSON.stringify` y no concatenando con separadores:
+ * el `name` es texto libre del dueño, y un separador que aparezca adentro haría
+ * que dos bodies distintos colisionen en la misma key. `posName()` hoy no deja
+ * pasar un `:`, pero la key no tiene por qué depender de ese saneo.
+ *
+ * ⚠️ Toma el `MpPosInput` ENTERO, no campos sueltos: así, el día que se le sume
+ * un campo al body, entra solo a la huella. Lo único del body que no pasa por
+ * acá es `config`, que es un literal fijo adentro de `createPos` y no puede
+ * variar entre dos llamadas; si algún día se vuelve configurable, tiene que
+ * viajar en el input y no como constante del cliente.
+ */
+function posIdempotencyKey(input: MpPosInput): string {
+  const fingerprint = JSON.stringify([
+    input.externalId,
+    input.name,
+    input.storeId,
+  ]);
+  return createHash('sha256').update(`create-pos:${fingerprint}`).digest('hex');
 }
 
 /**
