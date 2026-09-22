@@ -170,6 +170,31 @@ describe('PaymentIntentsService', () => {
       expect(result.mpOrderId).toBe('MP-ORDER-1');
     });
 
+    it('el external_code del ítem entra en el tope de 30 de MP y sale sólo del entryId', async () => {
+      // 🔴 El bug de producción: el UUID entero son 36 caracteres y MP contesta
+      // `400 ... length must be <= 30, but got 36`. Sacarle los guiones da 32,
+      // que TAMPOCO entra: hay que truncar.
+      const entryId = '0199c3ab-7f4e-7a1b-9c2d-5e6f70819abc';
+      prisma.paymentIntent.create.mockResolvedValue(makeIntent({ entryId }));
+
+      await service.create(TENANT, user, {
+        id: INTENT,
+        entryId,
+        amount: 1500,
+      });
+
+      const [, input] = mpApi.createOrder.mock.calls[0] as [
+        string,
+        { items: { externalCode: string }[] },
+      ];
+
+      // Prefijo del UUID sin guiones y en mayúsculas: 30 caracteres hex, y
+      // sigue siendo reconocible a ojo contra la estadía desde el panel de MP.
+      expect(input.items[0].externalCode).toBe(
+        '0199C3AB7F4E7A1B9C2D5E6F70819A',
+      );
+    });
+
     it('re-POST con el mismo id devuelve el existente y NO vuelve a crear la order', async () => {
       const already = makeIntent({
         status: PaymentIntentStatus.pending,
