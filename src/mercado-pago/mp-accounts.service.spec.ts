@@ -442,6 +442,96 @@ describe('MpAccountsService', () => {
     expect(posInput.storeId).toBe('7654321');
   });
 
+  /** La `X-Idempotency-Key` con la que se intentó el alta número `call`. */
+  const keyDelPos = (call: number): string =>
+    (mpApi.createPos.mock.calls[call] as [string, unknown, string])[2];
+
+  /**
+   * 🔴 `POST /v2/pos` EXIGE la `X-Idempotency-Key` —sin ella MP contesta
+   * `400 Missing X-Idempotency-Key header`—, y la calcula el service, no el
+   * cliente HTTP.
+   *
+   * DETERMINÍSTICA: es un hash del body del alta, sin nada aleatorio ni de
+   * reloj. Con una key aleatoria cada reintento fabricaría una caja nueva, o sea
+   * los recursos huérfanos que el find-or-create acaba de resolver.
+   */
+  it('manda al alta del POS una X-Idempotency-Key determinística por playa', async () => {
+    await service.handleCallback('code', STATE, user);
+    await service.handleCallback('code', STATE, user);
+
+    // sha256 en hex, como la de los intentos de pago: la key viaja a los logs
+    // de un tercero, así que va hasheada y no con los campos en crudo.
+    expect(keyDelPos(0)).toMatch(/^[0-9a-f]{64}$/);
+    // Mismo tenant, mismo nombre, mismo store ⇒ MISMO body ⇒ misma key.
+    expect(keyDelPos(1)).toBe(keyDelPos(0));
+  });
+
+  /**
+   * La otra mitad del determinismo: que no sea una CONSTANTE. Dos playas con
+   * la misma key se pisan —la segunda se come un `409
+   * idempotency_key_already_used` por 24 h, o peor, la caja de la otra—.
+   */
+  it('la X-Idempotency-Key del POS es distinta para cada playa', async () => {
+    await service.handleCallback('code', STATE, user);
+
+    prisma.tenant.findUnique.mockResolvedValue(
+      makeTenant({ id: '33333333-3333-7333-8333-333333333333' }),
+    );
+    await service.handleCallback('code', STATE, user);
+
+    expect(keyDelPos(1)).not.toBe(keyDelPos(0));
+  });
+
+  /**
+   * 🔴 LA KEY ES UN HASH DEL BODY, no sólo del `external_id`.
+   *
+   * MP devuelve `409 idempotency_key_already_used` cuando le llega una key ya
+   * vista con un body distinto, y la ventana es de 24 h. Si el dueño renombra la
+   * playa entre dos intentos, el `name` del body cambia: con una key derivada
+   * sólo del `external_id` quedaba TRABADO un día entero, sin más salida que
+   * esperar. Con la huella del body ese 409 no existe como caso.
+   *
+   * El duplicado lo sigue frenando el `external_id` + `adoptOrCreate`, que es
+   * otro mecanismo y no se toca: MP rechaza el alta repetida con "already
+   * assigned" y la caja existente se adopta.
+   */
+  it('renombrar la playa cambia la key: el body distinto no reusa la anterior', async () => {
+    await service.handleCallback('code', STATE, user);
+
+    prisma.tenant.findUnique.mockResolvedValue(
+      makeTenant({ name: 'Playa Centro Renovada' }),
+    );
+    await service.handleCallback('code', STATE, user);
+
+    // El `external_id` NO cambió (sale del `tenant_id`, que es el mismo): lo
+    // único distinto es el `name`. Si la key fuera la misma, esto sería el 409.
+    const [, input] = mpApi.createPos.mock.calls[1] as [
+      string,
+      { name: string; externalId: string },
+    ];
+    expect(input.name).toBe('Playa Centro Renovada');
+    expect(input.externalId).toBe(
+      (mpApi.createPos.mock.calls[0] as [string, { externalId: string }])[1]
+        .externalId,
+    );
+    expect(keyDelPos(1)).not.toBe(keyDelPos(0));
+  });
+
+  /**
+   * El otro campo del body que puede moverse solo: el `store_id`, si el Store
+   * se recreara. Mismo razonamiento que el rename.
+   */
+  it('un store_id distinto también cambia la key del POS', async () => {
+    mpApi.createStore
+      .mockResolvedValueOnce({ id: '1234567' })
+      .mockResolvedValue({ id: '7654321' });
+
+    await service.handleCallback('code', STATE, user);
+    await service.handleCallback('code', STATE, user);
+
+    expect(keyDelPos(1)).not.toBe(keyDelPos(0));
+  });
+
   /**
    * 🔴 Sin el mensaje de MP, cada fallo es una caja negra: `reason` dice QUÉ
    * code falló, pero el POR QUÉ —"already assigned", una categoría MCC
