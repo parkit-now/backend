@@ -195,12 +195,14 @@ export class CashSessionsService {
     }
 
     const closedAt = data.closedAt ? new Date(data.closedAt) : new Date();
-    const leavingCash = data.leavingCash ?? 0;
+    const openNextSession = data.openNextSession === true;
+    const leavingCash = openNextSession ? (data.leavingCash ?? 0) : 0;
 
     // Run everything in a single transaction:
     // 1. Close the current session
-    // 2. Open the new session with opening_cash = leaving_cash
-    // 3. Carry over active entries (reassign + renumber)
+    // 2. Optionally open the new session with opening_cash = leaving_cash
+    // 3. Reassign active entries to that new session, or detach them until a
+    //    later session exists for their eventual exit payment.
     // Note: $transaction provides a raw PrismaClient — tenant scoping via
     // explicit tenantId filters since the extension wrapper is not active.
     const result = await this.prisma.$transaction(async (tx) => {
@@ -213,20 +215,30 @@ export class CashSessionsService {
         },
       });
 
-      const newSession = await tx.cashSession.create({
-        data: {
-          id: data.newSessionId,
-          tenantId,
-          openedAt: closedAt,
-          openingCash: leavingCash,
-        },
-      });
-
       // Find active entries (still in the lot) sorted by enteredAt for renumbering
       const activeEntries = await tx.entry.findMany({
         where: { tenantId, cashSessionId: sessionId, leftAt: null },
         orderBy: [{ enteredAt: 'asc' }],
         select: { id: true },
+      });
+
+      if (!openNextSession) {
+        if (activeEntries.length > 0) {
+          await tx.entry.updateMany({
+            where: { tenantId, cashSessionId: sessionId, leftAt: null },
+            data: { cashSessionId: null, ticketNumber: null },
+          });
+        }
+        return { closed, newSession: null, carriedOverCount: 0 };
+      }
+
+      const newSession = await tx.cashSession.create({
+        data: {
+          id: data.newSessionId!,
+          tenantId,
+          openedAt: closedAt,
+          openingCash: leavingCash,
+        },
       });
 
       // Reassign and renumber each carried-over entry
@@ -245,7 +257,7 @@ export class CashSessionsService {
 
     return {
       closedSession: toDto(result.closed),
-      newSession: toDto(result.newSession),
+      newSession: result.newSession ? toDto(result.newSession) : null,
       carriedOverCount: result.carriedOverCount,
     };
   }

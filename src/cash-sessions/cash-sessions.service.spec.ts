@@ -170,6 +170,9 @@ describe('CashSessionsService.closeSession', () => {
       entry: {
         findMany: jest.fn().mockResolvedValue(activeEntries),
         update: jest.fn().mockResolvedValue(undefined),
+        updateMany: jest
+          .fn()
+          .mockResolvedValue({ count: activeEntries.length }),
       },
     };
 
@@ -211,6 +214,7 @@ describe('CashSessionsService.closeSession', () => {
     const { service, tx } = makeService([]);
 
     const result = await service.closeSession(SESSION, {
+      openNextSession: true,
       newSessionId: NEW_SESSION,
       closedAt: CLOSED_AT,
       leavingCash: 5000,
@@ -242,6 +246,7 @@ describe('CashSessionsService.closeSession', () => {
     ]);
 
     const result = await service.closeSession(SESSION, {
+      openNextSession: true,
       newSessionId: NEW_SESSION,
     });
 
@@ -264,7 +269,10 @@ describe('CashSessionsService.closeSession', () => {
 
     let caught: unknown;
     try {
-      await service.closeSession(SESSION, { newSessionId: NEW_SESSION });
+      await service.closeSession(SESSION, {
+        openNextSession: true,
+        newSessionId: NEW_SESSION,
+      });
     } catch (error: unknown) {
       caught = error;
     }
@@ -283,7 +291,10 @@ describe('CashSessionsService.closeSession', () => {
   it('defaultea leavingCash a 0 cuando no se manda', async () => {
     const { service, tx } = makeService([]);
 
-    await service.closeSession(SESSION, { newSessionId: NEW_SESSION });
+    await service.closeSession(SESSION, {
+      openNextSession: true,
+      newSessionId: NEW_SESSION,
+    });
 
     const closeArg = tx.cashSession.update.mock.calls[0][0] as {
       data: { leavingCash: number };
@@ -293,5 +304,35 @@ describe('CashSessionsService.closeSession', () => {
     };
     expect(closeArg.data.leavingCash).toBe(0);
     expect(createArg.data.openingCash).toBe(0);
+  });
+
+  it('cierra la caja sin abrir otra por defecto', async () => {
+    const { service, tx } = makeService([]);
+
+    const result = await service.closeSession(SESSION, {
+      closedAt: CLOSED_AT,
+      leavingCash: 5000,
+    });
+
+    const closeArg = tx.cashSession.update.mock.calls[0][0] as {
+      data: { closedAt: Date; leavingCash: number };
+    };
+    expect(closeArg.data.closedAt).toEqual(new Date(CLOSED_AT));
+    expect(closeArg.data.leavingCash).toBe(0);
+    expect(tx.cashSession.create).not.toHaveBeenCalled();
+    expect(result.newSession).toBeNull();
+    expect(result.carriedOverCount).toBe(0);
+  });
+
+  it('desasocia los autos activos si no se abre el siguiente turno', async () => {
+    const { service, tx } = makeService([{ id: 'e-a' }, { id: 'e-b' }]);
+
+    await service.closeSession(SESSION, {});
+
+    expect(tx.entry.update).not.toHaveBeenCalled();
+    expect(tx.entry.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: TENANT, cashSessionId: SESSION, leftAt: null },
+      data: { cashSessionId: null, ticketNumber: null },
+    });
   });
 });

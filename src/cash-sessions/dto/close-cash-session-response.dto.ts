@@ -5,8 +5,8 @@ export class CloseCashSessionResponseDto {
   @ApiProperty({ type: () => CashSessionDto })
   closedSession: CashSessionDto;
 
-  @ApiProperty({ type: () => CashSessionDto })
-  newSession: CashSessionDto;
+  @ApiProperty({ type: () => CashSessionDto, nullable: true })
+  newSession: CashSessionDto | null;
 
   @ApiProperty({
     type: Number,
