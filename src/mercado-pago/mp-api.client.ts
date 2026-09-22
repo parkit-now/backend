@@ -490,8 +490,37 @@ export class MpApiClient implements OnModuleInit {
    * `operating_mode: 'pdv'` es el modo atendido: hay alguien en el mostrador
    * que cobra. Es el que corresponde a una playa, y MP exige que `config.qr.url`
    * esté AUSENTE en ese modo.
+   *
+   * ## 🔴 `X-Idempotency-Key`: `POST /v2/pos` LA EXIGE
+   *
+   * No es una mejora opcional: sin el header MP contesta
+   * `400 {"message":"Missing X-Idempotency-Key header","code":"bad_request"}` y
+   * la caja no se crea NUNCA. Está en la doc oficial de QR y en la de Point, en
+   * las dos, y en producción salió como un `502 MP_POS_CREATE_FAILED`.
+   *
+   * ⚠️ El Store NO la lleva: `POST /users/{id}/stores` no la documenta y MP
+   * acepta el alta sin ella. La asimetría es de Mercado Pago, no un olvido
+   * nuestro — ver `createStore`.
+   *
+   * ## La recibe, no la inventa
+   *
+   * Mismo reparto de responsabilidades que `createOrder`: la key llega YA
+   * ARMADA desde `MpAccountsService.provision()`, que la deriva como un hash
+   * DETERMINÍSTICO del body de este alta. Un `randomUUID()` acá convertiría
+   * cada reintento en una caja nueva, que es justo el problema de recursos
+   * huérfanos que resolvió el find-or-create.
+   *
+   * 🔴 Por eso `input` y la key tienen que describir LO MISMO. Si algún día se
+   * le suma un campo al body que no salga de `input` —un literal nuevo acá
+   * adentro, digamos—, el service no lo puede ver y la key deja de distinguir
+   * dos altas distintas: reaparece el `409 idempotency_key_already_used` que la
+   * huella del body vino a eliminar. Todo lo que varíe va en `MpPosInput`.
    */
-  async createPos(accessToken: string, input: MpPosInput): Promise<MpPos> {
+  async createPos(
+    accessToken: string,
+    input: MpPosInput,
+    idempotencyKey: string,
+  ): Promise<MpPos> {
     const operation: MpOperation = {
       label: 'create Mercado Pago POS',
       code: ErrorCodes.MP_POS_CREATE_FAILED,
@@ -508,6 +537,7 @@ export class MpApiClient implements OnModuleInit {
         config: { qr: { operating_mode: 'pdv' } },
       },
       accessToken,
+      idempotencyKey,
     );
 
     return this.readPos(payload, operation);
@@ -707,9 +737,9 @@ export class MpApiClient implements OnModuleInit {
    * Cancela una orden que todavía no se pagó: lo que pasa cuando el operador
    * cierra el modal o cuando vence el intent.
    *
-   * SÍ lleva `X-Idempotency-Key`, igual que la creación (son las dos únicas
-   * operaciones que la llevan). Y tiene que ser una key DISTINTA de la del
-   * create del mismo intent — de ahí el namespace `cancel:` que arma el
+   * SÍ lleva `X-Idempotency-Key`, igual que la creación (las dos de Orders;
+   * afuera de Orders la lleva `createPos`). Y tiene que ser una key DISTINTA de
+   * la del create del mismo intent — de ahí el namespace `cancel:` que arma el
    * service. Reusar la del create devuelve `409 idempotency_key_already_used`
    * porque el body no coincide, no la orden cancelada.
    */
@@ -758,11 +788,14 @@ export class MpApiClient implements OnModuleInit {
    * futura se olvide de alguno de los tres.
    *
    * `idempotencyKey` se sumó para la API de Orders, que exige
-   * `X-Idempotency-Key` en la creación y la cancelación. Es un parámetro
-   * opcional y NOMBRADO, no una bolsa genérica de headers, a propósito: una
-   * bolsa deja que cualquiera pise el `Authorization` o el `Content-Type` desde
-   * afuera, y de paso esconde qué headers manda realmente el cliente. Si algún
-   * día hace falta un segundo header, se suma otro parámetro igual de explícito.
+   * `X-Idempotency-Key` en la creación y la cancelación, y lo usa también el
+   * alta del POS (`POST /v2/pos` la exige igual). Sigue siendo OPCIONAL acá
+   * porque hay endpoints que no la llevan —los GET, y el alta del Store—, no
+   * porque sea decorativa. Es un parámetro NOMBRADO, no una bolsa genérica de
+   * headers, a propósito: una bolsa deja que cualquiera pise el `Authorization`
+   * o el `Content-Type` desde afuera, y de paso esconde qué headers manda
+   * realmente el cliente. Si algún día hace falta un segundo header, se suma
+   * otro parámetro igual de explícito.
    */
   private async send<T>(
     operation: MpOperation,

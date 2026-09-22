@@ -47,8 +47,15 @@ describe('MpApiClient', () => {
     throw new Error('La promesa resolvió y tenía que fallar');
   };
 
+  /** La key llega armada del service, igual que la de las Orders. */
+  const POS_IDEMPOTENCY_KEY = 'create-pos:EXT';
+
   const createPos = () =>
-    client.createPos('token', { name: 'POS', storeId: '1', externalId: 'EXT' });
+    client.createPos(
+      'token',
+      { name: 'POS', storeId: '1', externalId: 'EXT' },
+      POS_IDEMPOTENCY_KEY,
+    );
 
   const headersOf = (): Record<string, string> => {
     const [, init] = fetchMock.mock.calls[0] as [
@@ -225,6 +232,23 @@ describe('MpApiClient', () => {
     },
   );
 
+  /**
+   * 🔴 EL BUG. `POST /v2/pos` EXIGE el header: sin él MP contesta
+   * `400 {"message":"Missing X-Idempotency-Key header"}` y la caja no se crea
+   * nunca. Salió como `502 MP_POS_CREATE_FAILED` en producción.
+   *
+   * Y la manda TAL CUAL la recibe: la deriva el service del `external_id` del
+   * POS. Si el cliente la inventara con un `randomUUID()`, cada reintento
+   * fabricaría una caja nueva.
+   */
+  it('createPos manda la X-Idempotency-Key que recibe: /v2/pos la exige', async () => {
+    fetchMock.mockResolvedValue(respond(201, { id: 2711382 }));
+
+    await createPos();
+
+    expect(headersOf()['X-Idempotency-Key']).toBe(POS_IDEMPOTENCY_KEY);
+  });
+
   it('crea el Store con el user_id en el path y la ubicación en snake_case', async () => {
     fetchMock.mockResolvedValue(respond(201, { id: 1234567 }));
 
@@ -251,6 +275,30 @@ describe('MpApiClient', () => {
       state_name: 'Buenos Aires',
     });
     expect(store.id).toBe('1234567');
+  });
+
+  /**
+   * ⚠️ La otra asimetría de Mercado Pago: el POS exige `X-Idempotency-Key` y el
+   * Store NO la lleva —la doc no la muestra y MP aceptó el alta sin ella—. Este
+   * test existe para que nadie "empareje" los dos endpoints de memoria mientras
+   * arregla el del POS: agregarle un header que MP no pidió es cambiar un alta
+   * que hoy funciona en producción.
+   */
+  it('createStore NO manda X-Idempotency-Key: el alta del Store no la lleva', async () => {
+    fetchMock.mockResolvedValue(respond(201, { id: 1234567 }));
+
+    await client.createStore('token', '446566691', {
+      name: 'Playa Centro',
+      externalId: 'PARKITSTORE1',
+      location: {
+        streetName: 'Av. Corrientes',
+        streetNumber: '1234',
+        cityName: 'CABA',
+        stateName: 'Buenos Aires',
+      },
+    });
+
+    expect(headersOf()['X-Idempotency-Key']).toBeUndefined();
   });
 
   /**
