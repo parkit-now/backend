@@ -1,26 +1,19 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  AES_256_KEY_BYTES,
+  type EncryptionKey,
+  parseEncryptionKeyring,
+} from '../utils/crypto/encryption-keyring';
 
 /** Base de la API de Mercado Pago cuando `MP_API_BASE_URL` no viene seteada. */
 const DEFAULT_API_BASE_URL = 'https://api.mercadopago.com';
 
 /** Largo exacto, en bytes, de una clave AES-256 ya decodificada de base64. */
-export const MP_TOKEN_KEY_BYTES = 32;
-
-/** Versión asumida para la clave activa si no se declara explícitamente. */
-const DEFAULT_KEY_VERSION = 1;
-
-/** `token_key_version` es `smallint` en la base: ese es el techo real. */
-const MAX_KEY_VERSION = 32767;
-
-/** Alfabeto base64 estándar, con padding opcional. */
-const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+export const MP_TOKEN_KEY_BYTES = AES_256_KEY_BYTES;
 
 /** Una clave de cifrado con su número de versión (el que va a la columna). */
-export interface MpEncryptionKey {
-  readonly version: number;
-  readonly key: Buffer;
-}
+export type MpEncryptionKey = EncryptionKey;
 
 interface MpSettings {
   readonly clientId: string;
@@ -164,19 +157,10 @@ export class MpConfigService implements OnModuleInit {
       rawApiBaseUrl,
     ).replace(/\/+$/, '');
 
-    const activeKey: MpEncryptionKey = {
-      version: this.parseKeyVersion(
-        'MP_TOKEN_ENCRYPTION_KEY_VERSION',
-        this.config.get<string>('MP_TOKEN_ENCRYPTION_KEY_VERSION')?.trim() ||
-          String(DEFAULT_KEY_VERSION),
-      ),
-      key: this.parseKey(
-        'MP_TOKEN_ENCRYPTION_KEY',
-        this.config.getOrThrow<string>('MP_TOKEN_ENCRYPTION_KEY'),
-      ),
-    };
-
-    const keysByVersion = this.parsePreviousKeys(activeKey);
+    const { activeKey, keysByVersion } = parseEncryptionKeyring(
+      this.config,
+      'MP_TOKEN_ENCRYPTION_KEY',
+    );
 
     const webhookSecret =
       this.config.get<string>('MP_WEBHOOK_SECRET')?.trim() || undefined;
@@ -227,95 +211,5 @@ export class MpConfigService implements OnModuleInit {
       );
     }
     return value;
-  }
-
-  private parseKeyVersion(name: string, value: string): number {
-    const version = Number(value);
-    if (
-      !Number.isInteger(version) ||
-      version < 1 ||
-      version > MAX_KEY_VERSION
-    ) {
-      throw new Error(
-        `${name} debe ser un entero entre 1 y ${MAX_KEY_VERSION} ` +
-          `(la columna token_key_version es smallint). Valor recibido: "${value}".`,
-      );
-    }
-    return version;
-  }
-
-  /** Decodifica una clave base64 y exige que mida exactamente 32 bytes. */
-  private parseKey(name: string, value: unknown): Buffer {
-    const raw = typeof value === 'string' ? value.trim() : '';
-    if (!raw) {
-      throw new Error(
-        `${name} está vacía. Generá una clave con: openssl rand -base64 32`,
-      );
-    }
-    if (!BASE64_PATTERN.test(raw)) {
-      throw new Error(
-        `${name} no es base64 válido. Generá una clave con: openssl rand -base64 32`,
-      );
-    }
-
-    const key = Buffer.from(raw, 'base64');
-    if (key.length !== MP_TOKEN_KEY_BYTES) {
-      throw new Error(
-        `${name} debe decodificar a exactamente ${MP_TOKEN_KEY_BYTES} bytes ` +
-          `(AES-256) y decodificó a ${key.length}. ` +
-          'Generá una clave con: openssl rand -base64 32',
-      );
-    }
-    return key;
-  }
-
-  /**
-   * Arma el mapa `versión -> clave` con la activa más las declaradas en
-   * `MP_TOKEN_ENCRYPTION_KEY_PREVIOUS` (`<versión>:<base64>` separadas por coma).
-   */
-  private parsePreviousKeys(
-    activeKey: MpEncryptionKey,
-  ): ReadonlyMap<number, Buffer> {
-    const keys = new Map<number, Buffer>([[activeKey.version, activeKey.key]]);
-
-    const raw = this.config
-      .get<string>('MP_TOKEN_ENCRYPTION_KEY_PREVIOUS')
-      ?.trim();
-    if (!raw) return keys;
-
-    for (const entry of raw.split(',')) {
-      const trimmed = entry.trim();
-      if (!trimmed) continue;
-
-      const separator = trimmed.indexOf(':');
-      if (separator <= 0) {
-        throw new Error(
-          'MP_TOKEN_ENCRYPTION_KEY_PREVIOUS mal formada. Se espera ' +
-            `"<versión>:<clave base64>" separadas por coma; llegó: "${trimmed}".`,
-        );
-      }
-
-      const version = this.parseKeyVersion(
-        'MP_TOKEN_ENCRYPTION_KEY_PREVIOUS',
-        trimmed.slice(0, separator).trim(),
-      );
-      if (keys.has(version)) {
-        throw new Error(
-          `MP_TOKEN_ENCRYPTION_KEY_PREVIOUS declara la versión ${version} dos ` +
-            'veces (o repite la versión de la clave activa). Cada versión ' +
-            'tiene que aparecer una sola vez.',
-        );
-      }
-
-      keys.set(
-        version,
-        this.parseKey(
-          `MP_TOKEN_ENCRYPTION_KEY_PREVIOUS (versión ${version})`,
-          trimmed.slice(separator + 1).trim(),
-        ),
-      );
-    }
-
-    return keys;
   }
 }
