@@ -17,6 +17,7 @@ export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
     name: pm.name,
     enabled: pm.enabled,
     isDefault: pm.isDefault,
+    invoiceMode: pm.invoiceMode,
     isSystem: pm.isSystem,
     syncSeq: pm.syncSeq,
     version: pm.version,

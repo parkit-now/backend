@@ -312,6 +312,7 @@ export class EntitiesService {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
+    if (dto.invoiceMode !== undefined) data.invoiceMode = dto.invoiceMode;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       // A single default per entity: clearing the rest keeps the invariant.
@@ -333,7 +334,11 @@ export class EntitiesService {
       entityId: paymentMethodId,
       actorUserId: user.id,
       tenantId,
-      metadata: { enabled: dto.enabled, isDefault: dto.isDefault },
+      metadata: {
+        enabled: dto.enabled,
+        isDefault: dto.isDefault,
+        invoiceMode: dto.invoiceMode,
+      },
     });
     return toPaymentMethodDto(updated);
   }

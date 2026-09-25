@@ -1,5 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { PaymentMethodInvoiceMode } from '@prisma/client';
+import {
+  IsBoolean,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class TogglePaymentMethodDto {
   @ApiPropertyOptional({ example: 'Naranja X', maxLength: 120 })
@@ -24,4 +31,14 @@ export class TogglePaymentMethodDto {
   @IsOptional()
   @IsBoolean()
   isDefault?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Qué pasa con la factura al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = queda pendiente para el Historial.',
+    enum: PaymentMethodInvoiceMode,
+    enumName: 'PaymentMethodInvoiceMode',
+  })
+  @IsOptional()
+  @IsEnum(PaymentMethodInvoiceMode)
+  invoiceMode?: PaymentMethodInvoiceMode;
 }

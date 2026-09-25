@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { PaymentMethodType } from '@prisma/client';
+import { PaymentMethodInvoiceMode, PaymentMethodType } from '@prisma/client';
 import type { BranchStatus } from '@prisma/client';
 import { EntityAddressDto } from './entity-address.dto';
 import { LPR_IMAGE_RETENTION_DAYS_OPTIONS } from './update-entity-profile.dto';
@@ -213,6 +213,15 @@ export class PaymentMethodSummaryDto {
     example: false,
   })
   isDefault: boolean;
+
+  @ApiProperty({
+    description:
+      'Facturación al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = queda pendiente para el Historial.',
+    enum: PaymentMethodInvoiceMode,
+    enumName: 'PaymentMethodInvoiceMode',
+    example: PaymentMethodInvoiceMode.none,
+  })
+  invoiceMode: PaymentMethodInvoiceMode;
 
   @ApiProperty({
     description:
