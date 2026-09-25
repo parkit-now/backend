@@ -109,6 +109,14 @@ async function bootstrap() {
       raw({ type: 'image/jpeg', limit: '2mb' }),
     );
 
+    // La constancia del punto de venta de ARCA llega como bytes crudos de un
+    // PDF (Content-Type: application/pdf), igual que las fotos de LPR. Tope
+    // de 5MB, el mismo que el bucket `arca-documents`.
+    app.use(
+      '/tenants/:tenantId/arca/account/sales-point/constancia',
+      raw({ type: 'application/pdf', limit: '5mb' }),
+    );
+
     // Mercado Pago notifications keep their body raw so it never reaches the
     // global ValidationPipe below: `forbidNonWhitelisted: true` would answer
     // 400 the day Mercado Pago adds a field to the payload, and a 4xx makes it

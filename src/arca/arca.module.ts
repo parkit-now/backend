@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/audit.module';
 import { PrismaModule } from '../database/prisma.module';
+import { StorageModule } from '../storage/storage.module';
+import { ArcaAccountsController } from './arca-accounts.controller';
+import { ArcaAccountsService } from './arca-accounts.service';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
 import { ArcaSdkGateway } from './arca-sdk.gateway';
@@ -12,13 +16,14 @@ import { InvoicesService } from './invoices.service';
  * `ArcaConfigService`): el resto de la app no se entera.
  */
 @Module({
-  imports: [PrismaModule],
-  controllers: [InvoicesController],
+  imports: [PrismaModule, AuditModule, StorageModule],
+  controllers: [ArcaAccountsController, InvoicesController],
   providers: [
     ArcaConfigService,
     ArcaCryptoService,
     { provide: ARCA_GATEWAY, useClass: ArcaSdkGateway },
     InvoicesService,
+    ArcaAccountsService,
   ],
   exports: [ArcaConfigService, ArcaCryptoService, InvoicesService],
 })
