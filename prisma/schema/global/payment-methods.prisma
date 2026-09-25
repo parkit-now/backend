@@ -34,6 +34,15 @@ enum PaymentMethodType {
   @@map("payment_method_type")
 }
 
+/// Qué hace Parkit con la factura cuando se cobra con este medio.
+enum PaymentMethodInvoiceMode {
+  none // no se factura
+  auto // se emite al cobrar
+  manual // queda pendiente para emitir desde el Historial
+
+  @@map("payment_method_invoice_mode")
+}
+
 model PaymentMethod {
   id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type      PaymentMethodType
@@ -41,6 +50,9 @@ model PaymentMethod {
   enabled   Boolean           @default(true)
   isSystem  Boolean           @default(false) @map("is_system")
   isDefault Boolean           @default(false) @map("is_default")
+  // Si se factura al cobrar con este medio. Nace en `none`: facturar es una
+  // decisión explícita del dueño.
+  invoiceMode PaymentMethodInvoiceMode @default(none) @map("invoice_mode")
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
 
   version   Int               @default(1)

@@ -9,6 +9,8 @@ model Entry {
   enteredAt  DateTime  @default(now()) @map("entered_at")
   leftAt     DateTime? @map("left_at")
   amountPaid Decimal?  @map("amount_paid") @db.Decimal(10, 2)
+  /// Checkbox "Facturada" para las playas sin integración con ARCA.
+  manuallyInvoiced Boolean @default(false) @map("manually_invoiced")
 
   // LPR fields — populated on automatic ingress; null for manual entries.
   source         String      @default("manual") @db.VarChar(10)
@@ -46,6 +48,7 @@ model Entry {
   cashSession CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
 
   paymentTransactions PaymentTransaction[]
+  invoice             Invoice?
   lprDetectionEvents  LprDetectionEvent[]
   // Intentos de cobro con QR de Mercado Pago (global/payment-intents.prisma).
   // Es una lista, pero a lo sumo UNO puede estar vivo a la vez: lo garantiza el
