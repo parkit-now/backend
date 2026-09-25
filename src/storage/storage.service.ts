@@ -7,6 +7,12 @@ import { FormattedException } from '../utils/exceptions/http-exception/formatted
 /** Private bucket holding onboarding application documents (binaries). */
 export const APPLICATION_DOCUMENTS_BUCKET = 'application-documents';
 
+/**
+ * Private bucket holding ARCA documents (the sales point constancia). Backend
+ * only: no client-facing policies, like `lpr-detection-images`.
+ */
+export const ARCA_DOCUMENTS_BUCKET = 'arca-documents';
+
 /** Private bucket holding LPR detection event photos (binaries). */
 export const LPR_DETECTION_IMAGES_BUCKET = 'lpr-detection-images';
 
