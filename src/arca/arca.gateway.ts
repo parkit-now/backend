@@ -81,6 +81,34 @@ export class ArcaUnavailableError extends Error {
 }
 
 /**
+ * ARCA respondió, pero con errores de negocio (p. ej. un punto de venta que
+ * no existe). Extiende `ArcaUnavailableError` para que quien ya lo maneja como
+ * "no se pudo" siga igual; quien necesita distinguirlo, pregunta por esta.
+ */
+export class ArcaRequestError extends ArcaUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArcaRequestError';
+  }
+}
+
+/**
+ * El WSAA rechazó el certificado: no es un corte de red, reintentar no sirve.
+ * `not_authorized`: el certificado no tiene asociado el servicio en el
+ * Administrador de Relaciones (o en WSASS). `cert_rejected`: ARCA no confía en
+ * el certificado (vencido, de otro entorno, revocado).
+ */
+export class ArcaAuthError extends Error {
+  constructor(
+    readonly kind: 'not_authorized' | 'cert_rejected',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ArcaAuthError';
+  }
+}
+
+/**
  * Lo único que Parkit necesita de ARCA. Cada implementación resuelve el ticket
  * del WSAA por su cuenta: quien llama sólo pasa las credenciales.
  */

@@ -11,6 +11,7 @@ import {
   ARCA_GATEWAY,
   type ArcaCredentials,
   type ArcaGateway,
+  ArcaAuthError,
   ArcaUnavailableError,
 } from './arca.gateway';
 import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
@@ -515,7 +516,13 @@ export class InvoicesService {
         return;
       }
       this.logger.warn(`Factura ${invoice.id} no emitida: ${message}`);
-      await this.markError(invoice.id, ErrorCodes.ARCA_UNAVAILABLE, message);
+      // Un certificado sin el servicio asociado no se arregla reintentando:
+      // el dueño tiene que ir a ARCA, y el código se lo dice.
+      const code =
+        error instanceof ArcaAuthError && error.kind === 'not_authorized'
+          ? ErrorCodes.ARCA_CERT_NOT_AUTHORIZED
+          : ErrorCodes.ARCA_UNAVAILABLE;
+      await this.markError(invoice.id, code, message);
     }
   }
 
