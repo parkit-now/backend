@@ -31,6 +31,7 @@
     "schema": "prisma/schema"
   },
   "dependencies": {
+    "@arcasdk/core": "2.0.2",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.0.1",

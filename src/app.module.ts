@@ -22,6 +22,7 @@ import { CashSessionsModule } from './cash-sessions/cash-sessions.module';
 import { PaymentTransactionsModule } from './payment-transactions/payment-transactions.module';
 import { LprEventsModule } from './lpr-events/lpr-events.module';
 import { MercadoPagoModule } from './mercado-pago/mercado-pago.module';
+import { ArcaModule } from './arca/arca.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { StaffModule } from './staff/staff.module';
 
@@ -50,6 +51,7 @@ import { StaffModule } from './staff/staff.module';
     PaymentTransactionsModule,
     LprEventsModule,
     MercadoPagoModule,
+    ArcaModule,
     MetricsModule,
     StaffModule,
   ],
