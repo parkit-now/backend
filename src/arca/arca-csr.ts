@@ -55,9 +55,42 @@ export function generateArcaCsr(subject: ArcaCsrSubject): GeneratedArcaCsr {
   };
 }
 
-/** Alias del certificado: `parkit` + 8 hex del tenant. Estable por playa. */
-export function arcaCertAlias(tenantId: string): string {
-  return `parkit${tenantId.replace(/-/g, '').slice(0, 8)}`;
+/** Largo máximo de lo que se toma del nombre de la sede para el alias. */
+const ALIAS_NAME_MAX = 24;
+
+/**
+ * Alias del certificado («Nombre simbólico del DN» en WSASS, alias en
+ * Certificados Digitales): `parkit` + el nombre de la sede sin tildes ni
+ * espacios, p. ej. `parkitestacionamientopalermo`. Legible para que el dueño
+ * lo reconozca después en ARCA. Sólo letras y números: es lo que acepta ARCA.
+ * Si el nombre no deja nada usable, cae a 8 hex del tenant.
+ */
+export function arcaCertAlias(tenantName: string, tenantId: string): string {
+  const slug = tenantName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, ALIAS_NAME_MAX);
+  return `parkit${slug || tenantId.replace(/-/g, '').slice(0, 8)}`;
+}
+
+/**
+ * El alias REAL: el CN del certificado o, si todavía no hay, el de la
+ * solicitud. Es lo que ARCA tiene registrado, aunque la sede se haya
+ * renombrado después o se haya vinculado con otro alias (el script de dev).
+ */
+export function aliasFromPem(pem: string | null): string | null {
+  if (!pem) return null;
+  try {
+    const subject = pem.includes('CERTIFICATE REQUEST')
+      ? forge.pki.certificationRequestFromPem(pem).subject
+      : forge.pki.certificateFromPem(pem).subject;
+    const field = subject.getField('CN') as { value?: unknown } | null;
+    return typeof field?.value === 'string' ? field.value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** ¿El certificado se emitió para ESTA clave (la de nuestro CSR)? */

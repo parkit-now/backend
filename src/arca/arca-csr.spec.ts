@@ -1,5 +1,5 @@
 import forge from 'node-forge';
-import { arcaCertAlias, generateArcaCsr } from './arca-csr';
+import { aliasFromPem, arcaCertAlias, generateArcaCsr } from './arca-csr';
 
 describe('generateArcaCsr', () => {
   it('arma un CSR firmado con el subject que pide ARCA', () => {
@@ -21,9 +21,23 @@ describe('generateArcaCsr', () => {
     expect(keyPem).toContain('BEGIN PRIVATE KEY');
   });
 
-  it('el alias es parkit + 8 hex del tenant, sólo letras y números', () => {
-    expect(arcaCertAlias('1a2b3c4d-5e6f-4000-8000-000000000000')).toBe(
-      'parkit1a2b3c4d',
+  it('el alias es parkit + el nombre de la sede, sólo letras y números', () => {
+    const id = '1a2b3c4d-5e6f-4000-8000-000000000000';
+
+    expect(arcaCertAlias('Estacionamiento Palermo', id)).toBe(
+      'parkitestacionamientopalermo',
     );
+    expect(arcaCertAlias('Playa Ñuñoa Nº 2', id)).toBe('parkitplayanunoan2');
+    expect(arcaCertAlias('---', id)).toBe('parkit1a2b3c4d');
+  });
+
+  it('aliasFromPem lee el CN de la solicitud', () => {
+    const { csrPem } = generateArcaCsr({
+      cuit: '20123456786',
+      alias: 'parkitx',
+    });
+
+    expect(aliasFromPem(csrPem)).toBe('parkitx');
+    expect(aliasFromPem('basura')).toBeNull();
   });
 });

@@ -100,6 +100,10 @@ function setup(environment = 'homologacion') {
       count: ({ where }: Row) =>
         Promise.resolve(state.accounts.filter((r) => matches(r, where)).length),
     },
+    tenant: {
+      findUniqueOrThrow: () =>
+        Promise.resolve({ name: 'Estacionamiento Palermo' }),
+    },
     paymentMethod,
     arcaAccessTicket,
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
@@ -155,7 +159,7 @@ describe('ArcaAccountsService — paso 1 (CUIT)', () => {
 
     expect(account.status).toBe('pending_certificate');
     expect(account.cuit).toBe(CUIT);
-    expect(account.certAlias).toBe('parkit1a2b3c4d');
+    expect(account.certAlias).toBe('parkitestacionamientopalermo');
     expect(state.accounts[0].csrPem).toContain('CERTIFICATE REQUEST');
     expect(state.accounts[0].keyEncrypted).not.toContain('PRIVATE KEY');
   });

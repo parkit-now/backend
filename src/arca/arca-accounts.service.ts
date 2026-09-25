@@ -9,10 +9,18 @@ import {
 } from '../storage/storage.service';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
-import { parseArcaCertificate } from './arca-cert.util';
+import {
+  normalizeCertificatePem,
+  parseArcaCertificate,
+} from './arca-cert.util';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
-import { arcaCertAlias, certMatchesKey, generateArcaCsr } from './arca-csr';
+import {
+  aliasFromPem,
+  arcaCertAlias,
+  certMatchesKey,
+  generateArcaCsr,
+} from './arca-csr';
 import { isValidCuit, normalizeCuit } from './arca-cuit';
 import { fromArcaDate } from './arca-dates';
 import { parseTaxpayer } from './arca-padron';
@@ -117,9 +125,13 @@ export class ArcaAccountsService {
       );
     }
 
+    const tenant = await this.prisma.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      select: { name: true },
+    });
     const { keyPem, csrPem } = generateArcaCsr({
       cuit,
-      alias: arcaCertAlias(tenantId),
+      alias: arcaCertAlias(tenant.name, tenantId),
     });
     const key = this.crypto.encrypt(keyPem);
 
@@ -152,7 +164,7 @@ export class ArcaAccountsService {
     if (!PENDING_STATUSES.includes(account.status) || !account.csrPem) {
       throw this.stepInvalid('There is no pending certificate request.');
     }
-    const alias = arcaCertAlias(tenantId);
+    const alias = aliasFromPem(account.csrPem) ?? 'parkit';
     return { fileName: `${alias}.csr`, alias, csrPem: account.csrPem };
   }
 
@@ -176,7 +188,7 @@ export class ArcaAccountsService {
       throw this.stepInvalid('Generate the certificate request first.');
     }
 
-    const certPem = dto.certificate.trim();
+    const certPem = normalizeCertificatePem(dto.certificate);
     let cert: ReturnType<typeof parseArcaCertificate>;
     try {
       cert = parseArcaCertificate(certPem);
@@ -697,7 +709,8 @@ export class ArcaAccountsService {
         account.inicioActividad?.toISOString().slice(0, 10) ?? null,
       ptoVta: account.ptoVta,
       ivaRate: Number(account.ivaRate),
-      certAlias: arcaCertAlias(account.tenantId),
+      certAlias:
+        aliasFromPem(account.certPem) ?? aliasFromPem(account.csrPem) ?? '',
       certExpiresAt: account.certExpiresAt?.toISOString() ?? null,
       hasSalesPointConstancia: !!account.ptoVtaConstanciaPath,
       fiscalDataEditable: account.environment === 'homologacion',
