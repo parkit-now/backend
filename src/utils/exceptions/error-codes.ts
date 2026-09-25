@@ -231,6 +231,26 @@ export const ErrorCodes = {
   // seria dar por procesado un pago que nadie verifico.
   MP_WEBHOOK_ORDER_UNVERIFIED: 'MP_WEBHOOK_ORDER_UNVERIFIED',
 
+  // Facturacion electronica (ARCA)
+  // La playa no tiene ARCA vinculada (o la integracion esta apagada en este
+  // entorno). En GET de la cuenta es el camino feliz de "todavia no vinculo".
+  ARCA_NOT_LINKED: 'ARCA_NOT_LINKED',
+  // ARCA no respondio, el WSAA rechazo el login o el servicio esta caido. En
+  // una factura se guarda como `error_code`: el cobro nunca falla por esto.
+  ARCA_UNAVAILABLE: 'ARCA_UNAVAILABLE',
+  // El certificado vencio: las facturas quedan pendientes hasta renovarlo.
+  ARCA_CERT_EXPIRED: 'ARCA_CERT_EXPIRED',
+  // La estadia ya tiene factura emitida: no se re-emite ni se cambia el monto.
+  INVOICE_ALREADY_ISSUED: 'INVOICE_ALREADY_ISSUED',
+  // Otra emision de la misma factura esta en curso (web y desktop a la vez).
+  INVOICE_IN_PROGRESS: 'INVOICE_IN_PROGRESS',
+  // ARCA rechazo el comprobante; el motivo va en `error_message`.
+  INVOICE_REJECTED: 'INVOICE_REJECTED',
+  // Consumidor final por encima del tope: hay que identificar al receptor.
+  INVOICE_RECEIVER_REQUIRED: 'INVOICE_RECEIVER_REQUIRED',
+  // La estadia no se puede facturar: sigue abierta o se cobro $0.
+  INVOICE_NOT_INVOICEABLE: 'INVOICE_NOT_INVOICEABLE',
+
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
 

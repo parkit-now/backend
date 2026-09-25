@@ -62,6 +62,7 @@ describe('EntitiesService', () => {
       delete: jest.fn(),
     },
     mpAccount: { findUnique: jest.fn() },
+    arcaAccount: { findUnique: jest.fn() },
     $transaction: jest.fn(),
   };
   const mockAudit = { record: jest.fn(), listForTenant: jest.fn() };
@@ -452,6 +453,48 @@ describe('EntitiesService', () => {
         data: { isDefault: false },
       });
       expect(mockAudit.record).toHaveBeenCalled();
+    });
+
+    describe('modo de facturación', () => {
+      const cash = { id: 'pm-1', tenantId: 't-1', type: 'cash' };
+
+      it('rechaza poner Automática sin ARCA vinculada', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(cash);
+        mockPrisma.arcaAccount.findUnique.mockResolvedValue(null);
+
+        const error = await service
+          .togglePaymentMethod('t-1', owner, 'pm-1', { invoiceMode: 'auto' })
+          .catch((e: unknown) => e);
+
+        expect(
+          ((error as FormattedException).getResponse() as { code: string })
+            .code,
+        ).toBe('ARCA_NOT_LINKED');
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('volver a none se permite siempre, sin mirar ARCA', async () => {
+        mockPrisma.paymentMethod.findFirst.mockResolvedValue(cash);
+        txInner.paymentMethod.update.mockResolvedValue({
+          ...cash,
+          name: 'Efectivo',
+          enabled: true,
+          isDefault: false,
+          isSystem: true,
+          invoiceMode: 'none',
+          syncSeq: 2,
+          version: 2,
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+        });
+
+        await service.togglePaymentMethod('t-1', owner, 'pm-1', {
+          invoiceMode: 'none',
+        });
+
+        expect(mockPrisma.arcaAccount.findUnique).not.toHaveBeenCalled();
+        expect(txInner.paymentMethod.update).toHaveBeenCalled();
+      });
     });
 
     // La guarda del medio integrado. `unlink()` apaga el `mercadopago_qr`;

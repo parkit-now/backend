@@ -1,5 +1,5 @@
 
-import {PaymentMethodType} from '@prisma/client'
+import {PaymentMethodType,PaymentMethodInvoiceMode} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -13,6 +13,10 @@ name: string ;
 enabled: boolean ;
 isSystem: boolean ;
 isDefault: boolean ;
+@ApiProperty({
+  enum: PaymentMethodInvoiceMode,
+})
+invoiceMode: PaymentMethodInvoiceMode ;
 @ApiProperty({
   type: `string`,
   format: `date-time`,

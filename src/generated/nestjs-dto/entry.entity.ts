@@ -5,6 +5,7 @@ import {WhitelistEntity} from './whitelist.entity'
 import {RateEntity} from './rate.entity'
 import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
+import {InvoiceEntity} from './invoice.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {PaymentIntentEntity} from './payment-intent.entity'
 import {TenantEntity} from './tenant.entity'
@@ -31,6 +32,10 @@ leftAt: Date  | null;
   format: `double`,
 })
 amountPaid: Prisma.Decimal  | null;
+@ApiProperty({
+  description: `Checkbox "Facturada" para las playas sin integración con ARCA.`,
+})
+manuallyInvoiced: boolean ;
 source: string ;
 vehicleType: string  | null;
 entryImageUrl: string  | null;
@@ -87,6 +92,7 @@ whitelist?: WhitelistEntity  | null;
 rate?: RateEntity  | null;
 cashSession?: CashSessionEntity  | null;
 paymentTransactions?: PaymentTransactionEntity[] ;
+invoice?: InvoiceEntity  | null;
 lprDetectionEvents?: LprDetectionEventEntity[] ;
 paymentIntents?: PaymentIntentEntity[] ;
 tenantId: string ;

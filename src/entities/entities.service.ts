@@ -308,10 +308,32 @@ export class EntitiesService {
       }
     }
 
+    // Facturar al cobrar sólo tiene sentido con ARCA vinculada. Sin esta guarda
+    // el desktop offline —que sólo ve el modo del medio, no la cuenta— le
+    // promete al operario "la factura se emite al sincronizar" y no se emite
+    // nada. Volver a `none` siempre se permite.
+    if (dto.invoiceMode !== undefined && dto.invoiceMode !== 'none') {
+      const arca = await this.prisma.arcaAccount.findUnique({
+        // `tenantId` EXPLÍCITO: `arca_accounts` no está en TENANT_MODELS.
+        where: { tenantId },
+        select: { status: true },
+      });
+      if (arca?.status !== 'linked' && arca?.status !== 'cert_expired') {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          `Payment method ${paymentMethodId} cannot be invoiced: this entity has no ARCA account linked.`,
+          '/tenants/:tenantId/payment-methods',
+          ErrorCodes.ARCA_NOT_LINKED,
+        );
+      }
+    }
+
     const data: Prisma.PaymentMethodUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
+    if (dto.invoiceMode !== undefined) data.invoiceMode = dto.invoiceMode;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       // A single default per entity: clearing the rest keeps the invariant.
@@ -333,7 +355,11 @@ export class EntitiesService {
       entityId: paymentMethodId,
       actorUserId: user.id,
       tenantId,
-      metadata: { enabled: dto.enabled, isDefault: dto.isDefault },
+      metadata: {
+        enabled: dto.enabled,
+        isDefault: dto.isDefault,
+        invoiceMode: dto.invoiceMode,
+      },
     });
     return toPaymentMethodDto(updated);
   }

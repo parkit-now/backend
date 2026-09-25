@@ -24,6 +24,10 @@ leftAt: Date  | null;
   format: `double`,
 })
 amountPaid: Prisma.Decimal  | null;
+@ApiProperty({
+  description: `Checkbox "Facturada" para las playas sin integración con ARCA.`,
+})
+manuallyInvoiced: boolean ;
 source: string ;
 vehicleType: string  | null;
 entryImageUrl: string  | null;

@@ -24,6 +24,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentMembership } from '../auth/decorators/entity-role.decorator';
 import { TenantInterceptor } from '../database/tenant.interceptor';
 import { CloseEntryDto } from './dto/close-entry.dto';
+import { CloseEntryResponseDto } from './dto/close-entry-response.dto';
 import { CorrectEntryDto } from './dto/correct-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
@@ -105,7 +106,7 @@ export class EntriesController {
     summary:
       'Close an entry (register exit + payment) using optimistic locking',
   })
-  @ApiOkResponse({ type: EntryDto })
+  @ApiOkResponse({ type: CloseEntryResponseDto })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   async close(
     @Param('entryId', ParseUUIDPipe) entryId: string,
