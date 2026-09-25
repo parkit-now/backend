@@ -287,6 +287,16 @@ describe('InvoicesService', () => {
       expect(invoice.cbteNro).toBe(1);
     });
 
+    it('sin ARCA vinculada, emitir a pedido → ARCA_NOT_LINKED y no crea la factura', async () => {
+      const { service, state } = setup();
+      state.account = null;
+
+      expect(codeOf(await rejection(service.issueForEntry(ENTRY)))).toBe(
+        'ARCA_NOT_LINKED',
+      );
+      expect(state.invoices).toHaveLength(0);
+    });
+
     it('re-emitir una factura emitida → INVOICE_ALREADY_ISSUED', async () => {
       const { service, state } = setup();
       pendingInvoice(state);

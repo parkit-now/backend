@@ -193,7 +193,11 @@ export class InvoicesService {
     userId?: string,
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
-    if (!this.config.enabled) throw this.notLinked(entryId);
+    // La cuenta se valida ANTES de crear nada: sin ella, un POST dejaría una
+    // factura `pending` huérfana en una playa que no factura.
+    if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
+      throw this.notLinked(entryId);
+    }
 
     let invoice = await this.prisma.invoice.findFirst({
       where: { tenantId, entryId },
