@@ -137,7 +137,7 @@ export class ArcaAccountsService {
       environment: this.config.environment,
       status: 'pending_certificate' as const,
       cuit,
-      iibb: dto.iibb?.trim() || null,
+      iibb: dto.iibb.trim(),
       csrPem,
       keyEncrypted: key.ciphertext,
       keyVersion: key.keyVersion,
@@ -292,6 +292,7 @@ export class ArcaAccountsService {
       data: {
         ...fiscal,
         ivaRate: dto.ivaRate,
+        iibb: dto.iibb?.trim(),
         inicioActividad:
           dto.inicioActividad !== undefined
             ? fromArcaDate(dto.inicioActividad.replace(/-/g, ''))
@@ -321,6 +322,18 @@ export class ArcaAccountsService {
         HttpStatus.UNPROCESSABLE_ENTITY,
         'The IVA condition is still missing: load the fiscal data first.',
         ErrorCodes.ARCA_PADRON_NOT_FOUND,
+      );
+    }
+    // IIBB e inicio de actividades van impresos en la factura (RG 1415): sin
+    // ellos no se vincula. Se chequea antes de hablar con ARCA.
+    const inicioActividad = dto.inicioActividad
+      ? fromArcaDate(dto.inicioActividad.replace(/-/g, ''))
+      : account.inicioActividad;
+    if (!account.iibb?.trim() || !inicioActividad) {
+      throw this.error(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'Gross income registration and start-of-activity date are required.',
+        ErrorCodes.ARCA_FISCAL_DATA_INCOMPLETE,
       );
     }
 
@@ -360,7 +373,12 @@ export class ArcaAccountsService {
 
     const updated = await this.prisma.arcaAccount.update({
       where: { id: account.id },
-      data: { status: 'linked', ptoVta: dto.ptoVta, linkedAt: new Date() },
+      data: {
+        status: 'linked',
+        ptoVta: dto.ptoVta,
+        inicioActividad,
+        linkedAt: new Date(),
+      },
     });
 
     await this.audit.record({

@@ -53,10 +53,21 @@ export class InvoicePdfService {
       where: { id: invoice.entryId },
       select: { plate: true, enteredAt: true, leftAt: true },
     });
+    // Sólo para lo que la foto no tiene (ver `buildInvoicePdfData`).
+    const account =
+      invoice.emisorIibb && invoice.emisorInicioActividad
+        ? null
+        : await this.prisma.arcaAccount.findUnique({
+            where: { tenantId: invoice.tenantId },
+            select: { iibb: true, inicioActividad: true },
+          });
 
     try {
       const content = await this.renderer.render(
-        buildInvoicePdfData(invoice, entry),
+        buildInvoicePdfData(invoice, entry, {
+          iibb: account?.iibb ?? null,
+          inicioActividad: account?.inicioActividad ?? null,
+        }),
       );
       return { fileName: invoicePdfFileName(invoice, entry.plate), content };
     } catch (error) {

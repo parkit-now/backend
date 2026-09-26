@@ -16,6 +16,7 @@ import { FakeArcaGateway } from './fake-arca.gateway';
 
 const TENANT = '1a2b3c4d-1111-7111-8111-111111111111';
 const CUIT = '20123456786';
+const IIBB = '901-123456-7';
 const USER = { id: 'user-1', role: 'user' } as User;
 
 type Row = Record<string, any>;
@@ -167,7 +168,7 @@ describe('ArcaAccountsService — paso 1 (CUIT)', () => {
     const { service } = setup();
 
     const error = await rejection(
-      service.create(TENANT, { cuit: '20-12345678-7' }),
+      service.create(TENANT, { cuit: '20-12345678-7', iibb: IIBB }),
     );
 
     expect(codeOf(error)).toBe('ARCA_CUIT_INVALID');
@@ -176,7 +177,10 @@ describe('ArcaAccountsService — paso 1 (CUIT)', () => {
   it('genera la solicitud y guarda la clave CIFRADA', async () => {
     const { service, state } = setup();
 
-    const account = await service.create(TENANT, { cuit: '20-12345678-6' });
+    const account = await service.create(TENANT, {
+      cuit: '20-12345678-6',
+      iibb: IIBB,
+    });
 
     expect(account.status).toBe('pending_certificate');
     expect(account.cuit).toBe(CUIT);
@@ -187,10 +191,12 @@ describe('ArcaAccountsService — paso 1 (CUIT)', () => {
 
   it('una sede ya vinculada no arranca otra vinculación', async () => {
     const { service, state } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     state.accounts[0].status = 'linked';
 
-    const error = await rejection(service.create(TENANT, { cuit: CUIT }));
+    const error = await rejection(
+      service.create(TENANT, { cuit: CUIT, iibb: IIBB }),
+    );
 
     expect(codeOf(error)).toBe('ARCA_ALREADY_LINKED');
   });
@@ -199,7 +205,7 @@ describe('ArcaAccountsService — paso 1 (CUIT)', () => {
 describe('ArcaAccountsService — paso 2 (certificado)', () => {
   it('certificado bueno y padrón vacío (homologación): pasa al punto de venta', async () => {
     const { service, storedKey } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
 
     const result = await service.uploadCertificate(TENANT, {
       certificate: certFor(storedKey()),
@@ -213,7 +219,7 @@ describe('ArcaAccountsService — paso 2 (certificado)', () => {
 
   it('con el padrón: guarda los datos fiscales', async () => {
     const { service, gateway, storedKey } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     jest.spyOn(gateway, 'getTaxpayerDetails').mockResolvedValue({
       datosGenerales: { razonSocial: 'PARKIT SA' },
       datosMonotributo: {},
@@ -230,7 +236,7 @@ describe('ArcaAccountsService — paso 2 (certificado)', () => {
 
   it('certificado de otro CUIT → ARCA_CERT_CUIT_MISMATCH', async () => {
     const { service, storedKey } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
 
     const error = await rejection(
       service.uploadCertificate(TENANT, {
@@ -243,7 +249,7 @@ describe('ArcaAccountsService — paso 2 (certificado)', () => {
 
   it('certificado de OTRA clave (no de nuestro CSR) → ARCA_CERT_KEY_MISMATCH', async () => {
     const { service } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     const other = forge.pki.rsa.generateKeyPair(1024);
 
     const error = await rejection(
@@ -257,7 +263,7 @@ describe('ArcaAccountsService — paso 2 (certificado)', () => {
 
   it('servicio sin asociar en ARCA → ARCA_CERT_NOT_AUTHORIZED', async () => {
     const { service, gateway, storedKey } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     jest
       .spyOn(gateway, 'getServerStatus')
       .mockRejectedValue(
@@ -273,7 +279,7 @@ describe('ArcaAccountsService — paso 2 (certificado)', () => {
 
   it('un archivo que no es certificado → ARCA_CERT_INVALID', async () => {
     const { service } = setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
 
     const error = await rejection(
       service.uploadCertificate(TENANT, { certificate: 'hola' }),
@@ -286,7 +292,7 @@ describe('ArcaAccountsService — paso 2 (certificado)', () => {
 describe('ArcaAccountsService — paso 3 (punto de venta)', () => {
   async function certified(env = 'homologacion') {
     const ctx = setup(env);
-    await ctx.service.create(TENANT, { cuit: CUIT });
+    await ctx.service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     jest.spyOn(ctx.gateway, 'getTaxpayerDetails').mockResolvedValue({
       datosGenerales: { razonSocial: 'PARKIT SA' },
       datosRegimenGeneral: { impuesto: [{ idImpuesto: 30 }] },
@@ -300,13 +306,28 @@ describe('ArcaAccountsService — paso 3 (punto de venta)', () => {
   it('homologación sin puntos de venta: alcanza con que responda getLastVoucher', async () => {
     const { service, audit } = await certified();
 
-    const account = await service.setSalesPoint(TENANT, USER, { ptoVta: 2 });
+    const account = await service.setSalesPoint(TENANT, USER, {
+      ptoVta: 2,
+      inicioActividad: '2020-01-01',
+    });
 
     expect(account.status).toBe('linked');
     expect(account.ptoVta).toBe(2);
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'arca_account.linked' }),
     );
+  });
+
+  it('sin fecha de inicio de actividades no vincula → ARCA_FISCAL_DATA_INCOMPLETE', async () => {
+    const { service, gateway } = await certified();
+    const salesPoints = jest.spyOn(gateway, 'getSalesPoints');
+
+    const error = await rejection(
+      service.setSalesPoint(TENANT, USER, { ptoVta: 2 }),
+    );
+
+    expect(codeOf(error)).toBe('ARCA_FISCAL_DATA_INCOMPLETE');
+    expect(salesPoints).not.toHaveBeenCalled();
   });
 
   it('un número que no está en la lista de web services → ARCA_POS_NOT_FOUND', async () => {
@@ -316,7 +337,10 @@ describe('ArcaAccountsService — paso 3 (punto de venta)', () => {
     });
 
     const error = await rejection(
-      service.setSalesPoint(TENANT, USER, { ptoVta: 5 }),
+      service.setSalesPoint(TENANT, USER, {
+        ptoVta: 5,
+        inicioActividad: '2020-01-01',
+      }),
     );
 
     expect(codeOf(error)).toBe('ARCA_POS_NOT_FOUND');
@@ -337,7 +361,7 @@ describe('ArcaAccountsService — desvincular', () => {
   it('borra clave y certificado y pone todos los medios en none', async () => {
     const { service, state, storedKey, paymentMethod, arcaAccessTicket } =
       setup();
-    await service.create(TENANT, { cuit: CUIT });
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     await service.uploadCertificate(TENANT, {
       certificate: certFor(storedKey()),
     });
@@ -363,7 +387,7 @@ describe('ArcaAccountsService — desvincular', () => {
 describe('ArcaAccountsService — renovación del certificado', () => {
   async function linked() {
     const ctx = setup();
-    await ctx.service.create(TENANT, { cuit: CUIT });
+    await ctx.service.create(TENANT, { cuit: CUIT, iibb: IIBB });
     await ctx.service.uploadCertificate(TENANT, {
       certificate: certFor(ctx.storedKey()),
     });

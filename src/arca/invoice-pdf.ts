@@ -84,7 +84,20 @@ export function isPrintable(invoice: Invoice): invoice is IssuedInvoice {
 export function buildInvoicePdfData(
   invoice: IssuedInvoice,
   entry: { plate: string; enteredAt: Date; leftAt: Date | null },
+  /**
+   * IIBB e inicio de actividades de la cuenta HOY, sólo para rellenar lo que
+   * la foto no tiene: facturas emitidas antes de que esos datos fueran
+   * obligatorios. Completar un dato que faltaba no es cambiar lo que decía;
+   * lo que sí estaba en la foto no se pisa.
+   */
+  missing: { iibb: string | null; inicioActividad: Date | null } = {
+    iibb: null,
+    inicioActividad: null,
+  },
 ): InvoiceData {
+  const iibb = invoice.emisorIibb ?? missing.iibb;
+  const inicioActividad =
+    invoice.emisorInicioActividad ?? missing.inicioActividad;
   const letter = LETTER_BY_TIPO[invoice.cbteTipo];
   const total = Number(invoice.impTotal);
   const neto = invoice.impNeto === null ? total : Number(invoice.impNeto);
@@ -103,10 +116,8 @@ export function buildInvoicePdfData(
         ? EMISOR_CONDICION[invoice.emisorCondicionIva]
         : '',
       cuit: invoice.emisorCuit,
-      iibb: invoice.emisorIibb ?? '',
-      fechaInicioActividades: invoice.emisorInicioActividad
-        ? arcaDate(invoice.emisorInicioActividad)
-        : '',
+      iibb: iibb ?? '',
+      fechaInicioActividades: inicioActividad ? arcaDate(inicioActividad) : '',
     },
     receptor: {
       razonSocial: invoice.receptorNombre ?? 'Consumidor Final',

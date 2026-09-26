@@ -116,6 +116,31 @@ describe('buildInvoicePdfData', () => {
   });
 });
 
+describe('buildInvoicePdfData — datos que faltaban en la foto', () => {
+  it('rellena IIBB e inicio desde la cuenta sólo si la foto no los tiene', () => {
+    const missing = {
+      iibb: 'Exento',
+      inicioActividad: new Date('2019-05-01T00:00:00.000Z'),
+    };
+
+    const sinFoto = buildInvoicePdfData(
+      invoice({ emisorIibb: null, emisorInicioActividad: null }),
+      ENTRY,
+      missing,
+    );
+    const conFoto = buildInvoicePdfData(invoice(), ENTRY, missing);
+
+    expect(sinFoto.emisor).toMatchObject({
+      iibb: 'Exento',
+      fechaInicioActividades: '20190501',
+    });
+    expect(conFoto.emisor).toMatchObject({
+      iibb: '901-000000-0',
+      fechaInicioActividades: '20200101',
+    });
+  });
+});
+
 describe('isPrintable / invoicePdfFileName', () => {
   it('sólo una factura emitida con CAE tiene PDF', () => {
     expect(isPrintable(invoice())).toBe(true);

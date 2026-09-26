@@ -125,11 +125,17 @@ export class CreateArcaAccountDto {
   @MaxLength(20)
   cuit: string;
 
-  @ApiPropertyOptional({ example: '901-123456-7' })
-  @IsOptional()
+  @ApiProperty({
+    example: '901-123456-7',
+    description:
+      'Número de inscripción en Ingresos Brutos, o la condición si no está ' +
+      'inscripto («Exento», «No contribuyente»). Va impreso en la factura ' +
+      '(RG 1415, Anexo II).',
+  })
   @IsString()
+  @IsNotEmpty()
   @MaxLength(30)
-  iibb?: string;
+  iibb: string;
 }
 
 export class ArcaCsrDto {
@@ -212,6 +218,19 @@ export class UpdateArcaAccountDto {
   @IsDateString({ strict: true })
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   inicioActividad?: string;
+
+  @ApiPropertyOptional({
+    example: '901-123456-7',
+    description:
+      'Número de inscripción en Ingresos Brutos, o la condición si no está ' +
+      'inscripto («Exento», «No contribuyente»). Va impreso en la factura ' +
+      '(RG 1415, Anexo II).',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(30)
+  iibb?: string;
 }
 
 export class SetArcaSalesPointDto {
@@ -221,6 +240,18 @@ export class SetArcaSalesPointDto {
   @Min(1)
   @Max(99998)
   ptoVta: number;
+
+  @ApiPropertyOptional({
+    format: 'date',
+    example: '2020-01-01',
+    description:
+      'Fecha de inicio de actividades: va impresa en la factura (RG 1415). ' +
+      'Obligatoria si la cuenta todavía no la tiene.',
+  })
+  @IsOptional()
+  @IsDateString({ strict: true })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  inicioActividad?: string;
 }
 
 export class ReuseArcaCertificateDto {

@@ -265,6 +265,9 @@ export const ErrorCodes = {
   ARCA_POS_NOT_FOUND: 'ARCA_POS_NOT_FOUND',
   // El punto de venta esta bloqueado o dado de baja.
   ARCA_POS_DISABLED: 'ARCA_POS_DISABLED',
+  // Faltan Ingresos Brutos o la fecha de inicio de actividades: van impresos
+  // en la factura (RG 1415, Anexo II), asi que sin ellos no se vincula.
+  ARCA_FISCAL_DATA_INCOMPLETE: 'ARCA_FISCAL_DATA_INCOMPLETE',
   // La estadia ya tiene factura emitida: no se re-emite ni se cambia el monto.
   INVOICE_ALREADY_ISSUED: 'INVOICE_ALREADY_ISSUED',
   // Otra emision de la misma factura esta en curso (web y desktop a la vez).
