@@ -2,7 +2,11 @@ import type { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../database/prisma.service';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
-import { ArcaSdkGateway, classifyWsaaError } from './arca-sdk.gateway';
+import {
+  ArcaSdkGateway,
+  classifyWsaaError,
+  errorMessage,
+} from './arca-sdk.gateway';
 import type { ArcaCredentials } from './arca.gateway';
 
 const CREDS: ArcaCredentials = {
@@ -121,5 +125,38 @@ describe('classifyWsaaError', () => {
 
   it('un corte de red no es un rechazo del certificado', () => {
     expect(classifyWsaaError('socket hang up')).toBeNull();
+  });
+});
+
+describe('errorMessage', () => {
+  it('usa el mensaje de un Error normal', () => {
+    expect(errorMessage(new Error('timeout'))).toBe('timeout');
+    expect(errorMessage('texto')).toBe('texto');
+  });
+
+  it('WSFE con página de error HTML → status y título, no [object Object]', () => {
+    const soapError = {
+      Fault: { faultcode: 500, faultstring: 'Invalid XML', statusCode: 500 },
+      response: {
+        status: 500,
+        data: '<!DOCTYPE html><html><head><title>ORA-01034: ORACLE not available<br>ORA-27101: shared memory realm does not exist</title></head></html>',
+      },
+    };
+    expect(errorMessage(soapError)).toBe(
+      'ARCA respondió HTTP 500: ORA-01034: ORACLE not available · ORA-27101: shared memory realm does not exist',
+    );
+  });
+
+  it('sin HTML usa el faultstring', () => {
+    expect(
+      errorMessage({
+        Fault: { faultstring: 'Invalid XML' },
+        response: { status: 502, data: '' },
+      }),
+    ).toBe('ARCA respondió HTTP 502: Invalid XML');
+  });
+
+  it('un objeto cualquiera se describe entero', () => {
+    expect(errorMessage({ code: 42 })).toBe('{ code: 42 }');
   });
 });

@@ -278,9 +278,10 @@ export const ErrorCodes = {
   INVOICE_RECEIVER_REQUIRED: 'INVOICE_RECEIVER_REQUIRED',
   // La estadia no se puede facturar: sigue abierta o se cobro $0.
   INVOICE_NOT_INVOICEABLE: 'INVOICE_NOT_INVOICEABLE',
-  // Factura A: el padron no tiene el CUIT del receptor.
+  // Receptor con CUIT: el padron no tiene datos de ese CUIT (produccion).
   INVOICE_RECEIVER_NOT_FOUND: 'INVOICE_RECEIVER_NOT_FOUND',
-  // Factura A: el receptor no es Responsable Inscripto ni Monotributista.
+  // DEPRECADO desde la Etapa 5: un receptor que no recibe A sale B
+  // identificada. Queda porque hay facturas viejas con este codigo guardado.
   INVOICE_RECEIVER_NOT_A: 'INVOICE_RECEIVER_NOT_A',
   // El PDF solo existe para una factura emitida (con CAE).
   INVOICE_NOT_ISSUED: 'INVOICE_NOT_ISSUED',

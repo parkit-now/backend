@@ -111,3 +111,24 @@ model ArcaRequest {
   @@index([invoiceId], map: "arca_requests_invoice_idx")
   @@map("arca_requests")
 }
+
+// Receptores con CUIT: caché del padrón y sugerencias del cobro (Etapa 5).
+// Migración 20260926150000_invoice_receivers.sql.
+model InvoiceReceiver {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  cuit                   String    @db.VarChar(11)
+  razonSocial            String?   @map("razon_social")
+  /// `CondicionIVAReceptorId` según el padrón. `null` = ARCA no tiene datos.
+  condicionIvaReceptorId Int?      @map("condicion_iva_receptor_id") @db.SmallInt
+  fetchedAt              DateTime  @map("fetched_at") @db.Timestamptz(6)
+  lastUsedAt             DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // `invoice_receivers_tenant_used_idx` (parcial) vive sólo en SQL.
+  @@unique([tenantId, cuit], map: "invoice_receivers_tenant_cuit_key")
+  @@map("invoice_receivers")
+}
