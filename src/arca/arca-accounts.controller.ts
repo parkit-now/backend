@@ -252,6 +252,55 @@ export class ArcaAccountsController {
     return this.accounts.setSalesPoint(tenantId, user, dto);
   }
 
+  @Get('account/renewal/csr')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    operationId: 'arcaGetRenewalCsr',
+    summary: 'Download the request (CSR) to renew the certificate',
+    description:
+      'Same alias as the current certificate: in ARCA it goes to «Agregar certificado» on that alias, which keeps the associated services. Prepared by the daily job 30 days before expiry, or generated on the spot. The current certificate keeps working until the renewed one is uploaded.',
+  })
+  @ApiOkResponse({ type: ArcaCsrDto })
+  @ApiNotFoundResponse({ type: ProblemDetailsDto })
+  @ApiConflictResponse({
+    description: 'ARCA_LINK_STEP_INVALID: the account is not linked.',
+    type: ProblemDetailsDto,
+  })
+  getRenewalCsr(@Param('tenantId') tenantId: string): Promise<ArcaCsrDto> {
+    return this.accounts.getRenewalCsr(tenantId);
+  }
+
+  @Post('account/renewal/certificate')
+  @EntityRole(MembershipRole.owner)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    operationId: 'arcaUploadRenewalCertificate',
+    summary: 'Verify the renewed certificate and switch to it',
+    description:
+      'Checks it like the wizard does, but against the renewal key, and logs in to ARCA with it. Switches the certificate in every entity that shares it; an entity in `cert_expired` goes back to `linked`.',
+  })
+  @ApiOkResponse({ type: ArcaAccountDto })
+  @ApiConflictResponse({
+    description: 'ARCA_LINK_STEP_INVALID.',
+    type: ProblemDetailsDto,
+  })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'ARCA_CERT_INVALID, ARCA_CERT_CUIT_MISMATCH, ARCA_CERT_KEY_MISMATCH, ARCA_CERT_EXPIRED, ARCA_CERT_NOT_AUTHORIZED.',
+    type: ProblemDetailsDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'ARCA_UNAVAILABLE.',
+    type: ProblemDetailsDto,
+  })
+  uploadRenewalCertificate(
+    @Param('tenantId') tenantId: string,
+    @CurrentUser() user: User,
+    @Body() dto: UploadArcaCertificateDto,
+  ): Promise<ArcaAccountDto> {
+    return this.accounts.uploadRenewalCertificate(tenantId, user, dto);
+  }
+
   @Delete('account')
   @EntityRole(MembershipRole.owner)
   @HttpCode(HttpStatus.NO_CONTENT)

@@ -36,7 +36,7 @@ export class ArcaAccountDto {
       '- `pending_certificate`: se generó la solicitud (CSR), falta subir el certificado.',
       '- `pending_sales_point`: certificado verificado, falta el punto de venta (y, en homologación, puede faltar cargar los datos fiscales: `condicionIva` en null).',
       '- `linked`: vinculada, emite.',
-      '- `cert_expired`: venció el certificado.',
+      '- `cert_expired`: venció el certificado; no emite hasta renovarlo (`account/renewal/*`).',
       'Una cuenta desvinculada responde 404 ARCA_NOT_LINKED.',
     ].join('\n'),
   })
@@ -95,6 +95,15 @@ export class ArcaAccountDto {
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   certExpiresAt: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    description:
+      'Cuándo se preparó la solicitud de renovación del certificado (null si no hay una en curso).',
+  })
+  renewalPreparedAt: string | null;
 
   @ApiProperty({
     description:

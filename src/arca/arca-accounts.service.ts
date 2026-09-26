@@ -23,6 +23,7 @@ import { parseTaxpayer } from './arca-padron';
 import { checkSalesPoint } from './arca-sales-points';
 import {
   ARCA_GATEWAY,
+  ArcaAlreadyAuthenticatedError,
   ArcaAuthError,
   type ArcaCredentials,
   type ArcaGateway,
@@ -57,7 +58,7 @@ const PENDING_STATUSES: ReadonlyArray<ArcaAccount['status']> = [
 ];
 
 /** La cuenta con el certificado ya verificado: se puede hablar con ARCA. */
-type CertifiedAccount = ArcaAccount & {
+export type CertifiedAccount = ArcaAccount & {
   certPem: string;
   keyEncrypted: string;
   keyVersion: number;
@@ -458,9 +459,234 @@ export class ArcaAccountsService {
         domicilioFiscal: source.domicilioFiscal,
         inicioActividad: source.inicioActividad,
         ivaRate: source.ivaRate,
+        // Si el certificado ya tiene la renovación en marcha, se comparte:
+        // las sedes con el mismo certificado renuevan juntas.
+        renewalCsrPem: source.renewalCsrPem,
+        renewalKeyEncrypted: source.renewalKeyEncrypted,
+        renewalKeyVersion: source.renewalKeyVersion,
+        renewalPreparedAt: source.renewalPreparedAt,
       },
     });
     return this.toDto(updated);
+  }
+
+  /**
+   * La solicitud (CSR) para renovar el certificado. Si el job todavía no la
+   * preparó, se genera en el momento. Se puede pedir en cualquier momento, no
+   * sólo cerca del vencimiento: renovar antes no rompe nada.
+   */
+  async getRenewalCsr(tenantId: string): Promise<ArcaCsrDto> {
+    this.assertEnabled();
+    const account = await this.requireRenewable(tenantId);
+    const renewal = await this.prepareRenewal(account);
+    const alias = aliasFromPem(renewal.csrPem) ?? 'parkit';
+    return {
+      fileName: `${alias}-renovacion.csr`,
+      alias,
+      csrPem: renewal.csrPem,
+    };
+  }
+
+  /**
+   * Deja la clave y el CSR de renovación de un certificado, sin tocar el
+   * vigente, en TODAS las sedes que lo comparten: el certificado es uno solo.
+   * El CSR lleva el alias del certificado actual, que es lo que ARCA pide
+   * para «Agregar certificado» y conservar los servicios asociados.
+   *
+   * Idempotente y a prueba de carreras (el job y el panel a la vez): se
+   * escribe sólo donde todavía no hay renovación, y se devuelve lo que quedó
+   * guardado, que puede ser lo de la otra corrida.
+   */
+  async prepareRenewal(account: CertifiedAccount): Promise<{ csrPem: string }> {
+    const siblings = {
+      certFingerprint: account.certFingerprint,
+      environment: account.environment,
+    };
+    const existing = await this.prisma.arcaAccount.findFirst({
+      where: { ...siblings, renewalCsrPem: { not: null } },
+    });
+
+    let renewal = existing?.renewalCsrPem
+      ? {
+          renewalCsrPem: existing.renewalCsrPem,
+          renewalKeyEncrypted: existing.renewalKeyEncrypted,
+          renewalKeyVersion: existing.renewalKeyVersion,
+          renewalPreparedAt: existing.renewalPreparedAt,
+        }
+      : null;
+    if (!renewal) {
+      const alias =
+        aliasFromPem(account.certPem) ??
+        arcaCertAlias(
+          (
+            await this.prisma.tenant.findUniqueOrThrow({
+              where: { id: account.tenantId },
+              select: { name: true },
+            })
+          ).name,
+          account.tenantId,
+        );
+      const { keyPem, csrPem } = generateArcaCsr({ cuit: account.cuit, alias });
+      const key = this.crypto.encrypt(keyPem);
+      renewal = {
+        renewalCsrPem: csrPem,
+        renewalKeyEncrypted: key.ciphertext,
+        renewalKeyVersion: key.keyVersion,
+        renewalPreparedAt: new Date(),
+      };
+    }
+
+    await this.prisma.arcaAccount.updateMany({
+      where: { ...siblings, renewalCsrPem: null },
+      data: renewal,
+    });
+    const stored = await this.prisma.arcaAccount.findUniqueOrThrow({
+      where: { id: account.id },
+    });
+    return { csrPem: stored.renewalCsrPem! };
+  }
+
+  /**
+   * El certificado renovado. Mismas validaciones que el paso 2 del wizard,
+   * pero contra la clave de RENOVACIÓN. Si todo da, cambia el certificado en
+   * todas las sedes que lo comparten y la playa vuelve a `linked` aunque el
+   * viejo ya hubiera vencido.
+   */
+  async uploadRenewalCertificate(
+    tenantId: string,
+    user: User,
+    dto: UploadArcaCertificateDto,
+  ): Promise<ArcaAccountDto> {
+    this.assertEnabled();
+    const account = await this.requireRenewable(tenantId);
+    if (
+      !account.renewalCsrPem ||
+      !account.renewalKeyEncrypted ||
+      account.renewalKeyVersion === null
+    ) {
+      throw this.stepInvalid('Download the renewal request first.');
+    }
+
+    const certPem = normalizeCertificatePem(dto.certificate);
+    let cert: ReturnType<typeof parseArcaCertificate>;
+    try {
+      cert = parseArcaCertificate(certPem);
+    } catch (error) {
+      throw this.error(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        `Not an ARCA certificate: ${errorMessage(error)}`,
+        ErrorCodes.ARCA_CERT_INVALID,
+      );
+    }
+    if (cert.cuit !== account.cuit) {
+      throw this.error(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        `The certificate belongs to CUIT ${cert.cuit}, not ${account.cuit}.`,
+        ErrorCodes.ARCA_CERT_CUIT_MISMATCH,
+      );
+    }
+    if (cert.notAfter.getTime() <= Date.now()) {
+      throw this.error(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        `The certificate expired on ${cert.notAfter.toISOString()}.`,
+        ErrorCodes.ARCA_CERT_EXPIRED,
+      );
+    }
+    const keyPem = this.crypto.decrypt(
+      account.renewalKeyEncrypted,
+      account.renewalKeyVersion,
+    );
+    if (!certMatchesKey(certPem, keyPem)) {
+      throw this.error(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'The certificate was not issued for the renewal request generated by Parkit.',
+        ErrorCodes.ARCA_CERT_KEY_MISMATCH,
+      );
+    }
+
+    const creds: ArcaCredentials = {
+      cuit: account.cuit,
+      certPem,
+      keyPem,
+      certFingerprint: cert.fingerprint,
+      environment: account.environment,
+    };
+    await this.verifyRenewalLogin('wsfe', () =>
+      this.gateway.getServerStatus(creds),
+    );
+    await this.verifyRenewalLogin('ws_sr_constancia_inscripcion', () =>
+      this.gateway.getTaxpayerDetails(creds, account.cuit),
+    );
+
+    const oldFingerprint = account.certFingerprint;
+    await this.prisma.$transaction(async (tx) => {
+      const siblings = {
+        certFingerprint: oldFingerprint,
+        environment: account.environment,
+      };
+      // Vuelven a `linked` las que ya emitían; una sede con el wizard a medias
+      // (reusó el certificado) cambia de certificado pero sigue en su paso.
+      await tx.arcaAccount.updateMany({
+        where: { ...siblings, status: 'cert_expired' },
+        data: { status: 'linked' },
+      });
+      await tx.arcaAccount.updateMany({
+        where: siblings,
+        data: {
+          certPem,
+          certFingerprint: cert.fingerprint,
+          certExpiresAt: cert.notAfter,
+          keyEncrypted: account.renewalKeyEncrypted,
+          keyVersion: account.renewalKeyVersion,
+          renewalCsrPem: null,
+          renewalKeyEncrypted: null,
+          renewalKeyVersion: null,
+          renewalPreparedAt: null,
+        },
+      });
+
+      // Los tickets del certificado viejo: si el login con el nuevo ya dejó
+      // el suyo, sobran; si no (ARCA contestó `alreadyAuthenticated`), se
+      // pasan al nuevo, porque siguen siendo válidos para este CUIT hasta que
+      // vencen y es la única forma de emitir mientras tanto.
+      const oldTickets = await tx.arcaAccessTicket.findMany({
+        where: { certFingerprint: oldFingerprint },
+      });
+      for (const ticket of oldTickets) {
+        const keyOf = (certFingerprint: string) => ({
+          certFingerprint_service_environment: {
+            certFingerprint,
+            service: ticket.service,
+            environment: ticket.environment,
+          },
+        });
+        const fresh = await tx.arcaAccessTicket.findUnique({
+          where: keyOf(cert.fingerprint),
+        });
+        if (fresh) {
+          await tx.arcaAccessTicket.delete({ where: keyOf(oldFingerprint) });
+        } else {
+          await tx.arcaAccessTicket.update({
+            where: keyOf(oldFingerprint),
+            data: { certFingerprint: cert.fingerprint },
+          });
+        }
+      }
+    });
+
+    await this.audit.record({
+      action: AuditActions.ARCA_CERTIFICATE_RENEWED,
+      entityType: 'arca_account',
+      entityId: account.id,
+      actorUserId: user.id,
+      tenantId,
+      metadata: {
+        cuit: account.cuit,
+        previousStatus: account.status,
+        certExpiresAt: cert.notAfter.toISOString(),
+      },
+    });
+    return this.getAccount(tenantId);
   }
 
   /**
@@ -532,6 +758,34 @@ export class ArcaAccountsService {
       );
     }
     return account;
+  }
+
+  /** La cuenta que emite (o emitía): la única que tiene algo que renovar. */
+  private async requireRenewable(tenantId: string): Promise<CertifiedAccount> {
+    const account = await this.requireAccount(tenantId);
+    if (!ACTIVE_STATUSES.includes(account.status) || !isCertified(account)) {
+      throw this.stepInvalid(
+        'Only a linked account can renew its certificate.',
+      );
+    }
+    return account;
+  }
+
+  /**
+   * Login con el certificado nuevo. `alreadyAuthenticated` cuenta como
+   * éxito: el WSAA ya validó firma y autorización y sólo se niega a dar un
+   * segundo ticket para el alias (el del certificado viejo sigue vivo).
+   */
+  private async verifyRenewalLogin(
+    service: string,
+    call: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await call();
+    } catch (error) {
+      if (error instanceof ArcaAlreadyAuthenticatedError) return;
+      throw this.mapArcaError(error, service);
+    }
   }
 
   private async ownedTenantIds(
@@ -668,6 +922,7 @@ export class ArcaAccountsService {
       certAlias:
         aliasFromPem(account.certPem) ?? aliasFromPem(account.csrPem) ?? '',
       certExpiresAt: account.certExpiresAt?.toISOString() ?? null,
+      renewalPreparedAt: account.renewalPreparedAt?.toISOString() ?? null,
       fiscalDataEditable: account.environment === 'homologacion',
       linkedAt: account.linkedAt?.toISOString() ?? null,
     };
@@ -699,7 +954,7 @@ const HTTP_TITLES: Partial<Record<HttpStatus, string>> = {
   [HttpStatus.SERVICE_UNAVAILABLE]: 'Service Unavailable',
 };
 
-function isCertified(account: ArcaAccount): account is CertifiedAccount {
+export function isCertified(account: ArcaAccount): account is CertifiedAccount {
   return (
     !!account.certPem &&
     !!account.keyEncrypted &&

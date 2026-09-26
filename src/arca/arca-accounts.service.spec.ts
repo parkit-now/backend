@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument -- el Prisma en memoria
-   guarda filas sin tipar y los tests leen campos sueltos. */
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return --
+   el Prisma en memoria guarda filas sin tipar y los tests leen campos sueltos. */
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { User } from '@prisma/client';
@@ -11,7 +11,7 @@ import { FormattedException } from '../utils/exceptions/http-exception/formatted
 import { ArcaAccountsService } from './arca-accounts.service';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
-import { ArcaAuthError } from './arca.gateway';
+import { ArcaAlreadyAuthenticatedError, ArcaAuthError } from './arca.gateway';
 import { FakeArcaGateway } from './fake-arca.gateway';
 
 const TENANT = '1a2b3c4d-1111-7111-8111-111111111111';
@@ -75,7 +75,13 @@ function setup(environment = 'homologacion') {
   const state = { accounts: [] as Row[] };
   const find = (where: Row) => state.accounts.find((r) => matches(r, where));
   const paymentMethod = { updateMany: jest.fn().mockResolvedValue({}) };
-  const arcaAccessTicket = { deleteMany: jest.fn().mockResolvedValue({}) };
+  const arcaAccessTicket = {
+    deleteMany: jest.fn().mockResolvedValue({}),
+    findMany: jest.fn().mockResolvedValue([]),
+    findUnique: jest.fn().mockResolvedValue(null),
+    update: jest.fn().mockResolvedValue({}),
+    delete: jest.fn().mockResolvedValue({}),
+  };
   const prisma = {
     arcaAccount: {
       // Copia, como Prisma: el servicio no puede ver cambios posteriores.
@@ -98,6 +104,17 @@ function setup(environment = 'homologacion') {
       },
       count: ({ where }: Row) =>
         Promise.resolve(state.accounts.filter((r) => matches(r, where)).length),
+      findFirst: ({ where }: Row) => {
+        const row = find(where);
+        return Promise.resolve(row ? { ...row } : null);
+      },
+      findUniqueOrThrow: ({ where }: Row) =>
+        Promise.resolve({ ...find(where) }),
+      updateMany: ({ where, data }: Row) => {
+        const rows = state.accounts.filter((r) => matches(r, where));
+        rows.forEach((r) => Object.assign(r, data));
+        return Promise.resolve({ count: rows.length });
+      },
     },
     tenant: {
       findUniqueOrThrow: () =>
@@ -123,6 +140,11 @@ function setup(environment = 'homologacion') {
     const row = state.accounts[0];
     return crypto.decrypt(row.keyEncrypted, row.keyVersion);
   };
+  /** La clave de la renovación, para firmar el certificado renovado. */
+  const renewalKey = () => {
+    const row = state.accounts[0];
+    return crypto.decrypt(row.renewalKeyEncrypted, row.renewalKeyVersion);
+  };
   return {
     service,
     state,
@@ -131,6 +153,7 @@ function setup(environment = 'homologacion') {
     paymentMethod,
     arcaAccessTicket,
     storedKey,
+    renewalKey,
   };
 }
 
@@ -334,5 +357,89 @@ describe('ArcaAccountsService — desvincular', () => {
     expect(codeOf(await rejection(service.getAccount(TENANT)))).toBe(
       'ARCA_NOT_LINKED',
     );
+  });
+});
+
+describe('ArcaAccountsService — renovación del certificado', () => {
+  async function linked() {
+    const ctx = setup();
+    await ctx.service.create(TENANT, { cuit: CUIT });
+    await ctx.service.uploadCertificate(TENANT, {
+      certificate: certFor(ctx.storedKey()),
+    });
+    Object.assign(ctx.state.accounts[0], { status: 'linked', ptoVta: 1 });
+    return ctx;
+  }
+
+  it('prepara el CSR con el mismo alias, sin tocar el certificado vigente, y lo reusa', async () => {
+    const { service, state } = await linked();
+    const certBefore = state.accounts[0].certPem;
+
+    const first = await service.getRenewalCsr(TENANT);
+    const again = await service.getRenewalCsr(TENANT);
+
+    expect(first.alias).toBe('parkittest');
+    expect(first.csrPem).toContain('CERTIFICATE REQUEST');
+    expect(again.csrPem).toBe(first.csrPem);
+    expect(state.accounts[0].certPem).toBe(certBefore);
+    expect(state.accounts[0].renewalKeyEncrypted).not.toContain('PRIVATE KEY');
+  });
+
+  it('el certificado renovado reemplaza al vencido y la cuenta vuelve a linked', async () => {
+    const { service, state, renewalKey, arcaAccessTicket } = await linked();
+    const oldFingerprint = state.accounts[0].certFingerprint;
+    state.accounts[0].status = 'cert_expired';
+    await service.getRenewalCsr(TENANT);
+    arcaAccessTicket.findMany.mockResolvedValue([
+      {
+        certFingerprint: oldFingerprint,
+        service: 'wsfe',
+        environment: 'homologacion',
+      },
+    ]);
+
+    const account = await service.uploadRenewalCertificate(TENANT, USER, {
+      certificate: certFor(renewalKey()),
+    });
+
+    expect(account.status).toBe('linked');
+    expect(account.renewalPreparedAt).toBeNull();
+    expect(state.accounts[0].certFingerprint).not.toBe(oldFingerprint);
+    expect(state.accounts[0].renewalCsrPem).toBeNull();
+    // El ticket vigente del certificado viejo pasa al nuevo.
+    expect(arcaAccessTicket.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { certFingerprint: state.accounts[0].certFingerprint },
+      }),
+    );
+  });
+
+  it('un certificado firmado con la clave VIEJA → ARCA_CERT_KEY_MISMATCH', async () => {
+    const { service, storedKey } = await linked();
+    await service.getRenewalCsr(TENANT);
+
+    const error = await rejection(
+      service.uploadRenewalCertificate(TENANT, USER, {
+        certificate: certFor(storedKey()),
+      }),
+    );
+
+    expect(codeOf(error)).toBe('ARCA_CERT_KEY_MISMATCH');
+  });
+
+  it('ARCA contesta alreadyAuthenticated (ticket del viejo vivo) → cuenta como verificado', async () => {
+    const { service, gateway, renewalKey } = await linked();
+    await service.getRenewalCsr(TENANT);
+    jest
+      .spyOn(gateway, 'getServerStatus')
+      .mockRejectedValue(
+        new ArcaAlreadyAuthenticatedError('coe.alreadyAuthenticated'),
+      );
+
+    const account = await service.uploadRenewalCertificate(TENANT, USER, {
+      certificate: certFor(renewalKey()),
+    });
+
+    expect(account.status).toBe('linked');
   });
 });
