@@ -14,6 +14,8 @@ import {
   type ArcaCredentials,
   type ArcaGateway,
   type ArcaMessage,
+  ArcaAuthError,
+  ArcaRequestError,
   ArcaUnavailableError,
   type ArcaVoucherInfo,
   type ArcaVoucherRequest,
@@ -91,7 +93,7 @@ export class ArcaSdkGateway implements ArcaGateway {
     );
     const errors = result.errors?.err ?? [];
     if (errors.length > 0) {
-      throw new ArcaUnavailableError(
+      throw new ArcaRequestError(
         errors.map((e) => `${e.code}: ${e.msg}`).join(' | '),
       );
     }
@@ -248,6 +250,8 @@ export class ArcaSdkGateway implements ArcaGateway {
             'no tiene guardado. Se libera solo cuando vence (hasta 12 h).',
         );
       }
+      const authError = classifyWsaaError(message);
+      if (authError) throw authError;
       throw new ArcaUnavailableError(message);
     }
   }
@@ -281,4 +285,19 @@ export class ArcaSdkGateway implements ArcaGateway {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Los rechazos del WSAA que no son "ARCA está caído": vienen como SOAP fault
+ * con un código `coe.*` / `cms.*` en el mensaje (p. ej. `coe.notAuthorized:
+ * Computador no autorizado a acceder al servicio`).
+ */
+export function classifyWsaaError(message: string): ArcaAuthError | null {
+  if (/notAuthorized|no autorizado/i.test(message)) {
+    return new ArcaAuthError('not_authorized', message);
+  }
+  if (/cms\.|cert\.(untrusted|expired|revoked)|certificado/i.test(message)) {
+    return new ArcaAuthError('cert_rejected', message);
+  }
+  return null;
 }

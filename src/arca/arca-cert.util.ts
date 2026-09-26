@@ -28,3 +28,25 @@ export function parseArcaCertificate(pem: string): ParsedArcaCertificate {
     fingerprint: cert.fingerprint256.replace(/:/g, '').toLowerCase(),
   };
 }
+
+const PEM_HEADER = '-----BEGIN CERTIFICATE-----';
+const PEM_FOOTER = '-----END CERTIFICATE-----';
+
+/**
+ * Rearma el PEM de un certificado pegado a mano desde la pantalla de ARCA:
+ * copiar de una página web trae espacios, saltos `\r\n`, líneas cortadas en
+ * cualquier lado o directamente sin las líneas BEGIN/END. Si lo que queda no
+ * es base64, lo devuelve tal cual y que falle el parseo con su mensaje.
+ */
+export function normalizeCertificatePem(text: string): string {
+  const raw = text.trim();
+  const start = raw.indexOf(PEM_HEADER);
+  const end = raw.indexOf(PEM_FOOTER);
+  const body =
+    start >= 0 && end > start ? raw.slice(start + PEM_HEADER.length, end) : raw;
+  const base64 = body.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return raw;
+
+  const lines = base64.match(/.{1,64}/g) ?? [];
+  return [PEM_HEADER, ...lines, PEM_FOOTER].join('\n') + '\n';
+}

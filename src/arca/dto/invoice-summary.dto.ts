@@ -40,6 +40,14 @@ export class InvoiceSummaryDto {
   @ApiPropertyOptional({
     nullable: true,
     type: String,
+    description:
+      'A quién se emitió: «Consumidor Final» o la razón social del receptor de la A.',
+  })
+  receptorNombre: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
     description: 'Código estable (`ARCA_*` / `INVOICE_*`) del último problema.',
   })
   errorCode: string | null;

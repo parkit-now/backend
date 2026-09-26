@@ -40,6 +40,9 @@ export const AuditActions = {
   MP_ACCOUNT_LINKED: 'mp_account.linked',
   MP_ACCOUNT_UNLINKED: 'mp_account.unlinked',
   MP_ACCOUNT_LINK_FAILED: 'mp_account.link_failed',
+  // ARCA · vinculación de la facturación electrónica de una playa
+  ARCA_ACCOUNT_LINKED: 'arca_account.linked',
+  ARCA_ACCOUNT_UNLINKED: 'arca_account.unlinked',
   // Renovación exitosa del par de tokens (`MpTokenService`). Es `info`: no hay
   // nada que hacer, pero deja el rastro de cuándo rotaron los tokens, que es lo
   // primero que se mira cuando una playa deja de cobrar.

@@ -240,6 +240,31 @@ export const ErrorCodes = {
   ARCA_UNAVAILABLE: 'ARCA_UNAVAILABLE',
   // El certificado vencio: las facturas quedan pendientes hasta renovarlo.
   ARCA_CERT_EXPIRED: 'ARCA_CERT_EXPIRED',
+  // Vinculacion desde el panel (wizard).
+  // La playa ya tiene ARCA vinculada: hay que desvincular antes de empezar otra.
+  ARCA_ALREADY_LINKED: 'ARCA_ALREADY_LINKED',
+  // El paso no corresponde al estado de la vinculacion (p. ej. subir el
+  // certificado antes de generar la solicitud).
+  ARCA_LINK_STEP_INVALID: 'ARCA_LINK_STEP_INVALID',
+  // El CUIT no tiene 11 digitos o falla el digito verificador.
+  ARCA_CUIT_INVALID: 'ARCA_CUIT_INVALID',
+  // El archivo no es un certificado X.509 de ARCA, o ARCA lo rechazo (por
+  // ejemplo, uno de produccion en homologacion).
+  ARCA_CERT_INVALID: 'ARCA_CERT_INVALID',
+  // El certificado es de otro CUIT.
+  ARCA_CERT_CUIT_MISMATCH: 'ARCA_CERT_CUIT_MISMATCH',
+  // El certificado no se genero con la solicitud (CSR) de Parkit.
+  ARCA_CERT_KEY_MISMATCH: 'ARCA_CERT_KEY_MISMATCH',
+  // El certificado existe pero no tiene asociado el servicio (wsfe o la
+  // constancia de inscripcion) en el Administrador de Relaciones.
+  ARCA_CERT_NOT_AUTHORIZED: 'ARCA_CERT_NOT_AUTHORIZED',
+  // El padron no tiene los datos fiscales del CUIT (o faltan cargarlos a mano
+  // en homologacion).
+  ARCA_PADRON_NOT_FOUND: 'ARCA_PADRON_NOT_FOUND',
+  // El punto de venta no existe en ARCA o no es de web services.
+  ARCA_POS_NOT_FOUND: 'ARCA_POS_NOT_FOUND',
+  // El punto de venta esta bloqueado o dado de baja.
+  ARCA_POS_DISABLED: 'ARCA_POS_DISABLED',
   // La estadia ya tiene factura emitida: no se re-emite ni se cambia el monto.
   INVOICE_ALREADY_ISSUED: 'INVOICE_ALREADY_ISSUED',
   // Otra emision de la misma factura esta en curso (web y desktop a la vez).
@@ -250,6 +275,10 @@ export const ErrorCodes = {
   INVOICE_RECEIVER_REQUIRED: 'INVOICE_RECEIVER_REQUIRED',
   // La estadia no se puede facturar: sigue abierta o se cobro $0.
   INVOICE_NOT_INVOICEABLE: 'INVOICE_NOT_INVOICEABLE',
+  // Factura A: el padron no tiene el CUIT del receptor.
+  INVOICE_RECEIVER_NOT_FOUND: 'INVOICE_RECEIVER_NOT_FOUND',
+  // Factura A: el receptor no es Responsable Inscripto ni Monotributista.
+  INVOICE_RECEIVER_NOT_A: 'INVOICE_RECEIVER_NOT_A',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',

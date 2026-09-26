@@ -1,4 +1,7 @@
-import { parseArcaCertificate } from './arca-cert.util';
+import {
+  normalizeCertificatePem,
+  parseArcaCertificate,
+} from './arca-cert.util';
 
 /**
  * Autofirmado y descartable (clave tirada a /dev/null al generarlo), con el
@@ -37,5 +40,27 @@ describe('parseArcaCertificate', () => {
 
   it('un PEM que no es certificado falla', () => {
     expect(() => parseArcaCertificate('no soy un certificado')).toThrow();
+  });
+});
+
+describe('normalizeCertificatePem', () => {
+  const body = CERT.split('\n').slice(1, -1).join('');
+
+  it('acepta el certificado pegado sin BEGIN/END y en una sola línea', () => {
+    expect(parseArcaCertificate(normalizeCertificatePem(body)).cuit).toBe(
+      '20000000001',
+    );
+  });
+
+  it('acepta espacios, \\r\\n y líneas cortadas en cualquier lado', () => {
+    const messy = `  ${CERT.replace(/\n/g, '\r\n  ')}  `;
+
+    expect(parseArcaCertificate(normalizeCertificatePem(messy)).cuit).toBe(
+      '20000000001',
+    );
+  });
+
+  it('lo que no es base64 pasa tal cual (y falla al parsear)', () => {
+    expect(normalizeCertificatePem('no es, un cert!')).toBe('no es, un cert!');
   });
 });

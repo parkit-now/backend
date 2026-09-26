@@ -2,7 +2,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../database/prisma.service';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
-import { ArcaSdkGateway } from './arca-sdk.gateway';
+import { ArcaSdkGateway, classifyWsaaError } from './arca-sdk.gateway';
 import type { ArcaCredentials } from './arca.gateway';
 
 const CREDS: ArcaCredentials = {
@@ -99,5 +99,27 @@ describe('ArcaSdkGateway — ticket del WSAA', () => {
 
     await ticketFor(gateway);
     expect(login).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('classifyWsaaError', () => {
+  it('servicio no asociado al certificado → not_authorized', () => {
+    expect(
+      classifyWsaaError(
+        'ns1:coe.notAuthorized: Computador no autorizado a acceder al servicio',
+      )?.kind,
+    ).toBe('not_authorized');
+  });
+
+  it('certificado de otro entorno o vencido → cert_rejected', () => {
+    expect(
+      classifyWsaaError(
+        'ns1:cms.cert.untrusted: Certificado no emitido por AC de confianza',
+      )?.kind,
+    ).toBe('cert_rejected');
+  });
+
+  it('un corte de red no es un rechazo del certificado', () => {
+    expect(classifyWsaaError('socket hang up')).toBeNull();
   });
 });
