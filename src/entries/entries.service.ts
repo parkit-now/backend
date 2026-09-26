@@ -678,6 +678,31 @@ export class EntriesService {
           paymentMethodIds: (data.payments ?? []).map((p) => p.paymentMethodId),
           receiverCuit: data.invoiceReceiverCuit,
         });
+
+        // Cobro que tenía que facturarse y no se pudo por el certificado
+        // vencido: queda en la auditoría para que el dueño lo vea en la web
+        // (el operario sólo ve el aviso en el cobro).
+        if (createdInvoice?.errorCode === ErrorCodes.ARCA_CERT_EXPIRED) {
+          await tx.auditLog.create({
+            data: {
+              action: AuditActions.INVOICE_CERT_EXPIRED,
+              entityType: 'entry',
+              entityId: entryId,
+              actorUserId: user?.id ?? null,
+              tenantId,
+              severity: 'warn',
+              metadata: {
+                origin: 'operational_exit',
+                plate: current.plate,
+                cashSessionId: data.cashSessionId ?? current.cashSessionId,
+                ticketNumber: current.ticketNumber,
+                chargedAmount: roundMoney(computedAmount),
+                invoiceId: createdInvoice.invoiceId,
+                actorRole: actorRole(membership),
+              },
+            },
+          });
+        }
       }
 
       return tx.entry.findUniqueOrThrow({ where: { id: entryId } });

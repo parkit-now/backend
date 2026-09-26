@@ -1,4 +1,5 @@
 import type { InvoicesService } from '../arca/invoices.service';
+import { AuditActions } from '../audit/audit.service';
 import type { PrismaService } from '../database/prisma.service';
 import type { TenantContextService } from '../database/tenant-context.service';
 import { EntriesService } from './entries.service';
@@ -114,5 +115,37 @@ describe('EntriesService.closeEntry — factura', () => {
 
     expect(result.invoice).toBeNull();
     expect(invoices.issueAfterClose).not.toHaveBeenCalled();
+  });
+
+  it('certificado vencido → audita el cobro sin factura (warn) y no emite', async () => {
+    const invoices = {
+      createForClosedEntry: jest.fn().mockResolvedValue({
+        invoiceId: 'inv-1',
+        issueNow: false,
+        errorCode: 'ARCA_CERT_EXPIRED',
+      }),
+      issueAfterClose: jest.fn(),
+      summaryOrNull: jest.fn().mockResolvedValue({
+        id: 'inv-1',
+        status: 'pending',
+        errorCode: 'ARCA_CERT_EXPIRED',
+      }),
+    };
+    const { service, tx } = setup(invoices);
+
+    const result = await close(service);
+
+    const [[{ data }]] = tx.auditLog.create.mock.calls as [
+      [{ data: Record<string, unknown> }],
+    ];
+    expect(data).toMatchObject({
+      action: AuditActions.INVOICE_CERT_EXPIRED,
+      entityType: 'entry',
+      entityId: ENTRY,
+      severity: 'warn',
+      metadata: { plate: 'AB123CD', chargedAmount: 1210, invoiceId: 'inv-1' },
+    });
+    expect(invoices.issueAfterClose).not.toHaveBeenCalled();
+    expect(result.invoice?.status).toBe('pending');
   });
 });

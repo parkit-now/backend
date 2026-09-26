@@ -14,6 +14,7 @@ import {
   type ArcaCredentials,
   type ArcaGateway,
   type ArcaMessage,
+  ArcaAlreadyAuthenticatedError,
   ArcaAuthError,
   ArcaRequestError,
   ArcaUnavailableError,
@@ -245,7 +246,7 @@ export class ArcaSdkGateway implements ArcaGateway {
     } catch (error) {
       const message = errorMessage(error);
       if (message.includes('alreadyAuthenticated')) {
-        throw new ArcaUnavailableError(
+        throw new ArcaAlreadyAuthenticatedError(
           'ARCA ya entregó un ticket vigente para este certificado que Parkit ' +
             'no tiene guardado. Se libera solo cuando vence (hasta 12 h).',
         );

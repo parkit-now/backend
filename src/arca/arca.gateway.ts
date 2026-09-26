@@ -93,6 +93,20 @@ export class ArcaRequestError extends ArcaUnavailableError {
 }
 
 /**
+ * El WSAA no entrega otro ticket porque ya hay uno vigente para ese alias
+ * (`coe.alreadyAuthenticated`) que Parkit no tiene guardado con este
+ * certificado. Pasa al renovar: el certificado nuevo comparte el alias del
+ * viejo, y el ticket del viejo sigue vivo hasta 12 h. El WSAA valida la firma
+ * y la autorización antes de contestar esto, así que el certificado es bueno.
+ */
+export class ArcaAlreadyAuthenticatedError extends ArcaUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArcaAlreadyAuthenticatedError';
+  }
+}
+
+/**
  * El WSAA rechazó el certificado: no es un corte de red, reintentar no sirve.
  * `not_authorized`: el certificado no tiene asociado el servicio en el
  * Administrador de Relaciones (o en WSASS). `cert_rejected`: ARCA no confía en

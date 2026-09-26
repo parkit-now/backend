@@ -496,4 +496,55 @@ describe('InvoicesService', () => {
       expect(operations).toEqual(['getLastVoucher', 'createVoucher']);
     });
   });
+
+  describe('reconcileStaleIssuing (job diario)', () => {
+    const OLD = () => new Date(Date.now() - 11 * 60_000);
+    const numbered = {
+      status: 'issuing',
+      environment: 'homologacion',
+      emisorCuit: '20447275865',
+      ptoVta: 1,
+      cbteTipo: 6,
+    };
+
+    it('ARCA la tiene → issued con su CAE; no la tiene → error y libera el número', async () => {
+      const { service, state, gateway } = setup();
+      gateway.vouchers.set('1:6:7', { cae: '123', caeVto: '20261004' });
+      const found = pendingInvoice(state, {
+        ...numbered,
+        cbteNro: 7,
+        issuingStartedAt: OLD(),
+      });
+      const missing = pendingInvoice(state, {
+        ...numbered,
+        cbteNro: 8,
+        issuingStartedAt: OLD(),
+      });
+
+      const result = await service.reconcileStaleIssuing({
+        olderThanMs: 10 * 60_000,
+        limit: 50,
+      });
+
+      expect(result).toEqual({ reconciled: 2, failed: 0 });
+      expect(found).toMatchObject({ status: 'issued', cae: '123' });
+      expect(missing).toMatchObject({ status: 'error', cbteNro: null });
+    });
+
+    it('no toca una emisión reciente', async () => {
+      const { service, state } = setup();
+      const recent = pendingInvoice(state, {
+        ...numbered,
+        cbteNro: 7,
+        issuingStartedAt: new Date(),
+      });
+
+      await service.reconcileStaleIssuing({
+        olderThanMs: 10 * 60_000,
+        limit: 50,
+      });
+
+      expect(recent.status).toBe('issuing');
+    });
+  });
 });

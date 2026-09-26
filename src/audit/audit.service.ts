@@ -43,6 +43,18 @@ export const AuditActions = {
   // ARCA · vinculación de la facturación electrónica de una playa
   ARCA_ACCOUNT_LINKED: 'arca_account.linked',
   ARCA_ACCOUNT_UNLINKED: 'arca_account.unlinked',
+  // El job dejó lista la solicitud (CSR) de renovación de un certificado por
+  // vencer: falta que el dueño la suba a ARCA.
+  ARCA_RENEWAL_PREPARED: 'arca_account.renewal_prepared',
+  // El dueño subió el certificado renovado: la cuenta ya firma con el nuevo.
+  ARCA_CERTIFICATE_RENEWED: 'arca_account.certificate_renewed',
+  // Venció el certificado sin renovar: la playa dejó de facturar. `warn`,
+  // porque no se recupera sola.
+  ARCA_CERTIFICATE_EXPIRED: 'arca_account.certificate_expired',
+  // Se cobró una estadía que tenía que facturarse pero el certificado de ARCA
+  // estaba vencido: la factura quedó pendiente. `warn`: es plata cobrada sin
+  // comprobante, y el dueño tiene que renovar el certificado.
+  INVOICE_CERT_EXPIRED: 'invoice.cert_expired',
   // Renovación exitosa del par de tokens (`MpTokenService`). Es `info`: no hay
   // nada que hacer, pero deja el rastro de cuándo rotaron los tokens, que es lo
   // primero que se mira cuando una playa deja de cobrar.
