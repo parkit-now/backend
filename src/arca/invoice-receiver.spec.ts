@@ -63,7 +63,7 @@ describe('resolveReceiver', () => {
     ).toEqual({
       ok: true,
       condicionIvaReceptorId: 1,
-      nombre: `CUIT ${CUIT}`,
+      nombre: 'CUIT 30-71234567-1',
     });
   });
 });

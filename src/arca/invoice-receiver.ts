@@ -34,7 +34,9 @@ export function resolveReceiver(input: {
   readonly environment: ArcaEnvironment;
 }): ReceiverResolution {
   const { cuit, fiscal } = input;
-  const nombre = fiscal?.razonSocial ?? `CUIT ${cuit}`;
+  const nombre =
+    fiscal?.razonSocial ??
+    `CUIT ${cuit.slice(0, 2)}-${cuit.slice(2, 10)}-${cuit.slice(10)}`;
 
   if (!fiscal) {
     return input.environment === 'homologacion'
