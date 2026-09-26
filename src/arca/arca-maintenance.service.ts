@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { ArcaAccountsService, isCertified } from './arca-accounts.service';
@@ -45,9 +45,20 @@ export interface ArcaMaintenanceResult {
  * 3. **Reconciliar** las facturas trabadas en `issuing`.
  *
  * Corre cross-tenant, así que usa el `PrismaService` crudo con filtro
- * explícito, igual que `LprImageRetentionService`. Con scale-to-zero el
- * `@Cron` puede no dispararse: en producción lo dispara además Cloud
- * Scheduler por `POST /internal/jobs/arca-maintenance`.
+ * explícito, igual que `LprImageRetentionService`.
+ *
+ * ## Sólo `@Cron`, a las 12:00 de Argentina, sin Cloud Scheduler
+ *
+ * Decisión del proyecto: nada que pueda generar un cobro de GCP. El precio es
+ * que en Cloud Run el cron es de mejor esfuerzo: si a esa hora no hay ninguna
+ * instancia viva (scale-to-zero), ese día no corre. Por eso va al mediodía,
+ * cuando las playas están cobrando y es casi seguro que hay una instancia, y
+ * con la zona horaria explícita (Cloud Run está en UTC). Si varias instancias
+ * lo disparan a la vez no pasa nada: cada escritura es condicional.
+ *
+ * Que un día no corra no rompe nada: la emisión chequea el vencimiento en el
+ * punto de uso y las `issuing` se reconcilian en la próxima emisión con esa
+ * numeración. Lo que se atrasa es el aviso (la card y el CSR preparado).
  *
  * `ARCA_MAINTENANCE_DRY_RUN` (en `true` salvo que diga `false`) sólo cuenta
  * candidatos y no toca nada.
@@ -69,7 +80,10 @@ export class ArcaMaintenanceService {
     return this.config.get('ARCA_MAINTENANCE_DRY_RUN') !== 'false';
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_5AM)
+  @Cron('0 12 * * *', {
+    name: 'arca-maintenance',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  })
   async run(): Promise<ArcaMaintenanceResult> {
     const dryRun = this.dryRun;
     if (!this.arcaConfig.enabled) {

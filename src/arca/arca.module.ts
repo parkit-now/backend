@@ -5,7 +5,6 @@ import { ArcaAccountsController } from './arca-accounts.controller';
 import { ArcaAccountsService } from './arca-accounts.service';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
-import { ArcaMaintenanceController } from './arca-maintenance.controller';
 import { ArcaMaintenanceService } from './arca-maintenance.service';
 import { ArcaSdkGateway } from './arca-sdk.gateway';
 import { ARCA_GATEWAY } from './arca.gateway';
@@ -18,11 +17,7 @@ import { InvoicesService } from './invoices.service';
  */
 @Module({
   imports: [PrismaModule, AuditModule],
-  controllers: [
-    ArcaAccountsController,
-    InvoicesController,
-    ArcaMaintenanceController,
-  ],
+  controllers: [ArcaAccountsController, InvoicesController],
   providers: [
     ArcaConfigService,
     ArcaCryptoService,

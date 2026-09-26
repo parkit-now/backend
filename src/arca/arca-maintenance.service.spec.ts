@@ -4,7 +4,6 @@ import type { AuditService } from '../audit/audit.service';
 import type { PrismaService } from '../database/prisma.service';
 import type { ArcaAccountsService } from './arca-accounts.service';
 import type { ArcaConfigService } from './arca-config.service';
-import { isValidJobSecret } from './arca-maintenance.controller';
 import {
   ArcaMaintenanceService,
   JOB_STALE_ISSUING_MS,
@@ -144,17 +143,5 @@ describe('ArcaMaintenanceService', () => {
 
     expect(result.renewalsPrepared).toBe(0);
     expect(invoices.reconcileStaleIssuing).toHaveBeenCalled();
-  });
-});
-
-describe('isValidJobSecret', () => {
-  it('rechaza sin secreto configurado, sin header o con otro valor', () => {
-    expect(isValidJobSecret(undefined, 'algo')).toBe(false);
-    expect(isValidJobSecret('s3cr3t', undefined)).toBe(false);
-    expect(isValidJobSecret('s3cr3t', 's3cr3tX')).toBe(false);
-  });
-
-  it('acepta el secreto correcto', () => {
-    expect(isValidJobSecret('s3cr3t', 's3cr3t')).toBe(true);
   });
 });
