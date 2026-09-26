@@ -497,6 +497,47 @@ describe('InvoicesService', () => {
     });
   });
 
+  describe('issueBatch', () => {
+    const OTHER = '44444444-4444-7444-8444-444444444444';
+    const THIRD = '55555555-5555-7555-8555-555555555555';
+
+    it('devuelve el resultado de cada estadía; un conflicto no corta el lote', async () => {
+      const { service, state } = setup();
+      pendingInvoice(state);
+      pendingInvoice(state, { entryId: OTHER, status: 'issued' });
+      pendingInvoice(state, { entryId: THIRD });
+
+      const { results } = await service.issueBatch([ENTRY, OTHER, THIRD]);
+
+      expect(results.map((r) => [r.entryId, r.errorCode])).toEqual([
+        [ENTRY, null],
+        [OTHER, 'INVOICE_ALREADY_ISSUED'],
+        [THIRD, null],
+      ]);
+      expect(results[0].invoice?.cbteNro).toBe(1);
+      expect(results[2].invoice?.cbteNro).toBe(2);
+    });
+
+    it('si ARCA no responde, las que faltan no se intentan', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      pendingInvoice(state, { entryId: OTHER });
+      const lastVoucher = jest
+        .spyOn(gateway, 'getLastVoucher')
+        .mockRejectedValueOnce(new Error('ECONNRESET'));
+
+      const { results } = await service.issueBatch([ENTRY, OTHER]);
+
+      expect(results.map((r) => r.errorCode)).toEqual([
+        'ARCA_UNAVAILABLE',
+        'ARCA_UNAVAILABLE',
+      ]);
+      expect(results[1].invoice).toBeNull();
+      expect(lastVoucher).toHaveBeenCalledTimes(1);
+      expect(state.invoices[1].status).toBe('pending');
+    });
+  });
+
   describe('reconcileStaleIssuing (job diario)', () => {
     const OLD = () => new Date(Date.now() - 11 * 60_000);
     const numbered = {

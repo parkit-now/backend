@@ -1,4 +1,10 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import type { ArcaAccount, Invoice, Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
@@ -20,6 +26,10 @@ import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceDto } from './dto/invoice.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
+import type {
+  InvoiceBatchItemDto,
+  InvoiceBatchResponseDto,
+} from './dto/issue-invoice-batch.dto';
 import {
   CONSUMIDOR_FINAL_ID_THRESHOLD,
   resolveInitialInvoice,
@@ -312,6 +322,65 @@ export class InvoicesService {
     });
 
     return this.issue(invoice.id, userId, { throwOnConflict: true });
+  }
+
+  /**
+   * `POST /tenants/:tenantId/invoices/batch`: emite a consumidor final, de a
+   * una y en orden, y devuelve cómo quedó cada estadía. Un conflicto de una
+   * (ya emitida, no facturable) no corta el lote.
+   *
+   * Si ARCA no responde, las que faltan no se intentan: cada intento esperaría
+   * el timeout entero y el request no terminaría nunca. Vuelven con
+   * `ARCA_UNAVAILABLE` y sin factura, para reintentar después.
+   */
+  async issueBatch(
+    entryIds: readonly string[],
+    userId?: string,
+  ): Promise<InvoiceBatchResponseDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'This entity has no ARCA account linked.',
+        '/tenants/:tenantId/invoices/batch',
+        ErrorCodes.ARCA_NOT_LINKED,
+      );
+    }
+
+    const results: InvoiceBatchItemDto[] = [];
+    let arcaDown = false;
+    for (const entryId of entryIds) {
+      if (arcaDown) {
+        results.push({
+          entryId,
+          invoice: null,
+          errorCode: ErrorCodes.ARCA_UNAVAILABLE,
+        });
+        continue;
+      }
+      try {
+        const invoice = await this.issueForEntry(entryId, userId);
+        results.push({
+          entryId,
+          invoice,
+          errorCode: invoice.status === 'issued' ? null : invoice.errorCode,
+        });
+        arcaDown = invoice.errorCode === ErrorCodes.ARCA_UNAVAILABLE;
+      } catch (error) {
+        if (!(error instanceof HttpException)) throw error;
+        const body = error.getResponse();
+        results.push({
+          entryId,
+          invoice: null,
+          errorCode:
+            typeof body === 'object' && 'code' in body
+              ? String(body.code)
+              : ErrorCodes.INTERNAL_ERROR,
+        });
+      }
+    }
+    return { results };
   }
 
   async pullChanges(

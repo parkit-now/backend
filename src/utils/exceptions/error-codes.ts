@@ -279,6 +279,10 @@ export const ErrorCodes = {
   INVOICE_RECEIVER_NOT_FOUND: 'INVOICE_RECEIVER_NOT_FOUND',
   // Factura A: el receptor no es Responsable Inscripto ni Monotributista.
   INVOICE_RECEIVER_NOT_A: 'INVOICE_RECEIVER_NOT_A',
+  // El PDF solo existe para una factura emitida (con CAE).
+  INVOICE_NOT_ISSUED: 'INVOICE_NOT_ISSUED',
+  // No se pudo generar el PDF (Chromium no arranco o se colgo).
+  INVOICE_PDF_FAILED: 'INVOICE_PDF_FAILED',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
