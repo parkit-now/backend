@@ -48,6 +48,7 @@ type EntryAuditSnapshot = {
   rateSnapshotMediaEstadiaPriceArs: number | null;
   cashSessionId: string | null;
   ticketNumber: number | null;
+  manuallyInvoiced: boolean;
   payments: PaymentSnapshot[];
 };
 type CorrectionEconomicImpact = {
@@ -96,6 +97,7 @@ function toDto(entry: PrismaEntry): EntryDto {
         : null,
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
+    manuallyInvoiced: entry.manuallyInvoiced,
     source: entry.source,
     vehicleType: entry.vehicleType,
     entryImageUrl: entry.entryImageUrl,
@@ -337,6 +339,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     ),
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
+    manuallyInvoiced: entry.manuallyInvoiced,
     payments: activePayments(entry),
   };
 }
@@ -361,6 +364,7 @@ function diffSnapshots(
     'rateSnapshotStayPriceArs',
     'rateSnapshotFractionPriceArs',
     'rateSnapshotMediaEstadiaPriceArs',
+    'manuallyInvoiced',
     'payments',
   ];
 
@@ -757,7 +761,12 @@ export class EntriesService {
         );
       }
 
-      if (current.cashSession?.closedAt) {
+      // Marcar «Facturada» a mano no toca la plata: se permite también con la
+      // caja cerrada, que es justo cuando el dueño revisa qué facturó.
+      const onlyManualInvoice = Object.entries(data).every(
+        ([key, value]) => key === 'manuallyInvoiced' || value === undefined,
+      );
+      if (current.cashSession?.closedAt && !onlyManualInvoice) {
         throw new FormattedException(
           'Conflict',
           HttpStatus.CONFLICT,
@@ -770,7 +779,9 @@ export class EntriesService {
       const isActive = current.leftAt === null;
       if (
         isActive &&
-        (data.leftAt !== undefined || data.payments !== undefined)
+        (data.leftAt !== undefined ||
+          data.payments !== undefined ||
+          data.manuallyInvoiced !== undefined)
       ) {
         throw new FormattedException(
           'Conflict',
@@ -883,6 +894,9 @@ export class EntriesService {
       }
       if (data.payments !== undefined) {
         updateData.amountPaid = nextAmountPaid;
+      }
+      if (data.manuallyInvoiced !== undefined) {
+        updateData.manuallyInvoiced = data.manuallyInvoiced;
       }
 
       await tx.entry.update({

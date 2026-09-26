@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsNumber,
   IsOptional,
@@ -109,6 +110,15 @@ export class CorrectEntryDto {
   @ValidateNested({ each: true })
   @Type(() => PaymentLineDto)
   payments?: PaymentLineDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Marca la estadía como facturada por fuera de Parkit (playas sin ARCA). ' +
+      'Sólo en estadías cerradas; se permite aunque la caja esté cerrada.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  manuallyInvoiced?: boolean;
 
   @ApiPropertyOptional({
     description: 'Required for operator changes to ingreso, egreso or amounts.',

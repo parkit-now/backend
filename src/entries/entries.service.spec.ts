@@ -230,6 +230,29 @@ describe('EntriesService', () => {
       );
     });
 
+    it('marcar «Facturada» a mano se permite aunque la caja esté cerrada', async () => {
+      const { service: subject, tx } = makeService(
+        makeEntry({
+          cashSession: {
+            id: '55555555-5555-7555-8555-555555555555',
+            closedAt: new Date(),
+          },
+        }),
+      );
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { manuallyInvoiced: true },
+        USER as never,
+      );
+
+      const updateArg = tx.entry.update.mock.calls[0][0] as {
+        data: { manuallyInvoiced?: boolean };
+      };
+      expect(updateArg.data.manuallyInvoiced).toBe(true);
+    });
+
     it('rechaza pagos o egreso en entradas activas', async () => {
       const { service: subject } = makeService(
         makeEntry({ leftAt: null, amountPaid: null, paymentTransactions: [] }),
