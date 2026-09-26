@@ -20,6 +20,7 @@ import {MpOauthStateEntity} from './mp-oauth-state.entity'
 import {PaymentIntentEntity} from './payment-intent.entity'
 import {ArcaAccountEntity} from './arca-account.entity'
 import {ArcaRequestEntity} from './arca-request.entity'
+import {InvoiceReceiverEntity} from './invoice-receiver.entity'
 import {InvoiceEntity} from './invoice.entity'
 
 
@@ -112,5 +113,6 @@ mpOauthStates?: MpOauthStateEntity[] ;
 paymentIntents?: PaymentIntentEntity[] ;
 arcaAccount?: ArcaAccountEntity  | null;
 arcaRequests?: ArcaRequestEntity[] ;
+invoiceReceivers?: InvoiceReceiverEntity[] ;
 invoices?: InvoiceEntity[] ;
 }

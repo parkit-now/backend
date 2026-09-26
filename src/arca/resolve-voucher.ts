@@ -1,4 +1,5 @@
 import type { ArcaTaxCondition } from '@prisma/client';
+import { CondicionIvaReceptor, receivesInvoiceA } from './invoice-receiver';
 
 /** Códigos de comprobante de ARCA que emite Parkit. */
 export const CbteTipos = { A: 1, B: 6, C: 11 } as const;
@@ -7,9 +8,6 @@ export type CbteLetter = keyof typeof CbteTipos;
 /** `DocTipo` de ARCA: 80 = CUIT, 99 = consumidor final sin identificar. */
 export const DOC_TIPO_CUIT = 80;
 const DOC_TIPO_SIN_IDENTIFICAR = 99;
-
-/** `CondicionIVAReceptorId` 5 = Consumidor Final (lista real en la Etapa 0). */
-const CONDICION_IVA_CONSUMIDOR_FINAL = 5;
 
 /**
  * Id de alícuota de ARCA (`FEParamGetTiposIva`) por porcentaje. Un porcentaje
@@ -32,8 +30,8 @@ export interface ResolveVoucherInput {
   /** Alícuota de la playa en porcentaje (21 = 21%). Se ignora en la C. */
   readonly ivaRate: number;
   /**
-   * Receptor identificado con CUIT, ya consultado en el padrón. Sólo cambia
-   * algo si el emisor es RI: sale una A. Un monotributista emite C igual.
+   * Receptor identificado con CUIT, con la condición que dio el padrón
+   * (`resolveReceiver`). Sin él, la factura es a consumidor final.
    */
   readonly receiver?: {
     readonly cuit: string;
@@ -59,33 +57,62 @@ export interface ResolvedVoucher {
 }
 
 /**
- * Decide el comprobante de una estadía a consumidor final.
+ * La letra del comprobante: la decide la condición del EMISOR y, si es RI, la
+ * del receptor.
  *
- * - Monotributo o Exento → **C**: no discrimina IVA, `ImpNeto = total`.
- * - Responsable Inscripto → **B**: el IVA va discriminado para ARCA.
- * - Responsable Inscripto con receptor → **A** (DocTipo 80), mismo cálculo de
- *   IVA que la B. Quién puede recibir una A lo decide `resolveReceiver`.
+ * - Monotributo o Exento → siempre **C**, aunque el receptor dé su CUIT.
+ * - Responsable Inscripto + receptor RI o monotributista (1, 6, 13, 16) → **A**.
+ * - Responsable Inscripto + cualquier otro receptor, o sin receptor → **B**.
  *
  * Homologación NO valida la condición del emisor (aceptó una C de un RI en la
  * Etapa 0), así que esta función es la única garantía de la letra correcta.
  */
+export function letterFor(
+  emitter: ArcaTaxCondition,
+  condicionIvaReceptorId: number | null,
+): CbteLetter {
+  if (emitter !== 'responsable_inscripto') return 'C';
+  return condicionIvaReceptorId !== null &&
+    receivesInvoiceA(condicionIvaReceptorId)
+    ? 'A'
+    : 'B';
+}
+
+/**
+ * Arma el comprobante de una estadía (letra en `letterFor`).
+ *
+ * - Con receptor: DocTipo 80 (CUIT) y la condición del padrón, en cualquier
+ *   letra: una B a un exento o una C con CUIT también lo identifican.
+ * - Sin receptor: consumidor final (DocTipo 99, condición 5).
+ * - C: no discrimina IVA, `ImpNeto = total`. A y B: IVA discriminado para
+ *   ARCA, con el mismo cálculo.
+ */
 export function resolveVoucher(input: ResolveVoucherInput): ResolvedVoucher {
   const totalCents = Math.round(input.total * 100);
+  const receiver = input.receiver;
+  const letter = letterFor(
+    input.emitter,
+    receiver?.condicionIvaReceptorId ?? null,
+  );
   const base = {
-    docTipo: DOC_TIPO_SIN_IDENTIFICAR,
-    docNro: 0,
-    condicionIvaReceptorId: CONDICION_IVA_CONSUMIDOR_FINAL,
+    letter,
+    cbteTipo: CbteTipos[letter],
+    ...(receiver
+      ? {
+          docTipo: DOC_TIPO_CUIT,
+          docNro: Number(receiver.cuit),
+          condicionIvaReceptorId: receiver.condicionIvaReceptorId,
+        }
+      : {
+          docTipo: DOC_TIPO_SIN_IDENTIFICAR,
+          docNro: 0,
+          condicionIvaReceptorId: CondicionIvaReceptor.CONSUMIDOR_FINAL,
+        }),
     impTotal: totalCents / 100,
   };
 
-  if (input.emitter !== 'responsable_inscripto') {
-    return {
-      ...base,
-      letter: 'C',
-      cbteTipo: CbteTipos.C,
-      impNeto: totalCents / 100,
-      impIva: 0,
-    };
+  if (letter === 'C') {
+    return { ...base, impNeto: totalCents / 100, impIva: 0 };
   }
 
   const ivaId = IVA_ID_BY_RATE.get(input.ivaRate);
@@ -97,19 +124,9 @@ export function resolveVoucher(input: ResolveVoucherInput): ResolvedVoucher {
   // rechaza con "ImpTotal no coincide con la suma de los importes".
   const netoCents = Math.round(totalCents / (1 + input.ivaRate / 100));
   const ivaCents = totalCents - netoCents;
-  const receiver = input.receiver;
 
   return {
     ...base,
-    ...(receiver
-      ? {
-          letter: 'A' as const,
-          cbteTipo: CbteTipos.A,
-          docTipo: DOC_TIPO_CUIT,
-          docNro: Number(receiver.cuit),
-          condicionIvaReceptorId: receiver.condicionIvaReceptorId,
-        }
-      : { letter: 'B' as const, cbteTipo: CbteTipos.B }),
     impNeto: netoCents / 100,
     impIva: ivaCents / 100,
     iva: [{ Id: ivaId, BaseImp: netoCents / 100, Importe: ivaCents / 100 }],

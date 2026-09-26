@@ -23,6 +23,9 @@ export class FakeArcaGateway implements ArcaGateway {
   private caeCounter = 86380920900000;
   /** Lo que devuelve el padrón (`null` = sin datos, como en homologación). */
   taxpayer: unknown = null;
+  /** Error que tira el padrón en vez de responder (ARCA caída). */
+  taxpayerError: Error | null = null;
+  readonly taxpayerCalls: string[] = [];
 
   /** Encola resultados para los próximos `createVoucher` (default: aprobar). */
   willRespond(...outcomes: Outcome[]): this {
@@ -46,7 +49,9 @@ export class FakeArcaGateway implements ArcaGateway {
     return Promise.resolve([]);
   }
 
-  getTaxpayerDetails(): Promise<unknown> {
+  getTaxpayerDetails(_creds: ArcaCredentials, cuit: string): Promise<unknown> {
+    this.taxpayerCalls.push(cuit);
+    if (this.taxpayerError) return Promise.reject(this.taxpayerError);
     return Promise.resolve(this.taxpayer);
   }
 

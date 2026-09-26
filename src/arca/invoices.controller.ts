@@ -33,6 +33,11 @@ import {
 import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
+import {
+  InvoiceReceiverDto,
+  InvoiceReceiversQueryDto,
+} from './dto/invoice-receiver.dto';
+import { TaxpayerDto } from './dto/taxpayer.dto';
 import { InvoicePdfService } from './invoice-pdf.service';
 import { InvoicesService } from './invoices.service';
 
@@ -52,9 +57,10 @@ export class InvoicesController {
   @ApiOperation({
     summary: 'Emitir (o reintentar) la factura de una estadía cobrada',
     description:
-      'Emite a consumidor final, o Factura A con `receiverCuit` si el emisor ' +
-      'es Responsable Inscripto. Los problemas de ARCA (caído, rechazo, ' +
-      'certificado vencido, receptor que no puede recibir A) NO son errores HTTP: vuelven en ' +
+      'Emite a consumidor final o, con `receiverCuit`, identificada con ese ' +
+      'CUIT: la letra la decide el padrón (A si el emisor es RI y el receptor ' +
+      'RI o monotributista). Los problemas de ARCA (caído, rechazo, ' +
+      'certificado vencido, CUIT sin datos en el padrón) NO son errores HTTP: vuelven en ' +
       '`status` y `errorCode` de la factura; el CUIT mal formado sí es 422 ' +
       'ARCA_CUIT_INVALID. Conflictos: INVOICE_ALREADY_ISSUED, ' +
       'INVOICE_IN_PROGRESS, INVOICE_NOT_INVOICEABLE, ARCA_NOT_LINKED.',
@@ -71,6 +77,35 @@ export class InvoicesController {
       user?.id,
       dto?.receiverCuit,
     );
+  }
+
+  @Get('arca/taxpayers/:cuit')
+  @ApiOperation({
+    summary: 'Qué factura sale con este CUIT (padrón de ARCA)',
+    description:
+      'Consulta la constancia de inscripción (caché de 30 días) y devuelve la ' +
+      'letra y la razón social, para mostrarlas antes de emitir. ' +
+      '`identified: false` = ARCA no tiene datos: la factura va a consumidor ' +
+      'final. 422 ARCA_CUIT_INVALID, 409 ARCA_NOT_LINKED, 503 ARCA_UNAVAILABLE, ' +
+      '422 ARCA_CERT_NOT_AUTHORIZED (falta asociar la constancia al certificado).',
+  })
+  @ApiOkResponse({ type: TaxpayerDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  @ApiParam({ name: 'cuit', description: 'Con o sin guiones' })
+  async taxpayer(@Param('cuit') cuit: string): Promise<TaxpayerDto> {
+    return this.invoicesService.lookupTaxpayer(cuit);
+  }
+
+  @Get('invoice-receivers')
+  @ApiOperation({
+    summary: 'CUIT ya facturados en la playa (sugerencias del cobro)',
+  })
+  @ApiOkResponse({ type: InvoiceReceiverDto, isArray: true })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async receivers(
+    @Query() query: InvoiceReceiversQueryDto,
+  ): Promise<InvoiceReceiverDto[]> {
+    return this.invoicesService.receiverSuggestions(query.q, query.limit);
   }
 
   @Post('invoices/batch')

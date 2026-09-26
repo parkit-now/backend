@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument -- el Prisma en memoria
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access -- el Prisma en memoria
    guarda filas sin tipar y los tests leen campos sueltos. */
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
@@ -7,7 +7,12 @@ import type { TenantContextService } from '../database/tenant-context.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
+import { ArcaUnavailableError } from './arca.gateway';
 import { FakeArcaGateway } from './fake-arca.gateway';
+import {
+  InvoiceReceiversService,
+  PADRON_CACHE_TTL_MS,
+} from './invoice-receivers.service';
 import { InvoicesService, STALE_ISSUING_MS } from './invoices.service';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
@@ -58,7 +63,39 @@ function codeOf(error: unknown): string | undefined {
 }
 
 /** Prisma en memoria: sólo lo que la emisión toca. */
-function memoryPrisma(state: { invoices: Row[]; account: Row | null }) {
+function memoryPrisma(state: {
+  invoices: Row[];
+  account: Row | null;
+  receivers: Row[];
+}) {
+  const byKey = (where: Row) =>
+    state.receivers.find(
+      (r) =>
+        r.tenantId === where.tenantId_cuit.tenantId &&
+        r.cuit === where.tenantId_cuit.cuit,
+    );
+  const invoiceReceiver = {
+    findUnique: ({ where }: Row) => Promise.resolve(byKey(where) ?? null),
+    upsert: ({ where, create, update }: Row) => {
+      const row = byKey(where);
+      if (row) applyData(row, update);
+      else state.receivers.push({ ...create });
+      return Promise.resolve(row ?? create);
+    },
+    findMany: ({ where, take }: Row) =>
+      Promise.resolve(
+        state.receivers
+          .filter(
+            (r) =>
+              r.tenantId === where.tenantId &&
+              r.lastUsedAt &&
+              (!where.cuit ||
+                String(r.cuit).startsWith(String(where.cuit.startsWith))),
+          )
+          .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+          .slice(0, take),
+      ),
+  };
   const invoice = {
     findFirst: ({ where }: Row) =>
       Promise.resolve(state.invoices.find((r) => matches(r, where)) ?? null),
@@ -95,6 +132,7 @@ function memoryPrisma(state: { invoices: Row[]; account: Row | null }) {
   };
   const prisma = {
     invoice,
+    invoiceReceiver,
     arcaAccount: { findUnique: () => Promise.resolve(state.account) },
     arcaRequest: { create: jest.fn().mockResolvedValue(undefined) },
     paymentMethod: {
@@ -113,9 +151,12 @@ function memoryPrisma(state: { invoices: Row[]; account: Row | null }) {
   return prisma;
 }
 
-function setup(condicionIva = 'responsable_inscripto') {
+function setup(
+  condicionIva = 'responsable_inscripto',
+  environment: 'homologacion' | 'produccion' = 'homologacion',
+) {
   const env: Record<string, string> = {
-    ARCA_ENV: 'homologacion',
+    ARCA_ENV: environment,
     ARCA_KEY_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   };
   const config = new ArcaConfigService({
@@ -128,9 +169,10 @@ function setup(condicionIva = 'responsable_inscripto') {
 
   const state = {
     invoices: [] as Row[],
+    receivers: [] as Row[],
     account: {
       tenantId: TENANT,
-      environment: 'homologacion',
+      environment,
       status: 'linked',
       cuit: '20447275865',
       ptoVta: 1,
@@ -157,6 +199,7 @@ function setup(condicionIva = 'responsable_inscripto') {
     tenantContext,
     config,
     crypto,
+    new InvoiceReceiversService(prisma as unknown as PrismaService),
     gateway,
   );
   return { service, state, gateway, prisma };
@@ -263,7 +306,21 @@ describe('InvoicesService', () => {
       });
     });
 
-    it('receptor exento → error INVOICE_RECEIVER_NOT_A y no se manda nada', async () => {
+    it('receptor monotributista → A con condición 6', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      gateway.taxpayer = {
+        datosGenerales: { apellido: 'PEREZ', nombre: 'JUAN' },
+        datosMonotributo: { categoriaMonotributo: {} },
+      };
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(summary.cbteTipo).toBe(1);
+      expect(gateway.createCalls[0].CondicionIVAReceptorId).toBe(6);
+    });
+
+    it('receptor exento → B identificada con el CUIT y condición 4', async () => {
       const { service, state, gateway } = setup();
       pendingInvoice(state);
       gateway.taxpayer = {
@@ -273,9 +330,120 @@ describe('InvoicesService', () => {
 
       const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
 
+      expect(summary.status).toBe('issued');
+      expect(summary.cbteTipo).toBe(6);
+      expect(summary.receptorNombre).toBe('FUNDACION');
+      expect(gateway.createCalls[0]).toMatchObject({
+        CbteTipo: 6,
+        DocTipo: 80,
+        DocNro: Number(RECEIVER),
+        CondicionIVAReceptorId: 4,
+      });
+    });
+
+    it('emisor monotributista con CUIT → C identificada, sin IVA', async () => {
+      const { service, state, gateway } = setup('monotributo');
+      pendingInvoice(state);
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'EMPRESA CLIENTE SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 30 } },
+      };
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(summary.cbteTipo).toBe(11);
+      expect(gateway.createCalls[0]).toMatchObject({
+        CbteTipo: 11,
+        DocTipo: 80,
+        DocNro: Number(RECEIVER),
+        CondicionIVAReceptorId: 1,
+        ImpIVA: 0,
+      });
+      expect(gateway.createCalls[0].Iva).toBeUndefined();
+    });
+
+    it('producción sin datos en el padrón → error INVOICE_RECEIVER_NOT_FOUND y no se manda nada', async () => {
+      const { service, state, gateway } = setup(
+        'responsable_inscripto',
+        'produccion',
+      );
+      pendingInvoice(state);
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
       expect(summary.status).toBe('error');
-      expect(summary.errorCode).toBe('INVOICE_RECEIVER_NOT_A');
+      expect(summary.errorCode).toBe('INVOICE_RECEIVER_NOT_FOUND');
       expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('padrón caído → error ARCA_UNAVAILABLE sin numerar', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      gateway.taxpayerError = new ArcaUnavailableError('timeout');
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(summary.errorCode).toBe('ARCA_UNAVAILABLE');
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('usa la caché del padrón y marca el CUIT como usado al emitir', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      state.receivers.push({
+        tenantId: TENANT,
+        cuit: RECEIVER,
+        razonSocial: 'EN CACHE SA',
+        condicionIvaReceptorId: 1,
+        fetchedAt: new Date(),
+        lastUsedAt: null,
+      });
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(summary.receptorNombre).toBe('EN CACHE SA');
+      expect(gateway.taxpayerCalls).toHaveLength(0);
+      expect(state.receivers[0].lastUsedAt).toBeInstanceOf(Date);
+    });
+
+    it('caché vencida → vuelve a consultar el padrón', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      state.receivers.push({
+        tenantId: TENANT,
+        cuit: RECEIVER,
+        razonSocial: 'VIEJA SA',
+        condicionIvaReceptorId: 1,
+        fetchedAt: new Date(Date.now() - PADRON_CACHE_TTL_MS - 1000),
+        lastUsedAt: null,
+      });
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'NUEVA SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 32 } },
+      };
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(gateway.taxpayerCalls).toEqual([RECEIVER]);
+      expect(summary.receptorNombre).toBe('NUEVA SA');
+      expect(state.receivers[0]).toMatchObject({
+        razonSocial: 'NUEVA SA',
+        condicionIvaReceptorId: 4,
+      });
+    });
+
+    it('con CUIT no aplica el tope de consumidor final', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state, { impTotal: 12_000_000 });
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'EMPRESA CLIENTE SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 30 } },
+      };
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(summary.status).toBe('issued');
+      expect(summary.cbteTipo).toBe(1);
     });
 
     it('reintentar sin CUIT después de una A fallida → B a consumidor final', async () => {
@@ -316,6 +484,23 @@ describe('InvoicesService', () => {
       expect(state.invoices[0].errorCode).toBe('ARCA_CUIT_INVALID');
     });
 
+    it('emisor monotributista: al cobrar con CUIT también lo guarda', async () => {
+      const { service, state, prisma } = setup('monotributo');
+
+      await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+        receiverCuit: RECEIVER,
+      });
+
+      expect(state.invoices[0]).toMatchObject({
+        receptorDocTipo: 80,
+        receptorDocNro: RECEIVER,
+      });
+    });
+
     it('al cobrar con CUIT válido guarda el receptor para la emisión', async () => {
       const { service, state, prisma } = setup();
 
@@ -332,6 +517,137 @@ describe('InvoicesService', () => {
         receptorDocTipo: 80,
         receptorDocNro: RECEIVER,
       });
+    });
+  });
+
+  describe('lookupTaxpayer', () => {
+    const RECEIVER = '30712345671';
+
+    it('RI + receptor RI → A con razón social y condición', async () => {
+      const { service, gateway } = setup();
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'EMPRESA CLIENTE SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 30 } },
+      };
+
+      expect(await service.lookupTaxpayer('30-71234567-1')).toEqual({
+        cuit: RECEIVER,
+        identified: true,
+        letter: 'A',
+        razonSocial: 'EMPRESA CLIENTE SA',
+        condicionIvaReceptorId: 1,
+        condicionIva: 'IVA Responsable Inscripto',
+        assumed: false,
+      });
+    });
+
+    it('RI + exento → B identificada', async () => {
+      const { service, gateway } = setup();
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'FUNDACION' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 32 } },
+      };
+
+      expect(await service.lookupTaxpayer(RECEIVER)).toMatchObject({
+        identified: true,
+        letter: 'B',
+        condicionIvaReceptorId: 4,
+      });
+    });
+
+    it('emisor monotributista → siempre C', async () => {
+      const { service, gateway } = setup('monotributo');
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'EMPRESA CLIENTE SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 30 } },
+      };
+
+      expect(await service.lookupTaxpayer(RECEIVER)).toMatchObject({
+        identified: true,
+        letter: 'C',
+      });
+    });
+
+    it('producción sin datos → no identificado, sale a consumidor final', async () => {
+      const { service } = setup('responsable_inscripto', 'produccion');
+
+      expect(await service.lookupTaxpayer(RECEIVER)).toMatchObject({
+        identified: false,
+        letter: 'B',
+        razonSocial: null,
+        condicionIvaReceptorId: null,
+        assumed: false,
+      });
+    });
+
+    it('homologación sin datos → se asume RI (A) y lo avisa', async () => {
+      const { service } = setup();
+
+      expect(await service.lookupTaxpayer(RECEIVER)).toMatchObject({
+        identified: true,
+        letter: 'A',
+        assumed: true,
+      });
+    });
+
+    it('la segunda consulta sale de la caché', async () => {
+      const { service, gateway } = setup();
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'EMPRESA CLIENTE SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 30 } },
+      };
+
+      await service.lookupTaxpayer(RECEIVER);
+      await service.lookupTaxpayer(RECEIVER);
+
+      expect(gateway.taxpayerCalls).toHaveLength(1);
+    });
+
+    it('CUIT inválido → 422 ARCA_CUIT_INVALID', async () => {
+      const { service } = setup();
+      expect(
+        codeOf(await rejection(service.lookupTaxpayer('30712345670'))),
+      ).toBe('ARCA_CUIT_INVALID');
+    });
+
+    it('sin ARCA vinculada → 409 ARCA_NOT_LINKED', async () => {
+      const { service, state } = setup();
+      state.account = null;
+      expect(codeOf(await rejection(service.lookupTaxpayer(RECEIVER)))).toBe(
+        'ARCA_NOT_LINKED',
+      );
+    });
+
+    it('ARCA caída → 503 ARCA_UNAVAILABLE', async () => {
+      const { service, gateway } = setup();
+      gateway.taxpayerError = new ArcaUnavailableError('timeout');
+      const error = await rejection(service.lookupTaxpayer(RECEIVER));
+      expect(codeOf(error)).toBe('ARCA_UNAVAILABLE');
+      expect((error as FormattedException).getStatus()).toBe(503);
+    });
+  });
+
+  describe('receiverSuggestions', () => {
+    it('sólo los usados, del más reciente al más viejo, filtrando por CUIT', async () => {
+      const { service, state } = setup();
+      const at = (m: number) => new Date(Date.UTC(2026, 8, 1, 0, m));
+      state.receivers.push(
+        { tenantId: TENANT, cuit: '30712345671', lastUsedAt: at(1) },
+        { tenantId: TENANT, cuit: '20111111112', lastUsedAt: at(3) },
+        { tenantId: TENANT, cuit: '30999999999', lastUsedAt: null },
+        { tenantId: 'otra', cuit: '30888888888', lastUsedAt: at(5) },
+        { tenantId: TENANT, cuit: '30222222222', lastUsedAt: at(2) },
+      );
+
+      const all = await service.receiverSuggestions(undefined, 10);
+      expect(all.map((r) => r.cuit)).toEqual([
+        '20111111112',
+        '30222222222',
+        '30712345671',
+      ]);
+
+      const filtered = await service.receiverSuggestions('30-7', 10);
+      expect(filtered.map((r) => r.cuit)).toEqual(['30712345671']);
     });
   });
 

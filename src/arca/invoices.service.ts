@@ -14,7 +14,6 @@ import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
 import { isValidCuit, normalizeCuit } from './arca-cuit';
 import { fromArcaDate, toArcaDate } from './arca-dates';
-import { parseTaxpayer } from './arca-padron';
 import {
   ARCA_GATEWAY,
   type ArcaCredentials,
@@ -26,6 +25,8 @@ import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceDto } from './dto/invoice.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
+import type { InvoiceReceiverDto } from './dto/invoice-receiver.dto';
+import type { TaxpayerDto } from './dto/taxpayer.dto';
 import type {
   InvoiceBatchItemDto,
   InvoiceBatchResponseDto,
@@ -34,8 +35,13 @@ import {
   CONSUMIDOR_FINAL_ID_THRESHOLD,
   resolveInitialInvoice,
 } from './invoice-policy';
-import { resolveReceiver } from './invoice-receiver';
-import { DOC_TIPO_CUIT, resolveVoucher } from './resolve-voucher';
+import {
+  condicionIvaLabel,
+  resolveReceiver,
+  type PadronReceiver,
+} from './invoice-receiver';
+import { InvoiceReceiversService } from './invoice-receivers.service';
+import { DOC_TIPO_CUIT, letterFor, resolveVoucher } from './resolve-voucher';
 
 /**
  * Un `issuing` más viejo que esto se considera huérfano: la emisión que lo
@@ -53,9 +59,8 @@ const DEFAULT_MESSAGES: Partial<Record<ErrorCode, string>> = {
     'El monto supera el tope de consumidor final: hay que identificar al receptor.',
   ARCA_CERT_EXPIRED: 'El certificado de ARCA venció: hay que renovarlo.',
   ARCA_CUIT_INVALID: 'El CUIT del receptor no es válido.',
-  INVOICE_RECEIVER_NOT_FOUND: 'ARCA no tiene datos de ese CUIT.',
-  INVOICE_RECEIVER_NOT_A:
-    'Ese CUIT no puede recibir Factura A: no es Responsable Inscripto ni Monotributista.',
+  INVOICE_RECEIVER_NOT_FOUND:
+    'ARCA no tiene datos de ese CUIT: emitila a consumidor final.',
 };
 
 /** Campos del receptor que se guardan en la factura antes de emitir. */
@@ -125,6 +130,7 @@ export class InvoicesService {
     private readonly tenantContext: TenantContextService,
     private readonly config: ArcaConfigService,
     private readonly crypto: ArcaCryptoService,
+    private readonly receivers: InvoiceReceiversService,
     @Inject(ARCA_GATEWAY) private readonly gateway: ArcaGateway,
   ) {}
 
@@ -141,9 +147,9 @@ export class InvoicesService {
       readonly total: number;
       readonly paymentMethodIds: readonly (string | null | undefined)[];
       /**
-       * CUIT que dio el cliente para una Factura A, tal cual lo mandó el
-       * cobro. Un CUIT inválido NO hace fallar el cierre (puede venir de la
-       * cola offline): la factura queda pendiente con el motivo.
+       * CUIT que dio el cliente, tal cual lo mandó el cobro. Un CUIT inválido
+       * NO hace fallar el cierre (puede venir de la cola offline): la factura
+       * queda pendiente con el motivo.
        */
       readonly receiverCuit?: string | null;
     },
@@ -186,12 +192,11 @@ export class InvoicesService {
       ),
     });
 
-    // La A sólo existe para un emisor RI: a un monotributista el CUIT no le
-    // cambia nada (emite C igual), así que ni se guarda.
-    const receiverCuit =
-      input.receiverCuit && account.condicionIva === 'responsable_inscripto'
-        ? normalizeCuit(input.receiverCuit)
-        : null;
+    // Con cualquier emisor: a un monotributista el CUIT no le cambia la letra
+    // (C), pero la factura sale identificada con él.
+    const receiverCuit = input.receiverCuit
+      ? normalizeCuit(input.receiverCuit)
+      : null;
     const receiverInvalid = receiverCuit !== null && !isValidCuit(receiverCuit);
 
     let status: Invoice['status'] = 'pending';
@@ -248,8 +253,9 @@ export class InvoicesService {
 
   /**
    * `POST /tenants/:tenantId/entries/:entryId/invoice`: emite o reintenta.
-   * Con `receiverCuit` (emisor RI) sale una A; sin él, B/C a consumidor
-   * final, aunque un intento anterior haya sido con CUIT.
+   * Con `receiverCuit` sale identificada con ese CUIT (la letra la decide el
+   * padrón); sin él, B/C a consumidor final, aunque un intento anterior haya
+   * sido con CUIT.
    */
   async issueForEntry(
     entryId: string,
@@ -381,6 +387,92 @@ export class InvoicesService {
       }
     }
     return { results };
+  }
+
+  /**
+   * `GET /tenants/:tenantId/arca/taxpayers/:cuit`: qué factura sale con este
+   * CUIT, para mostrárselo al operario antes de emitir. Usa (y llena) la
+   * misma caché que la emisión, así la letra que ve es la que sale.
+   */
+  async lookupTaxpayer(rawCuit: string): Promise<TaxpayerDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const instance = '/tenants/:tenantId/arca/taxpayers/:cuit';
+    const cuit = normalizeCuit(rawCuit);
+    if (!isValidCuit(cuit)) {
+      throw new FormattedException(
+        'Unprocessable Entity',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'The CUIT is not valid.',
+        instance,
+        ErrorCodes.ARCA_CUIT_INVALID,
+      );
+    }
+    const account = this.config.enabled
+      ? await this.linkedAccount(tenantId)
+      : null;
+    if (!account) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'This entity has no ARCA account linked.',
+        instance,
+        ErrorCodes.ARCA_NOT_LINKED,
+      );
+    }
+
+    let padron: PadronReceiver;
+    try {
+      padron = await this.receivers.lookup(tenantId, cuit, () =>
+        this.audited(
+          { id: null, tenantId },
+          'getTaxpayerDetails',
+          { cuit },
+          () =>
+            this.gateway.getTaxpayerDetails(this.credentials(account), cuit),
+        ),
+      );
+    } catch (error) {
+      const code = arcaFailureCode(error);
+      throw new FormattedException(
+        code === ErrorCodes.ARCA_UNAVAILABLE
+          ? 'Service Unavailable'
+          : 'Unprocessable Entity',
+        code === ErrorCodes.ARCA_UNAVAILABLE
+          ? HttpStatus.SERVICE_UNAVAILABLE
+          : HttpStatus.UNPROCESSABLE_ENTITY,
+        error instanceof Error ? error.message : String(error),
+        instance,
+        code,
+      );
+    }
+
+    const resolution = resolveReceiver({
+      cuit,
+      padron,
+      environment: account.environment,
+    });
+    const condicion = resolution.ok ? resolution.condicionIvaReceptorId : null;
+    return {
+      cuit,
+      identified: resolution.ok,
+      letter: letterFor(account.condicionIva, condicion),
+      razonSocial: padron.razonSocial,
+      condicionIvaReceptorId: condicion,
+      condicionIva: condicion === null ? null : condicionIvaLabel(condicion),
+      assumed: resolution.ok && resolution.assumed,
+    };
+  }
+
+  /** `GET /tenants/:tenantId/invoice-receivers`: CUIT ya facturados. */
+  async receiverSuggestions(
+    q: string | undefined,
+    limit: number,
+  ): Promise<InvoiceReceiverDto[]> {
+    return this.receivers.suggestions(
+      this.tenantContext.getTenantIdOrThrow(),
+      q,
+      limit,
+    );
   }
 
   async pullChanges(
@@ -519,8 +611,12 @@ export class InvoicesService {
       return toSummary(current);
     }
 
+    // El tope es de consumidor final: con CUIT el receptor ya está identificado.
     const total = Number(current.impTotal);
-    if (total >= CONSUMIDOR_FINAL_ID_THRESHOLD) {
+    if (
+      total >= CONSUMIDOR_FINAL_ID_THRESHOLD &&
+      current.receptorDocTipo !== DOC_TIPO_CUIT
+    ) {
       const updated = await this.markPending(
         current,
         ErrorCodes.INVOICE_RECEIVER_REQUIRED,
@@ -713,6 +809,9 @@ export class InvoicesService {
                 issuedAt: new Date(),
               },
             });
+            if (receiver) {
+              await this.receivers.markUsed(invoice.tenantId, receiver.cuit);
+            }
             return;
           }
 
@@ -743,20 +842,15 @@ export class InvoicesService {
         return;
       }
       this.logger.warn(`Factura ${invoice.id} no emitida: ${message}`);
-      // Un certificado sin el servicio asociado no se arregla reintentando:
-      // el dueño tiene que ir a ARCA, y el código se lo dice.
-      const code =
-        error instanceof ArcaAuthError && error.kind === 'not_authorized'
-          ? ErrorCodes.ARCA_CERT_NOT_AUTHORIZED
-          : ErrorCodes.ARCA_UNAVAILABLE;
-      await this.markError(invoice.id, code, message);
+      await this.markError(invoice.id, arcaFailureCode(error), message);
     }
   }
 
   /**
-   * El receptor de una Factura A, consultado en el padrón. `null` si la
-   * factura es a consumidor final; `'failed'` si no se puede emitir (la
-   * factura ya quedó en `error` con el motivo).
+   * El receptor identificado con CUIT, con la condición del padrón (de la
+   * caché si el operario ya lo consultó al tipearlo). `null` si la factura es
+   * a consumidor final; `'failed'` si no se puede emitir (la factura ya quedó
+   * en `error` con el motivo).
    */
   private async resolveReceiverFor(
     invoice: Invoice,
@@ -768,27 +862,19 @@ export class InvoicesService {
     | 'failed'
   > {
     const cuit = invoice.receptorDocNro;
-    if (
-      account.condicionIva !== 'responsable_inscripto' ||
-      invoice.receptorDocTipo !== DOC_TIPO_CUIT ||
-      !cuit
-    ) {
-      return null;
-    }
+    if (invoice.receptorDocTipo !== DOC_TIPO_CUIT || !cuit) return null;
 
-    let raw: unknown;
+    let padron: PadronReceiver;
     try {
-      raw = await this.audited(invoice, 'getTaxpayerDetails', { cuit }, () =>
-        this.gateway.getTaxpayerDetails(creds, cuit),
+      padron = await this.receivers.lookup(invoice.tenantId, cuit, () =>
+        this.audited(invoice, 'getTaxpayerDetails', { cuit }, () =>
+          this.gateway.getTaxpayerDetails(creds, cuit),
+        ),
       );
     } catch (error) {
-      const code =
-        error instanceof ArcaAuthError && error.kind === 'not_authorized'
-          ? ErrorCodes.ARCA_CERT_NOT_AUTHORIZED
-          : ErrorCodes.ARCA_UNAVAILABLE;
       await this.markError(
         invoice.id,
-        code,
+        arcaFailureCode(error),
         error instanceof Error ? error.message : String(error),
       );
       return 'failed';
@@ -796,7 +882,7 @@ export class InvoicesService {
 
     const resolution = resolveReceiver({
       cuit,
-      fiscal: parseTaxpayer(raw),
+      padron,
       environment: account.environment,
     });
     if (!resolution.ok) {
@@ -915,7 +1001,7 @@ export class InvoicesService {
 
   /** Llama a ARCA y deja el request, la respuesta y la duración en `arca_requests`. */
   private async audited<T>(
-    invoice: Pick<Invoice, 'id' | 'tenantId'>,
+    invoice: { readonly id: string | null; readonly tenantId: string },
     operation: string,
     request: unknown,
     call: () => Promise<T>,
@@ -1072,6 +1158,16 @@ export class InvoicesService {
   private instance(entryId: string): string {
     return `/tenants/:tenantId/entries/${entryId}/invoice`;
   }
+}
+
+/**
+ * Código de una falla de ARCA: un certificado sin el servicio asociado no se
+ * arregla reintentando (el dueño tiene que ir a ARCA); el resto, sí.
+ */
+function arcaFailureCode(error: unknown): ErrorCode {
+  return error instanceof ArcaAuthError && error.kind === 'not_authorized'
+    ? ErrorCodes.ARCA_CERT_NOT_AUTHORIZED
+    : ErrorCodes.ARCA_UNAVAILABLE;
 }
 
 /**

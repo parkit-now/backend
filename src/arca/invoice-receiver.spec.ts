@@ -1,69 +1,89 @@
-import { resolveReceiver } from './invoice-receiver';
+import {
+  condicionIvaLabel,
+  condicionIvaReceptorFor,
+  receivesInvoiceA,
+  resolveReceiver,
+} from './invoice-receiver';
 
 const CUIT = '30712345671';
 
+describe('condicionIvaReceptorFor (padrón → CondicionIVAReceptorId)', () => {
+  it('RI → 1, monotributo → 6, exento → 4', () => {
+    expect(condicionIvaReceptorFor('responsable_inscripto')).toBe(1);
+    expect(condicionIvaReceptorFor('monotributo')).toBe(6);
+    expect(condicionIvaReceptorFor('exento')).toBe(4);
+  });
+
+  it('sin IVA ni monotributo → Consumidor Final (5)', () => {
+    expect(condicionIvaReceptorFor(null)).toBe(5);
+  });
+});
+
+describe('receivesInvoiceA', () => {
+  it('1, 6, 13 y 16 reciben A; el resto no', () => {
+    expect([1, 6, 13, 16].every(receivesInvoiceA)).toBe(true);
+    expect([4, 5, 7, 8, 9, 10, 15].some(receivesInvoiceA)).toBe(false);
+  });
+});
+
+describe('condicionIvaLabel', () => {
+  it('usa la descripción de ARCA', () => {
+    expect(condicionIvaLabel(1)).toBe('IVA Responsable Inscripto');
+    expect(condicionIvaLabel(4)).toBe('IVA Sujeto Exento');
+    expect(condicionIvaLabel(99)).toBe('Condición 99');
+  });
+});
+
 describe('resolveReceiver', () => {
-  it('Responsable Inscripto → condición 1 con su razón social', () => {
+  it('con padrón → su condición y razón social', () => {
     expect(
       resolveReceiver({
         cuit: CUIT,
         environment: 'produccion',
-        fiscal: {
-          razonSocial: 'Empresa SA',
-          condicionIva: 'responsable_inscripto',
-          domicilioFiscal: null,
-        },
+        padron: { razonSocial: 'Empresa SA', condicionIvaReceptorId: 4 },
       }),
-    ).toEqual({ ok: true, condicionIvaReceptorId: 1, nombre: 'Empresa SA' });
-  });
-
-  it('Monotributista → condición 6', () => {
-    const r = resolveReceiver({
-      cuit: CUIT,
-      environment: 'produccion',
-      fiscal: {
-        razonSocial: 'Juan Pérez',
-        condicionIva: 'monotributo',
-        domicilioFiscal: null,
-      },
-    });
-    expect(r).toEqual({
+    ).toEqual({
       ok: true,
-      condicionIvaReceptorId: 6,
-      nombre: 'Juan Pérez',
+      condicionIvaReceptorId: 4,
+      nombre: 'Empresa SA',
+      assumed: false,
     });
   });
 
-  it('exento no puede recibir A', () => {
+  it('padrón sin razón social → el CUIT con guiones como nombre', () => {
     const r = resolveReceiver({
       cuit: CUIT,
       environment: 'produccion',
-      fiscal: {
-        razonSocial: 'X',
-        condicionIva: 'exento',
-        domicilioFiscal: null,
-      },
+      padron: { razonSocial: null, condicionIvaReceptorId: 1 },
     });
-    expect(r).toEqual({ ok: false, code: 'INVOICE_RECEIVER_NOT_A' });
+    expect(r).toMatchObject({ ok: true, nombre: 'CUIT 30-71234567-1' });
   });
 
-  it('sin padrón en producción → no encontrado', () => {
+  it('sin datos en producción → no encontrado', () => {
     expect(
-      resolveReceiver({ cuit: CUIT, environment: 'produccion', fiscal: null }),
+      resolveReceiver({ cuit: CUIT, environment: 'produccion', padron: null }),
+    ).toEqual({ ok: false, code: 'INVOICE_RECEIVER_NOT_FOUND' });
+    expect(
+      resolveReceiver({
+        cuit: CUIT,
+        environment: 'produccion',
+        padron: { razonSocial: null, condicionIvaReceptorId: null },
+      }),
     ).toEqual({ ok: false, code: 'INVOICE_RECEIVER_NOT_FOUND' });
   });
 
-  it('sin padrón en homologación → se prueba como RI', () => {
+  it('sin datos en homologación → se asume Responsable Inscripto', () => {
     expect(
       resolveReceiver({
         cuit: CUIT,
         environment: 'homologacion',
-        fiscal: null,
+        padron: null,
       }),
     ).toEqual({
       ok: true,
       condicionIvaReceptorId: 1,
       nombre: 'CUIT 30-71234567-1',
+      assumed: true,
     });
   });
 });
