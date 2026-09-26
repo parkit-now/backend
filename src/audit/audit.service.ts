@@ -51,6 +51,10 @@ export const AuditActions = {
   // Venció el certificado sin renovar: la playa dejó de facturar. `warn`,
   // porque no se recupera sola.
   ARCA_CERTIFICATE_EXPIRED: 'arca_account.certificate_expired',
+  // Se cobró una estadía que tenía que facturarse pero el certificado de ARCA
+  // estaba vencido: la factura quedó pendiente. `warn`: es plata cobrada sin
+  // comprobante, y el dueño tiene que renovar el certificado.
+  INVOICE_CERT_EXPIRED: 'invoice.cert_expired',
   // Renovación exitosa del par de tokens (`MpTokenService`). Es `info`: no hay
   // nada que hacer, pero deja el rastro de cuándo rotaron los tokens, que es lo
   // primero que se mira cuando una playa deja de cobrar.

@@ -77,6 +77,8 @@ export interface CreatedInvoice {
   readonly invoiceId: string;
   /** `true` si hay que emitirla apenas se commitee el cierre. */
   readonly issueNow: boolean;
+  /** Por qué quedó pendiente sin intentar emitir (p. ej. certificado vencido). */
+  readonly errorCode: ErrorCode | null;
 }
 
 /**
@@ -211,7 +213,7 @@ export class InvoicesService {
       },
       select: { id: true },
     });
-    return { invoiceId: invoice.id, issueNow };
+    return { invoiceId: invoice.id, issueNow, errorCode };
   }
 
   /**
