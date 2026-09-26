@@ -46,6 +46,19 @@ export class CloseEntryDto {
   @Type(() => PaymentLineDto)
   payments?: PaymentLineDto[];
 
+  @ApiPropertyOptional({
+    description:
+      'CUIT del cliente para emitir Factura A (emisor Responsable Inscripto). ' +
+      'Con o sin guiones. Un CUIT inválido no hace fallar el cierre: la factura ' +
+      'queda pendiente con ARCA_CUIT_INVALID.',
+    example: '30-71234567-1',
+    maxLength: 13,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(13)
+  invoiceReceiverCuit?: string;
+
   @ApiPropertyOptional({ description: 'Cash session ID.', format: 'uuid' })
   @IsOptional()
   @IsUUID()

@@ -21,6 +21,8 @@ export class FakeArcaGateway implements ArcaGateway {
   readonly createCalls: ArcaVoucherRequest[] = [];
   private outcomes: Outcome[] = [];
   private caeCounter = 86380920900000;
+  /** Lo que devuelve el padrón (`null` = sin datos, como en homologación). */
+  taxpayer: unknown = null;
 
   /** Encola resultados para los próximos `createVoucher` (default: aprobar). */
   willRespond(...outcomes: Outcome[]): this {
@@ -45,7 +47,7 @@ export class FakeArcaGateway implements ArcaGateway {
   }
 
   getTaxpayerDetails(): Promise<unknown> {
-    return Promise.resolve(null);
+    return Promise.resolve(this.taxpayer);
   }
 
   getLastVoucher(

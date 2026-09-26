@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -22,6 +23,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
+import { IssueInvoiceDto } from './dto/issue-invoice.dto';
 import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
@@ -40,9 +42,11 @@ export class InvoicesController {
   @ApiOperation({
     summary: 'Emitir (o reintentar) la factura de una estadía cobrada',
     description:
-      'Emite a consumidor final. Los problemas de ARCA (caído, rechazo, ' +
-      'certificado vencido) NO son errores HTTP: vuelven en `status` y ' +
-      '`errorCode` de la factura. Conflictos: INVOICE_ALREADY_ISSUED, ' +
+      'Emite a consumidor final, o Factura A con `receiverCuit` si el emisor ' +
+      'es Responsable Inscripto. Los problemas de ARCA (caído, rechazo, ' +
+      'certificado vencido, receptor que no puede recibir A) NO son errores HTTP: vuelven en ' +
+      '`status` y `errorCode` de la factura; el CUIT mal formado sí es 422 ' +
+      'ARCA_CUIT_INVALID. Conflictos: INVOICE_ALREADY_ISSUED, ' +
       'INVOICE_IN_PROGRESS, INVOICE_NOT_INVOICEABLE, ARCA_NOT_LINKED.',
   })
   @ApiOkResponse({ type: InvoiceSummaryDto })
@@ -50,8 +54,13 @@ export class InvoicesController {
   async issue(
     @Param('entryId', ParseUUIDPipe) entryId: string,
     @CurrentUser() user: User,
+    @Body() dto: IssueInvoiceDto,
   ): Promise<InvoiceSummaryDto> {
-    return this.invoicesService.issueForEntry(entryId, user?.id);
+    return this.invoicesService.issueForEntry(
+      entryId,
+      user?.id,
+      dto?.receiverCuit,
+    );
   }
 
   @Get('invoices/changes')

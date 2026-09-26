@@ -21,9 +21,6 @@ export class InvoiceDto extends InvoiceSummaryDto {
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date' })
   cbteFch: string | null;
 
-  @ApiPropertyOptional({ nullable: true, type: String })
-  receptorNombre: string | null;
-
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   issuedAt: Date | null;
 

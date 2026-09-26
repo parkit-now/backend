@@ -275,6 +275,10 @@ export const ErrorCodes = {
   INVOICE_RECEIVER_REQUIRED: 'INVOICE_RECEIVER_REQUIRED',
   // La estadia no se puede facturar: sigue abierta o se cobro $0.
   INVOICE_NOT_INVOICEABLE: 'INVOICE_NOT_INVOICEABLE',
+  // Factura A: el padron no tiene el CUIT del receptor.
+  INVOICE_RECEIVER_NOT_FOUND: 'INVOICE_RECEIVER_NOT_FOUND',
+  // Factura A: el receptor no es Responsable Inscripto ni Monotributista.
+  INVOICE_RECEIVER_NOT_A: 'INVOICE_RECEIVER_NOT_A',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',

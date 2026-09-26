@@ -235,6 +235,106 @@ describe('InvoicesService', () => {
     });
   });
 
+  describe('Factura A', () => {
+    const RECEIVER = '30712345671';
+
+    it('RI con CUIT del cliente → A con DocTipo 80 y la razón social', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'EMPRESA CLIENTE SA' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 30 } },
+      };
+
+      const summary = await service.issueForEntry(
+        ENTRY,
+        undefined,
+        '30-71234567-1',
+      );
+
+      expect(summary.status).toBe('issued');
+      expect(summary.cbteTipo).toBe(1);
+      expect(summary.receptorNombre).toBe('EMPRESA CLIENTE SA');
+      expect(gateway.createCalls[0]).toMatchObject({
+        CbteTipo: 1,
+        DocTipo: 80,
+        DocNro: Number(RECEIVER),
+        CondicionIVAReceptorId: 1,
+      });
+    });
+
+    it('receptor exento → error INVOICE_RECEIVER_NOT_A y no se manda nada', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      gateway.taxpayer = {
+        datosGenerales: { razonSocial: 'FUNDACION' },
+        datosRegimenGeneral: { impuesto: { idImpuesto: 32 } },
+      };
+
+      const summary = await service.issueForEntry(ENTRY, undefined, RECEIVER);
+
+      expect(summary.status).toBe('error');
+      expect(summary.errorCode).toBe('INVOICE_RECEIVER_NOT_A');
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('reintentar sin CUIT después de una A fallida → B a consumidor final', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state, { receptorDocTipo: 80, receptorDocNro: RECEIVER });
+
+      const summary = await service.issueForEntry(ENTRY);
+
+      expect(summary.cbteTipo).toBe(6);
+      expect(gateway.createCalls[0].DocTipo).toBe(99);
+    });
+
+    it('CUIT con dígito verificador inválido → 422 ARCA_CUIT_INVALID', async () => {
+      const { service, state } = setup();
+      pendingInvoice(state);
+
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(ENTRY, undefined, '30712345670'),
+          ),
+        ),
+      ).toBe('ARCA_CUIT_INVALID');
+    });
+
+    it('al cobrar con CUIT inválido la factura queda pendiente, el cierre no falla', async () => {
+      const { service, state, prisma } = setup();
+
+      const created = await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+        receiverCuit: '30712345670',
+      });
+
+      expect(created?.issueNow).toBe(false);
+      expect(state.invoices[0].errorCode).toBe('ARCA_CUIT_INVALID');
+    });
+
+    it('al cobrar con CUIT válido guarda el receptor para la emisión', async () => {
+      const { service, state, prisma } = setup();
+
+      const created = await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+        receiverCuit: '30-71234567-1',
+      });
+
+      expect(created?.issueNow).toBe(true);
+      expect(state.invoices[0]).toMatchObject({
+        receptorDocTipo: 80,
+        receptorDocNro: RECEIVER,
+      });
+    });
+  });
+
   describe('emisión', () => {
     it('RI → B aprobada con CAE, número 1 y foto del emisor', async () => {
       const { service, state, gateway } = setup();

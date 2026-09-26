@@ -60,4 +60,33 @@ describe('resolveVoucher', () => {
       }),
     ).toThrow(/19%/);
   });
+
+  it('RI con receptor → A con CUIT y la condición del padrón', () => {
+    const v = resolveVoucher({
+      emitter: 'responsable_inscripto',
+      total: 1210,
+      ivaRate: 21,
+      receiver: { cuit: '30712345671', condicionIvaReceptorId: 6 },
+    });
+
+    expect(v.letter).toBe('A');
+    expect(v.cbteTipo).toBe(1);
+    expect(v.docTipo).toBe(80);
+    expect(v.docNro).toBe(30712345671);
+    expect(v.condicionIvaReceptorId).toBe(6);
+    expect(v.impNeto).toBe(1000);
+    expect(v.impIva).toBe(210);
+  });
+
+  it('Monotributo con receptor → sigue siendo C a consumidor final', () => {
+    const v = resolveVoucher({
+      emitter: 'monotributo',
+      total: 1210,
+      ivaRate: 21,
+      receiver: { cuit: '30712345671', condicionIvaReceptorId: 1 },
+    });
+
+    expect(v.letter).toBe('C');
+    expect(v.docTipo).toBe(99);
+  });
 });
