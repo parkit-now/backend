@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { inspect } from 'node:util';
 import {
   AccessTicket,
   Arca,
@@ -47,6 +48,8 @@ const TICKET_RENEW_MARGIN_MS = 5 * 60_000;
  */
 @Injectable()
 export class ArcaSdkGateway implements ArcaGateway {
+  private readonly logger = new Logger(ArcaSdkGateway.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ArcaConfigService,
@@ -280,12 +283,77 @@ export class ArcaSdkGateway implements ArcaGateway {
         ms,
       );
     });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    return Promise.race([promise, timeout])
+      .catch((error: unknown) => {
+        // Lo que no es nuestro se envuelve con un mensaje legible: el SDK
+        // puede tirar objetos sueltos (ver `errorMessage`).
+        if (
+          error instanceof ArcaUnavailableError ||
+          error instanceof ArcaAuthError
+        ) {
+          throw error;
+        }
+        this.logger.warn(`Falla del SDK de ARCA: ${errorMessage(error)}`);
+        throw new ArcaUnavailableError(errorMessage(error));
+      })
+      .finally(() => clearTimeout(timer));
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/**
+ * El texto de una falla del SDK. No siempre tira un `Error` con mensaje: un
+ * SOAP fault puede llegar como objeto suelto (o un `Error` cuyo mensaje es un
+ * objeto), y `String()` lo deja en `[object Object]`, que no sirve ni para
+ * el log ni para la factura.
+ */
+export function errorMessage(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (
+    error instanceof Error &&
+    typeof error.message === 'string' &&
+    error.message &&
+    error.message !== '[object Object]'
+  ) {
+    return error.message;
+  }
+  const http = describeHttpFailure(error);
+  if (http) return http;
+  const detail = inspect(error, { depth: 4, breakLength: Infinity });
+  return detail.length > 2000 ? `${detail.slice(0, 2000)}…` : detail;
+}
+
+/**
+ * Cuando ARCA contesta con una página de error en vez de SOAP (node-soap tira
+ * `{ Fault, response }` con `Invalid XML`), lo útil es el status y el
+ * `<title>` del HTML. Pasó en homologación: `HTTP 500: ORA-01034: ORACLE not
+ * available`, con WSFE caído entero (hasta `FEDummy`).
+ */
+function describeHttpFailure(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const e = error as {
+    Fault?: { faultstring?: unknown };
+    response?: { status?: unknown; data?: unknown };
+  };
+  const status =
+    typeof e.response?.status === 'number' ? e.response.status : null;
+  const html = typeof e.response?.data === 'string' ? e.response.data : '';
+  const title = /<title>([\s\S]*?)<\/title>/i
+    .exec(html)?.[1]
+    ?.replace(/<br\s*\/?>/gi, ' · ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const reason =
+    title ||
+    (typeof e.Fault?.faultstring === 'string' ? e.Fault.faultstring : '');
+  if (status === null && !reason) return null;
+  return [
+    'ARCA respondió',
+    status !== null ? `HTTP ${status}` : null,
+    reason ? `: ${reason}` : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(' :', ':');
 }
 
 /**
