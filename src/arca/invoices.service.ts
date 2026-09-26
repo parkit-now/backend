@@ -332,6 +332,87 @@ export class InvoicesService {
     return invoice ? toSummary(invoice) : null;
   }
 
+  /**
+   * Para el job diario: resuelve las facturas trabadas en `issuing` más de
+   * `olderThanMs`, de cualquier playa. Es la misma reconciliación que hace la
+   * emisión antes de numerar, pero sin esperar a que alguien vuelva a emitir
+   * con esa numeración (una playa que factura poco podría no hacerlo nunca).
+   *
+   * Corre sin tenant en contexto: cliente crudo y filtro explícito. Nunca
+   * tira; lo que no se pudo resolver queda para la próxima corrida.
+   */
+  async reconcileStaleIssuing(input: {
+    readonly olderThanMs: number;
+    readonly limit: number;
+  }): Promise<{ readonly reconciled: number; readonly failed: number }> {
+    if (!this.config.enabled) return { reconciled: 0, failed: 0 };
+    const stale = await this.prisma.invoice.findMany({
+      where: {
+        status: 'issuing',
+        issuingStartedAt: { lt: new Date(Date.now() - input.olderThanMs) },
+      },
+      orderBy: { issuingStartedAt: 'asc' },
+      take: input.limit,
+    });
+
+    let reconciled = 0;
+    let failed = 0;
+    for (const invoice of stale) {
+      try {
+        // Sin número, el proceso murió antes de mandar nada: no hay nada que
+        // preguntarle a ARCA, se libera para reintentar.
+        if (invoice.cbteNro === null) {
+          await this.markError(
+            invoice.id,
+            ErrorCodes.ARCA_UNAVAILABLE,
+            'La emisión se interrumpió antes de llegar a ARCA. Reintentá.',
+          );
+          reconciled++;
+          continue;
+        }
+        const account = await this.linkedAccount(invoice.tenantId);
+        if (
+          !account ||
+          invoice.environment === null ||
+          invoice.emisorCuit === null ||
+          invoice.ptoVta === null ||
+          invoice.cbteTipo === null
+        ) {
+          failed++;
+          continue;
+        }
+        const creds = this.credentials(account);
+        const lockKey = numberingLockKey({
+          environment: invoice.environment,
+          emisorCuit: invoice.emisorCuit,
+          ptoVta: invoice.ptoVta,
+          cbteTipo: invoice.cbteTipo,
+        });
+        await this.prisma.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+            // Mientras esperaba el lock, una emisión pudo haberla resuelto.
+            const fresh = await tx.invoice.findUniqueOrThrow({
+              where: { id: invoice.id },
+            });
+            if (fresh.status !== 'issuing' || fresh.cbteNro === null) return;
+            await this.reconcile(fresh, creds);
+          },
+          { timeout: this.config.timeoutMs * 2 + 10_000 },
+        );
+        reconciled++;
+      } catch (error) {
+        failed++;
+        this.logger.warn(
+          `No se pudo reconciliar la factura ${invoice.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return { reconciled, failed };
+  }
+
   /** `true` si la estadía tiene una factura emitida o en curso en ARCA. */
   async hasIssuedInvoice(
     tx: Prisma.TransactionClient,
@@ -453,7 +534,7 @@ export class InvoicesService {
       ptoVta: account.ptoVta,
       cbteTipo: voucher.cbteTipo,
     };
-    const lockKey = `arca-cbte:${key.environment}:${key.emisorCuit}:${key.ptoVta}:${key.cbteTipo}`;
+    const lockKey = numberingLockKey(key);
     let sent = false;
 
     try {
@@ -920,6 +1001,19 @@ export class InvoicesService {
   private instance(entryId: string): string {
     return `/tenants/:tenantId/entries/${entryId}/invoice`;
   }
+}
+
+/**
+ * El lock que serializa la numeración: uno por (entorno, CUIT, punto de
+ * venta, tipo), que es lo que numera ARCA.
+ */
+function numberingLockKey(key: {
+  environment: string;
+  emisorCuit: string;
+  ptoVta: number;
+  cbteTipo: number;
+}): string {
+  return `arca-cbte:${key.environment}:${key.emisorCuit}:${key.ptoVta}:${key.cbteTipo}`;
 }
 
 function isoDate(value: Date | null): string | null {
