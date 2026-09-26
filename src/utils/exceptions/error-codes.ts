@@ -265,8 +265,6 @@ export const ErrorCodes = {
   ARCA_POS_NOT_FOUND: 'ARCA_POS_NOT_FOUND',
   // El punto de venta esta bloqueado o dado de baja.
   ARCA_POS_DISABLED: 'ARCA_POS_DISABLED',
-  // En produccion hay que subir la constancia del punto de venta antes de vincular.
-  ARCA_POS_CONSTANCIA_REQUIRED: 'ARCA_POS_CONSTANCIA_REQUIRED',
   // La estadia ya tiene factura emitida: no se re-emite ni se cambia el monto.
   INVOICE_ALREADY_ISSUED: 'INVOICE_ALREADY_ISSUED',
   // Otra emision de la misma factura esta en curso (web y desktop a la vez).

@@ -8,16 +8,12 @@ import {
   Param,
   Patch,
   Post,
-  Put,
-  Req,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
-  ApiBody,
   ApiConflictResponse,
-  ApiConsumes,
   ApiCreatedResponse,
   ApiExtraModels,
   ApiForbiddenResponse,
@@ -33,7 +29,6 @@ import {
 } from '@nestjs/swagger';
 import { MembershipRole } from '@prisma/client';
 import type { User } from '@prisma/client';
-import type { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -226,28 +221,6 @@ export class ArcaAccountsController {
     return this.accounts.reuseCertificate(tenantId, user, dto);
   }
 
-  @Put('account/sales-point/constancia')
-  @EntityRole(MembershipRole.owner)
-  @ApiOperation({
-    operationId: 'arcaUploadSalesPointConstancia',
-    summary: 'Upload the sales point constancia (PDF, max 5MB)',
-    description:
-      'Raw PDF bytes (`Content-Type: application/pdf`). Required before step 3 in production only.',
-  })
-  @ApiConsumes('application/pdf')
-  @ApiBody({ schema: { type: 'string', format: 'binary' } })
-  @ApiOkResponse({ type: ArcaAccountDto })
-  @ApiConflictResponse({
-    description: 'ARCA_LINK_STEP_INVALID.',
-    type: ProblemDetailsDto,
-  })
-  uploadConstancia(
-    @Param('tenantId') tenantId: string,
-    @Req() req: Request,
-  ): Promise<ArcaAccountDto> {
-    return this.accounts.uploadSalesPointConstancia(tenantId, req.body);
-  }
-
   @Post('account/sales-point')
   @EntityRole(MembershipRole.owner)
   @HttpCode(HttpStatus.OK)
@@ -264,7 +237,7 @@ export class ArcaAccountsController {
   })
   @ApiUnprocessableEntityResponse({
     description:
-      'ARCA_POS_NOT_FOUND, ARCA_POS_DISABLED, ARCA_POS_CONSTANCIA_REQUIRED, ARCA_PADRON_NOT_FOUND.',
+      'ARCA_POS_NOT_FOUND, ARCA_POS_DISABLED, ARCA_PADRON_NOT_FOUND.',
     type: ProblemDetailsDto,
   })
   @ApiServiceUnavailableResponse({

@@ -3,10 +3,6 @@ import type { ArcaAccount, User } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { PrismaService } from '../database/prisma.service';
-import {
-  ARCA_DOCUMENTS_BUCKET,
-  StorageService,
-} from '../storage/storage.service';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -90,7 +86,6 @@ export class ArcaAccountsService {
     private readonly crypto: ArcaCryptoService,
     private readonly audit: AuditService,
     private readonly permissions: PermissionsService,
-    private readonly storage: StorageService,
     @Inject(ARCA_GATEWAY) private readonly gateway: ArcaGateway,
   ) {}
 
@@ -148,7 +143,6 @@ export class ArcaAccountsService {
       ...CLEARED_CERTIFICATE,
       ...CLEARED_FISCAL_DATA,
       ptoVta: null,
-      ptoVtaConstanciaPath: null,
       linkedAt: null,
     };
     const account = await this.prisma.arcaAccount.upsert({
@@ -306,37 +300,6 @@ export class ArcaAccountsService {
     return this.toDto(updated);
   }
 
-  /** La constancia del punto de venta (PDF). Obligatoria sólo en producción. */
-  async uploadSalesPointConstancia(
-    tenantId: string,
-    body: unknown,
-  ): Promise<ArcaAccountDto> {
-    const account = await this.requireAccount(tenantId);
-    if (account.status === 'pending_certificate') {
-      throw this.stepInvalid('Upload the certificate first.');
-    }
-    if (!Buffer.isBuffer(body) || !body.subarray(0, 5).equals(PDF_MAGIC)) {
-      throw this.error(
-        HttpStatus.BAD_REQUEST,
-        'The body must be the raw bytes of a PDF (Content-Type: application/pdf).',
-        ErrorCodes.BAD_REQUEST,
-      );
-    }
-
-    const path = `${tenantId}/pto-vta-constancia.pdf`;
-    await this.storage.upload(
-      ARCA_DOCUMENTS_BUCKET,
-      path,
-      body,
-      'application/pdf',
-    );
-    const updated = await this.prisma.arcaAccount.update({
-      where: { id: account.id },
-      data: { ptoVtaConstanciaPath: path },
-    });
-    return this.toDto(updated);
-  }
-
   /**
    * Paso 3: el punto de venta. Tiene que figurar en `FEParamGetPtosVenta` (que
    * sólo lista los de web services) y `getLastVoucher` tiene que responder
@@ -357,13 +320,6 @@ export class ArcaAccountsService {
         HttpStatus.UNPROCESSABLE_ENTITY,
         'The IVA condition is still missing: load the fiscal data first.',
         ErrorCodes.ARCA_PADRON_NOT_FOUND,
-      );
-    }
-    if (this.config.production && !account.ptoVtaConstanciaPath) {
-      throw this.error(
-        HttpStatus.UNPROCESSABLE_ENTITY,
-        'Upload the sales point certificate (constancia) first.',
-        ErrorCodes.ARCA_POS_CONSTANCIA_REQUIRED,
       );
     }
 
@@ -712,14 +668,11 @@ export class ArcaAccountsService {
       certAlias:
         aliasFromPem(account.certPem) ?? aliasFromPem(account.csrPem) ?? '',
       certExpiresAt: account.certExpiresAt?.toISOString() ?? null,
-      hasSalesPointConstancia: !!account.ptoVtaConstanciaPath,
       fiscalDataEditable: account.environment === 'homologacion',
       linkedAt: account.linkedAt?.toISOString() ?? null,
     };
   }
 }
-
-const PDF_MAGIC = Buffer.from('%PDF-');
 
 const CLEARED_CERTIFICATE = {
   certPem: null,

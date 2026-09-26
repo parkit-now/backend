@@ -34,7 +34,6 @@ inicioActividad: Date  | null;
   format: `int32`,
 })
 ptoVta: number  | null;
-ptoVtaConstanciaPath: string  | null;
 @ApiProperty({
   type: `number`,
   format: `double`,

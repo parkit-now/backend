@@ -98,12 +98,6 @@ export class ArcaAccountDto {
 
   @ApiProperty({
     description:
-      'Si se subió la constancia del punto de venta (obligatoria en producción).',
-  })
-  hasSalesPointConstancia: boolean;
-
-  @ApiProperty({
-    description:
       'Si los datos fiscales se pueden cargar a mano (sólo homologación, donde el padrón no tiene los CUIT reales).',
   })
   fiscalDataEditable: boolean;

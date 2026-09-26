@@ -49,7 +49,6 @@ model ArcaAccount {
   domicilioFiscal      String?           @map("domicilio_fiscal")
   inicioActividad      DateTime?         @map("inicio_actividad") @db.Date
   ptoVta               Int?              @map("pto_vta")
-  ptoVtaConstanciaPath String?           @map("pto_vta_constancia_path")
   ivaRate              Decimal           @default(21) @map("iva_rate") @db.Decimal(5, 2)
 
   csrPem          String?   @map("csr_pem")

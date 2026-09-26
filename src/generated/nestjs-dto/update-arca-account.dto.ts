@@ -48,9 +48,6 @@ inicioActividad?: Date;
 ptoVta?: number;
 @IsOptional()
 @IsString()
-ptoVtaConstanciaPath?: string;
-@IsOptional()
-@IsString()
 csrPem?: string;
 @IsOptional()
 @IsString()

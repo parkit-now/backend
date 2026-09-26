@@ -7,7 +7,6 @@ import forge from 'node-forge';
 import type { AuditService } from '../audit/audit.service';
 import type { PermissionsService } from '../auth/permissions.service';
 import type { PrismaService } from '../database/prisma.service';
-import type { StorageService } from '../storage/storage.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { ArcaAccountsService } from './arca-accounts.service';
 import { ArcaConfigService } from './arca-config.service';
@@ -116,7 +115,6 @@ function setup(environment = 'homologacion') {
     crypto,
     audit as unknown as AuditService,
     {} as PermissionsService,
-    {} as StorageService,
     gateway,
   );
 
@@ -299,16 +297,6 @@ describe('ArcaAccountsService — paso 3 (punto de venta)', () => {
     );
 
     expect(codeOf(error)).toBe('ARCA_POS_NOT_FOUND');
-  });
-
-  it('en producción, sin la constancia no se vincula', async () => {
-    const { service } = await certified('produccion');
-
-    const error = await rejection(
-      service.setSalesPoint(TENANT, USER, { ptoVta: 2 }),
-    );
-
-    expect(codeOf(error)).toBe('ARCA_POS_CONSTANCIA_REQUIRED');
   });
 
   it('en producción los datos fiscales no se editan a mano', async () => {
