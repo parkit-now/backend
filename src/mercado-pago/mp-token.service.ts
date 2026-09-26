@@ -1,4 +1,5 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { MpAccountStatus, PaymentMethodType } from '@prisma/client';
 import type { MpAccount, Prisma } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
@@ -32,6 +33,9 @@ const REFRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  * `refresh_failure_count`.
  */
 const MAX_REFRESH_FAILURES = 3;
+
+/** Tope de cuentas por corrida del cron: una corrida no barre sin límite. */
+const MAX_REFRESH_PER_RUN = 200;
 
 /**
  * Instance de los ProblemDetails. Es el MISMO valor que usaba
@@ -77,24 +81,29 @@ export interface MpUsableAccessToken {
  * La dirección de la dependencia es `MpAccountsService → MpTokenService`, nunca
  * al revés: acá adentro no se sabe nada de OAuth, de Store ni de POS.
  *
- * ## El refresh es PEREZOSO, en el punto de uso. NO hay cron
+ * ## Dos capas: un `@Cron` diario de mejor esfuerzo + el refresh perezoso
  *
- * El plan original tenía un `@Cron(EVERY_6_HOURS)` que barría las cuentas por
- * vencer. Se canceló, y conviene dejar escrito por qué para que no vuelva:
+ * - **`refreshExpiringTokens` (`@Cron`, 12:15 de Argentina)** renueva por
+ *   adelantado las cuentas a las que les quedan menos de 30 días, así el
+ *   cobro no carga con el round-trip. Sin Cloud Scheduler, por decisión del
+ *   proyecto (nada que pueda generar un cobro de GCP): en Cloud Run con
+ *   scale-to-zero el cron corre sólo si a esa hora hay una instancia viva, y
+ *   por eso va al mediodía, cuando las playas están cobrando.
+ * - **El refresh perezoso en `getUsableAccessToken`** sigue siendo la
+ *   garantía: si el cron no corrió, el próximo cobro renueva igual.
  *
- *  1. **El advisory lock que lo justificaba sobraba.** El diseño del cron
- *     necesitaba `pg_try_advisory_lock` para que dos instancias no refrescaran
- *     la misma cuenta a la vez. Pero la documentación oficial de Mercado Pago
- *     (es/MLA) dice que el `refresh_token` **"puede ser reutilizado"**: dos
- *     refreshes concurrentes NO se invalidan entre sí.
+ * El plan original tenía un cron con `pg_try_advisory_lock`. El lock sigue
+ * sin hacer falta, y conviene dejar escrito por qué para que no vuelva:
+ *
+ *  1. **El `refresh_token` es reutilizable.** La documentación oficial de
+ *     Mercado Pago (es/MLA) dice que **"puede ser reutilizado"**: dos
+ *     refreshes concurrentes (cron en dos instancias, o cron + un cobro) NO se
+ *     invalidan entre sí.
  *  2. **`pg_try_advisory_lock` es incompatible con el pool de Prisma.** El lock
  *     es POR SESIÓN, o sea por conexión. Con un pool, el `unlock` sale por una
  *     conexión distinta de la que tomó el lock y no libera nada: el lock queda
  *     colgado hasta que esa conexión muera. **No es opción acá. No lo
  *     "mejores" agregándolo.**
- *  3. **Un `@Cron` in-process en Cloud Run exige `min-instances=1`.** Sin
- *     instancia viva no hay timer, así que la salud de los tokens quedaría
- *     atada a una decisión de infraestructura que se puede revisar por costos.
  *
  * ## Concurrencia: NO hay lock, y es deliberado
  *
@@ -184,6 +193,56 @@ export class MpTokenService {
     }
 
     return this.refresh(account);
+  }
+
+  /**
+   * Cron diario: renueva por adelantado los tokens que vencen en menos de 30
+   * días. Mismo camino que el refresh perezoso (`refresh`), así que hereda
+   * todo: el cifrado, el contador de fallos, la degradación y el audit. Un
+   * fallo con el token todavía vigente sólo suma al contador; el próximo cobro
+   * o la próxima corrida reintentan.
+   *
+   * Cross-tenant: `mp_accounts` es global y cada fila lleva su `tenantId`.
+   */
+  @Cron('15 12 * * *', {
+    name: 'mp-token-refresh',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  })
+  async refreshExpiringTokens(): Promise<{
+    readonly refreshed: number;
+    readonly failed: number;
+  }> {
+    const accounts = await this.prisma.mpAccount.findMany({
+      where: {
+        status: MpAccountStatus.linked,
+        accessTokenExpiresAt: { lte: new Date(Date.now() + REFRESH_WINDOW_MS) },
+      },
+      orderBy: { accessTokenExpiresAt: 'asc' },
+      take: MAX_REFRESH_PER_RUN,
+    });
+
+    let refreshed = 0;
+    let failed = 0;
+    for (const account of accounts) {
+      try {
+        const result = await this.refresh(account);
+        // Un fallo tolerado devuelve el token viejo sin tirar: se distingue
+        // por el contador, que sólo vuelve a cero con una renovación real.
+        if (result.account.refreshFailureCount === 0) refreshed++;
+        else failed++;
+      } catch (error) {
+        failed++;
+        this.logger.warn(
+          `Scheduled Mercado Pago token refresh failed for tenant ${account.tenantId}: ${describeFailure(error)}`,
+        );
+      }
+    }
+    if (accounts.length > 0) {
+      this.logger.log(
+        `Scheduled Mercado Pago token refresh: ${refreshed} refreshed, ${failed} failed.`,
+      );
+    }
+    return { refreshed, failed };
   }
 
   /**

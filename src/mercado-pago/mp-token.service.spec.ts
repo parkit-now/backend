@@ -30,7 +30,11 @@ describe('MpTokenService', () => {
     paymentMethod: { updateMany: jest.fn() },
   };
   const prisma = {
-    mpAccount: { findUnique: jest.fn(), update: jest.fn() },
+    mpAccount: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
   const audit = { record: jest.fn() };
@@ -274,5 +278,57 @@ describe('MpTokenService', () => {
       code: ErrorCodes.MP_ACCOUNT_REVOKED,
     });
     expect(mpApi.refreshAccessToken).not.toHaveBeenCalled();
+  });
+
+  describe('refreshExpiringTokens (cron diario)', () => {
+    it('renueva sólo las cuentas vinculadas con menos de 30 días', async () => {
+      prisma.mpAccount.findMany.mockResolvedValue([
+        makeAccount({
+          accessTokenExpiresAt: new Date(Date.now() + 10 * DAY_MS),
+        }),
+      ]);
+      prisma.mpAccount.update.mockResolvedValue(makeAccount());
+
+      const result = await service.refreshExpiringTokens();
+
+      expect(result).toEqual({ refreshed: 1, failed: 0 });
+      const { where } = prisma.mpAccount.findMany.mock.calls[0][0] as {
+        where: { status: string; accessTokenExpiresAt: { lte: Date } };
+      };
+      expect(where.status).toBe(MpAccountStatus.linked);
+      expect(where.accessTokenExpiresAt.lte.getTime()).toBeLessThanOrEqual(
+        Date.now() + 30 * DAY_MS,
+      );
+      expect(mpApi.refreshAccessToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('un fallo con el token vigente se cuenta y no corta la corrida', async () => {
+      prisma.mpAccount.findMany.mockResolvedValue([
+        makeAccount({
+          accessTokenExpiresAt: new Date(Date.now() + 10 * DAY_MS),
+        }),
+        makeAccount({
+          id: 'otra',
+          tenantId: 'otra-playa',
+          accessTokenExpiresAt: new Date(Date.now() + 10 * DAY_MS),
+        }),
+      ]);
+      mpApi.refreshAccessToken
+        .mockRejectedValueOnce(new Error('MP caído'))
+        .mockResolvedValueOnce({
+          accessToken: NEW_ACCESS,
+          refreshToken: NEW_REFRESH,
+          mpUserId: '446566691',
+          accessTokenExpiresAt: new Date(Date.now() + 180 * DAY_MS),
+        });
+      prisma.mpAccount.update
+        .mockResolvedValueOnce(makeAccount({ refreshFailureCount: 1 }))
+        .mockResolvedValueOnce(makeAccount());
+
+      const result = await service.refreshExpiringTokens();
+
+      expect(result).toEqual({ refreshed: 1, failed: 1 });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
   });
 });
