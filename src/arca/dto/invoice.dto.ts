@@ -9,6 +9,21 @@ export class InvoiceDto extends InvoiceSummaryDto {
   @ApiProperty({ format: 'uuid' })
   entryId: string;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    type: Number,
+    description:
+      'DocTipo de ARCA: 80 = CUIT (Factura A), 99 = consumidor final.',
+  })
+  receptorDocTipo: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    description: 'CUIT del receptor, o `0` a consumidor final.',
+  })
+  receptorDocNro: string | null;
+
   @ApiProperty({ type: Number })
   impTotal: number;
 

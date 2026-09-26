@@ -8,6 +8,8 @@ import { ArcaCryptoService } from './arca-crypto.service';
 import { ArcaMaintenanceService } from './arca-maintenance.service';
 import { ArcaSdkGateway } from './arca-sdk.gateway';
 import { ARCA_GATEWAY } from './arca.gateway';
+import { InvoicePdfRenderer } from './invoice-pdf.renderer';
+import { InvoicePdfService } from './invoice-pdf.service';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
 
@@ -23,6 +25,8 @@ import { InvoicesService } from './invoices.service';
     ArcaCryptoService,
     { provide: ARCA_GATEWAY, useClass: ArcaSdkGateway },
     InvoicesService,
+    InvoicePdfRenderer,
+    InvoicePdfService,
     ArcaAccountsService,
     ArcaMaintenanceService,
   ],

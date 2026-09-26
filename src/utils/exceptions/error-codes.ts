@@ -265,6 +265,9 @@ export const ErrorCodes = {
   ARCA_POS_NOT_FOUND: 'ARCA_POS_NOT_FOUND',
   // El punto de venta esta bloqueado o dado de baja.
   ARCA_POS_DISABLED: 'ARCA_POS_DISABLED',
+  // Faltan Ingresos Brutos o la fecha de inicio de actividades: van impresos
+  // en la factura (RG 1415, Anexo II), asi que sin ellos no se vincula.
+  ARCA_FISCAL_DATA_INCOMPLETE: 'ARCA_FISCAL_DATA_INCOMPLETE',
   // La estadia ya tiene factura emitida: no se re-emite ni se cambia el monto.
   INVOICE_ALREADY_ISSUED: 'INVOICE_ALREADY_ISSUED',
   // Otra emision de la misma factura esta en curso (web y desktop a la vez).
@@ -279,6 +282,10 @@ export const ErrorCodes = {
   INVOICE_RECEIVER_NOT_FOUND: 'INVOICE_RECEIVER_NOT_FOUND',
   // Factura A: el receptor no es Responsable Inscripto ni Monotributista.
   INVOICE_RECEIVER_NOT_A: 'INVOICE_RECEIVER_NOT_A',
+  // El PDF solo existe para una factura emitida (con CAE).
+  INVOICE_NOT_ISSUED: 'INVOICE_NOT_ISSUED',
+  // No se pudo generar el PDF (Chromium no arranco o se colgo).
+  INVOICE_PDF_FAILED: 'INVOICE_PDF_FAILED',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
