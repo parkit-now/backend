@@ -1111,6 +1111,8 @@ function toInvoiceDto(invoice: Invoice): InvoiceDto {
     ...toSummary(invoice),
     tenantId: invoice.tenantId,
     entryId: invoice.entryId,
+    receptorDocTipo: invoice.receptorDocTipo,
+    receptorDocNro: invoice.receptorDocNro,
     impTotal: Number(invoice.impTotal),
     impNeto: invoice.impNeto === null ? null : Number(invoice.impNeto),
     impIva: invoice.impIva === null ? null : Number(invoice.impIva),
