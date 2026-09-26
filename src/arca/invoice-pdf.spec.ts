@@ -123,7 +123,9 @@ describe('isPrintable / invoicePdfFileName', () => {
     expect(isPrintable(invoice({ cae: null }))).toBe(false);
   });
 
-  it('nombra el archivo con letra, punto de venta y número', () => {
-    expect(invoicePdfFileName(invoice())).toBe('factura-B-0001-00000007.pdf');
+  it('nombra el archivo con patente, CAE y número de comprobante', () => {
+    expect(invoicePdfFileName(invoice(), 'ab 123 cd')).toBe(
+      'AB123CD-86390926440543-0001-00000007.pdf',
+    );
   });
 });

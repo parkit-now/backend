@@ -58,7 +58,7 @@ export class InvoicePdfService {
       const content = await this.renderer.render(
         buildInvoicePdfData(invoice, entry),
       );
-      return { fileName: invoicePdfFileName(invoice), content };
+      return { fileName: invoicePdfFileName(invoice, entry.plate), content };
     } catch (error) {
       this.logger.error(
         `No se pudo generar el PDF de la factura ${invoiceId}`,

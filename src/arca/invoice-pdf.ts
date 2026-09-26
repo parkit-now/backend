@@ -165,12 +165,20 @@ export function buildInvoicePdfData(
   };
 }
 
-/** `0001-00000001-B.pdf`-style: tipo, punto de venta y número. */
-export function invoicePdfFileName(invoice: IssuedInvoice): string {
-  const letter = LETTER_BY_TIPO[invoice.cbteTipo];
+/**
+ * `AB123CD-86390928613357-0001-00000006.pdf`: patente, CAE y número de
+ * comprobante. Sólo letras, números y guiones: sirve en cualquier sistema de
+ * archivos y en el header sin escapar nada.
+ */
+export function invoicePdfFileName(
+  invoice: IssuedInvoice,
+  plate: string,
+): string {
   const pv = String(invoice.ptoVta).padStart(4, '0');
   const nro = String(invoice.cbteNro).padStart(8, '0');
-  return `factura-${letter}-${pv}-${nro}.pdf`;
+  const safePlate =
+    plate.toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SIN-PATENTE';
+  return `${safePlate}-${invoice.cae}-${pv}-${nro}.pdf`;
 }
 
 /** «Estadía AB123CD – 24/09/2026 10:00 a 24/09/2026 12:30». */
