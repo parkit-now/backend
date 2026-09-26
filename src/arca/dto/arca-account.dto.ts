@@ -128,9 +128,9 @@ export class CreateArcaAccountDto {
   @ApiProperty({
     example: '901-123456-7',
     description:
-      'Número de inscripción en Ingresos Brutos, o la condición si no está ' +
-      'inscripto («Exento», «No contribuyente»). Va impreso en la factura ' +
-      '(RG 1415, Anexo II).',
+      'Número de inscripción en Ingresos Brutos, o «No contribuyente» si la ' +
+      'actividad no está alcanzada (RG 1415, Anexo II). Va impreso en la ' +
+      'factura. «Exento» no reemplaza al número: un exento está inscripto.',
   })
   @IsString()
   @IsNotEmpty()
@@ -222,9 +222,9 @@ export class UpdateArcaAccountDto {
   @ApiPropertyOptional({
     example: '901-123456-7',
     description:
-      'Número de inscripción en Ingresos Brutos, o la condición si no está ' +
-      'inscripto («Exento», «No contribuyente»). Va impreso en la factura ' +
-      '(RG 1415, Anexo II).',
+      'Número de inscripción en Ingresos Brutos, o «No contribuyente» si la ' +
+      'actividad no está alcanzada (RG 1415, Anexo II). Va impreso en la ' +
+      'factura. «Exento» no reemplaza al número: un exento está inscripto.',
   })
   @IsOptional()
   @IsString()
