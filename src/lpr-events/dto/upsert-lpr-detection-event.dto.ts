@@ -12,12 +12,14 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import {
   LprDetectionStatus,
   LprFormatType,
   LprQualityStatus,
 } from '@prisma/client';
+import { PlateBboxDto } from './plate-bbox.dto';
 
 export class UpsertLprDetectionEventDto {
   @ApiProperty({ format: 'uuid' })
@@ -103,4 +105,10 @@ export class UpsertLprDetectionEventDto {
   @IsOptional()
   @IsArray()
   candidates?: unknown[];
+
+  @ApiPropertyOptional({ type: PlateBboxDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PlateBboxDto)
+  plateBbox?: PlateBboxDto;
 }

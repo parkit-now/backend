@@ -19,6 +19,7 @@ import { LprDetectionEventDto } from './dto/lpr-detection-event.dto';
 import { LprDetectionEventImageSignedUrlDto } from './dto/lpr-detection-event-image-signed-url.dto';
 import { ListLprDetectionEventsQueryDto } from './dto/list-lpr-detection-events-query.dto';
 import { PaginatedLprDetectionEventsDto } from './dto/paginated-lpr-detection-events.dto';
+import { PlateBboxDto } from './dto/plate-bbox.dto';
 import { UpdateLprDetectionEventDto } from './dto/update-lpr-detection-event.dto';
 import { UpsertLprDetectionEventDto } from './dto/upsert-lpr-detection-event.dto';
 import { resolvePagination } from '../utils/pagination/pagination-query.dto';
@@ -72,6 +73,7 @@ export function toLprDetectionEventDto(
     imageDeletedAt: event.imageDeletedAt,
     bestCaptureId: event.bestCaptureId,
     candidates: jsonArray(event.candidates),
+    plateBbox: (event.plateBbox as PlateBboxDto | null) ?? null,
     version: event.version,
     syncSeq: event.syncSeq,
     createdAt: event.createdAt,
@@ -424,6 +426,7 @@ export class LprEventsService {
       // only uploadImage() may set them. A brand-new event never has one yet.
       bestCaptureId: dto.bestCaptureId,
       candidates: (dto.candidates ?? []) as Prisma.InputJsonValue,
+      plateBbox: dto.plateBbox as Prisma.InputJsonValue | undefined,
     };
   }
 
@@ -468,6 +471,15 @@ export class LprEventsService {
       bestCaptureId: dto.bestCaptureId ?? existing.bestCaptureId,
       candidates: (dto.candidates ??
         jsonArray(existing.candidates)) as Prisma.InputJsonValue,
+      // plateBbox SÍ se acepta del cliente, a diferencia de los dos campos de
+      // imagen de acá arriba. La diferencia no es arbitraria: aquéllos los
+      // escribe uploadImage() y los limpia el job de retención, así que un
+      // cliente con una copia vieja podría resucitar un path ya purgado.
+      // plateBbox no lo toca ningún job — es metadato de la detección, como
+      // `candidates`, y sólo el equipo que capturó la imagen puede conocerlo.
+      plateBbox: (dto.plateBbox ??
+        existing.plateBbox ??
+        Prisma.JsonNull) as Prisma.InputJsonValue,
     };
   }
 

@@ -25,6 +25,9 @@ model LprDetectionEvent {
   imageDeletedAt   DateTime? @map("image_deleted_at") @db.Timestamptz(6)
   bestCaptureId    String?   @map("best_capture_id")
   candidates       Json      @default("[]")
+  // Fracciones 0..1 {x,y,w,h} relativas a la imagen del evento. NULL = evento
+  // viejo, cuyo binario es el recorte de la patente y no hay que recortar.
+  plateBbox        Json?     @map("plate_bbox")
 
   version   Int      @default(1)
   syncSeq   Int      @default(dbgenerated("nextval('lpr_detection_events_sync_seq')")) @map("sync_seq")

@@ -4,6 +4,7 @@ import {
   LprFormatType,
   LprQualityStatus,
 } from '@prisma/client';
+import { PlateBboxDto } from './plate-bbox.dto';
 
 export class LprDetectionEventDto {
   @ApiProperty({ format: 'uuid' })
@@ -84,6 +85,9 @@ export class LprDetectionEventDto {
 
   @ApiProperty({ type: 'array', items: { type: 'object' } })
   candidates: unknown[];
+
+  @ApiPropertyOptional({ type: PlateBboxDto, nullable: true })
+  plateBbox: PlateBboxDto | null;
 
   @ApiProperty({ type: Number })
   version: number;
