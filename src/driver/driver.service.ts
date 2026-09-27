@@ -1,5 +1,11 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { BranchStatus, Prisma, ServiceCode } from '@prisma/client';
+import {
+  BranchStatus,
+  Prisma,
+  ReservationStatus,
+  ServiceCode,
+} from '@prisma/client';
+import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import { readCapacity } from '../entities/entity-settings';
 import { calcStayPrice } from '../entries/pricing';
 import { PrismaService } from '../database/prisma.service';
@@ -8,10 +14,12 @@ import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
   RESERVATION_MAX_DAYS_AHEAD,
+  availableSpots,
   boundingBox,
   distanceMeters,
   isOpenAt,
   isOpenThroughout,
+  reservationHoldsSpotNow,
   reservationWindowProblem,
   type ScheduleRange,
   type WindowProblem,
@@ -64,6 +72,8 @@ type LotData = {
   /** Plazas reservables a la vez; `null` si no toma reservas. */
   reservableSpots: number | null;
   occupied: number;
+  /** Reservas de hoy que todavía ocupan lugar (ver reservationHoldsSpotNow). */
+  reservedToday: number;
 };
 
 const PUBLIC_TENANT_SELECT = {
@@ -117,7 +127,7 @@ export class DriverService {
 
     return Promise.all(
       inRadius.map(async ({ tenant, distance }) => ({
-        ...toParkingDto(tenant, await this.loadLotData(tenant.id), now),
+        ...toParkingDto(tenant, await this.loadLotData(tenant.id, now), now),
         distanceMeters: Math.round(distance),
       })),
     );
@@ -128,7 +138,7 @@ export class DriverService {
     now = new Date(),
   ): Promise<DriverParkingDetailDto> {
     const tenant = await this.findPublicTenant(parkingId);
-    const lot = await this.loadLotData(tenant.id);
+    const lot = await this.loadLotData(tenant.id, now);
     return {
       ...toParkingDto(tenant, lot, now),
       schedules: [...lot.schedules].sort(
@@ -145,8 +155,21 @@ export class DriverService {
     dto: CreateQuoteDto,
     now = new Date(),
   ): Promise<QuoteDto> {
+    return (await this.quoteForReservation(parkingId, dto, now)).quote;
+  }
+
+  /**
+   * Cotización + cupo de reservas de la playa, leídos de una sola vez: la
+   * creación de una reserva necesita las dos cosas (ver
+   * DriverReservationsService).
+   */
+  async quoteForReservation(
+    parkingId: string,
+    dto: CreateQuoteDto,
+    now = new Date(),
+  ): Promise<{ quote: QuoteDto; reservableSpots: number }> {
     const tenant = await this.findPublicTenant(parkingId);
-    const lot = await this.loadLotData(tenant.id);
+    const lot = await this.loadLotData(tenant.id, now);
     const entryAt = new Date(dto.entryAt);
     const exitAt = new Date(dto.exitAt);
     const instance = `/driver/parkings/${parkingId}/quote`;
@@ -181,7 +204,7 @@ export class DriverService {
     const durationMinutes = Math.round(
       (exitAt.getTime() - entryAt.getTime()) / 60_000,
     );
-    return {
+    const quote: QuoteDto = {
       parkingId: tenant.id,
       entryAt: entryAt.toISOString(),
       exitAt: exitAt.toISOString(),
@@ -200,6 +223,8 @@ export class DriverService {
         stayPriceArs: rate.stayPriceArs,
       },
     };
+    // `rate` no nulo ⇒ la playa toma reservas ⇒ hay cupo (ver loadLotData).
+    return { quote, reservableSpots: lot.reservableSpots ?? 0 };
   }
 
   /** Activa y con ubicación publicada; si no, para el conductor no existe. */
@@ -225,32 +250,47 @@ export class DriverService {
     return tenant;
   }
 
-  private async loadLotData(tenantId: string): Promise<LotData> {
+  private async loadLotData(tenantId: string, now: Date): Promise<LotData> {
     const tenantPrisma = prismaForTenant(this.prisma, tenantId);
-    const [schedules, reservationService, occupied] = await Promise.all([
-      tenantPrisma.schedule.findMany({
-        select: { day: true, openMinute: true, closeMinute: true },
-      }),
-      tenantPrisma.service.findFirst({
-        where: { code: ServiceCode.ADVANCE_RESERVATION },
-        select: {
-          enabled: true,
-          reservableSpots: true,
-          reservationRate: {
-            select: {
-              name: true,
-              hourPriceArs: true,
-              fractionPriceArs: true,
-              mediaEstadiaPriceArs: true,
-              stayPriceArs: true,
-              isActive: true,
-              deletedAt: true,
+    const today = dayRangeIn(
+      dayKeyIn(now, DEFAULT_TIME_ZONE),
+      DEFAULT_TIME_ZONE,
+    );
+    const [schedules, reservationService, occupied, todays] = await Promise.all(
+      [
+        tenantPrisma.schedule.findMany({
+          select: { day: true, openMinute: true, closeMinute: true },
+        }),
+        tenantPrisma.service.findFirst({
+          where: { code: ServiceCode.ADVANCE_RESERVATION },
+          select: {
+            enabled: true,
+            reservableSpots: true,
+            reservationRate: {
+              select: {
+                name: true,
+                hourPriceArs: true,
+                fractionPriceArs: true,
+                mediaEstadiaPriceArs: true,
+                stayPriceArs: true,
+                isActive: true,
+                deletedAt: true,
+              },
             },
           },
-        },
-      }),
-      tenantPrisma.entry.count({ where: { leftAt: null } }),
-    ]);
+        }),
+        tenantPrisma.entry.count({ where: { leftAt: null } }),
+        // Reservas confirmadas de hoy: las que todavía no vencieron ocupan
+        // lugar (SCRUM-261, ver reservationHoldsSpotNow).
+        tenantPrisma.reservation.findMany({
+          where: {
+            status: ReservationStatus.confirmed,
+            entryAt: { gte: today.gte, lt: today.lt },
+          },
+          select: { entryAt: true },
+        }),
+      ],
+    );
 
     const rate = reservationService?.reservationRate;
     const spots = reservationService?.reservableSpots ?? 0;
@@ -274,6 +314,9 @@ export class DriverService {
         : null,
       reservableSpots: takesReservations ? spots : null,
       occupied,
+      reservedToday: todays.filter((reservation) =>
+        reservationHoldsSpotNow(reservation.entryAt, now),
+      ).length,
     };
   }
 }
@@ -306,7 +349,7 @@ function toParkingDto(
     name: tenant.name,
     address: tenant.address,
     ...coordinatesOf(tenant),
-    availableSpots: total > 0 ? Math.max(total - lot.occupied, 0) : null,
+    availableSpots: availableSpots(total, lot.occupied, lot.reservedToday),
     totalSpots: total > 0 ? total : null,
     acceptsReservations: lot.reservationRate !== null,
     reservationHourPriceArs: lot.reservationRate?.hourPriceArs ?? null,

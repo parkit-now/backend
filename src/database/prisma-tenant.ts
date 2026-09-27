@@ -44,6 +44,7 @@ const TENANT_MODELS: readonly string[] = [
   'whitelist',
   'lprdetectionevent',
   'invoice',
+  'reservation',
 ];
 
 const READ_OPS = new Set([

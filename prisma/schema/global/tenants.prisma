@@ -91,6 +91,8 @@ model Tenant {
   mpOauthStates        MpOauthState[]
   // Intentos de cobro con QR (global/payment-intents.prisma).
   paymentIntents       PaymentIntent[]
+  // Reservas de conductores (tenant/reservations.prisma).
+  reservations         Reservation[]
 
   // `@unique` sobre `ArcaAccount.tenantId`: una playa vincula a lo sumo una.
   arcaAccount          ArcaAccount?
