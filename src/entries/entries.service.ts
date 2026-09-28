@@ -63,6 +63,22 @@ type CorrectionEconomicImpact = {
 
 const MONEY_EPSILON = 0.005;
 const UNDERCHARGE_RATIO = 0.95;
+const NON_AUDITED_CORRECTION_FIELDS = new Set<keyof EntryAuditSnapshot>([
+  'color',
+  'notes',
+]);
+const SENSITIVE_CORRECTION_FIELDS = new Set<keyof EntryAuditSnapshot>([
+  'enteredAt',
+  'leftAt',
+  'amountPaid',
+  'payments',
+  'rateId',
+  'rateSnapshotName',
+  'rateSnapshotHourPriceArs',
+  'rateSnapshotStayPriceArs',
+  'rateSnapshotFractionPriceArs',
+  'rateSnapshotMediaEstadiaPriceArs',
+]);
 
 function toDto(entry: PrismaEntry): EntryDto {
   return {
@@ -347,7 +363,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
 function diffSnapshots(
   before: EntryAuditSnapshot,
   after: EntryAuditSnapshot,
-): string[] {
+): Array<keyof EntryAuditSnapshot> {
   const fields: Array<keyof EntryAuditSnapshot> = [
     'plate',
     'color',
@@ -947,20 +963,12 @@ export class EntriesService {
       });
       const afterSnapshot = snapshotEntry(after);
       const changedFields = diffSnapshots(before, afterSnapshot);
-      if (changedFields.length > 0) {
-        const sensitive = changedFields.some((field) =>
-          [
-            'enteredAt',
-            'leftAt',
-            'amountPaid',
-            'payments',
-            'rateId',
-            'rateSnapshotName',
-            'rateSnapshotHourPriceArs',
-            'rateSnapshotStayPriceArs',
-            'rateSnapshotFractionPriceArs',
-            'rateSnapshotMediaEstadiaPriceArs',
-          ].includes(field),
+      const auditableChangedFields = changedFields.filter(
+        (field) => !NON_AUDITED_CORRECTION_FIELDS.has(field),
+      );
+      if (auditableChangedFields.length > 0) {
+        const sensitive = auditableChangedFields.some((field) =>
+          SENSITIVE_CORRECTION_FIELDS.has(field),
         );
         await tx.auditLog.create({
           data: {

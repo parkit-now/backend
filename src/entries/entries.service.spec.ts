@@ -214,6 +214,51 @@ describe('EntriesService', () => {
       expect(auditArg.data.metadata.changedFields).toContain('plate');
     });
 
+    it('no registra auditoría cuando sólo cambian notas o color', async () => {
+      const current = makeEntry();
+      const { service: subject, tx } = makeService(current);
+      tx.entry.findUniqueOrThrow.mockResolvedValue({
+        ...current,
+        color: 'Azul',
+        notes: 'Nota interna actualizada',
+        version: 3,
+      });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { color: 'Azul', notes: 'Nota interna actualizada' },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('registra auditoría si color o notas vienen junto con un campo auditable', async () => {
+      const current = makeEntry();
+      const { service: subject, tx } = makeService(current);
+      tx.entry.findUniqueOrThrow.mockResolvedValue({
+        ...current,
+        plate: 'XYZ999',
+        color: 'Azul',
+        version: 3,
+      });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { plate: 'xyz999', color: 'Azul' },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      const auditArg = tx.auditLog.create.mock.calls[0][0] as {
+        data: { metadata: { changedFields: string[] } };
+      };
+      expect(auditArg.data.metadata.changedFields).toEqual(['plate', 'color']);
+    });
+
     it('rechaza cualquier correccion de una caja cerrada', async () => {
       const { service: subject } = makeService(
         makeEntry({
