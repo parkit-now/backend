@@ -19,6 +19,8 @@ export const AuditActions = {
   ENTITY_PROFILE_UPDATED: 'entity.profile_updated',
   PAYMENT_METHOD_TOGGLED: 'payment_method.toggled',
   ENTRY_CORRECTED: 'entry.corrected',
+  /** El dueño editó los precios de una tarifa y los aplicó a los autos adentro. */
+  RATE_PRICES_PROPAGATED: 'rate.prices_propagated',
   ENTRY_UNDERCHARGED: 'entry.undercharged',
   LPR_EVENT_REGISTERED: 'lpr_event.registered',
   LPR_EVENT_DISMISSED: 'lpr_event.dismissed',

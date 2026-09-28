@@ -1,7 +1,7 @@
 
 import {PaymentMethodType} from '@prisma/client'
 import {Type} from 'class-transformer'
-import {IsIn,IsOptional,IsString} from 'class-validator'
+import {IsIn,IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty} from '@nestjs/swagger'
 
 
@@ -17,4 +17,11 @@ type?: PaymentMethodType;
 @IsOptional()
 @IsString()
 name?: string;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+deletedAt?: Date;
 }

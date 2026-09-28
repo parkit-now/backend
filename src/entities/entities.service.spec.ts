@@ -730,24 +730,45 @@ describe('EntitiesService', () => {
       await expect(
         service.deletePaymentMethod('t-1', owner, 'pm-1'),
       ).rejects.toBeInstanceOf(FormattedException);
-      expect(mockPrisma.paymentMethod.delete).not.toHaveBeenCalled();
+      expect(mockPrisma.paymentMethod.update).not.toHaveBeenCalled();
     });
 
-    it('deletes a custom method and audits', async () => {
+    it('soft-deletes a custom method so the deletion reaches offline clients', async () => {
+      // NO es un DELETE físico, y el test lo fija a propósito. Un DELETE deja
+      // la baja encerrada en la máquina que la ejecutó: el feed incremental
+      // sólo puede mencionar filas que existen, así que todos los demás
+      // equipos conservaban el medio para siempre y se podía seguir cobrando
+      // con él. Estampar `deletedAt` bumpea `syncSeq` y la fila vuelve a
+      // aparecer en el feed como tombstone.
       mockPrisma.paymentMethod.findFirst.mockResolvedValue({
         id: 'pm-2',
         tenantId: 't-1',
         name: 'Naranja X',
         isSystem: false,
       });
-      mockPrisma.paymentMethod.delete.mockResolvedValue({});
+      mockPrisma.paymentMethod.update.mockResolvedValue({});
 
       await service.deletePaymentMethod('t-1', owner, 'pm-2');
 
-      expect(mockPrisma.paymentMethod.delete).toHaveBeenCalledWith({
-        where: { id: 'pm-2' },
-      });
+      expect(mockPrisma.paymentMethod.delete).not.toHaveBeenCalled();
+      const [args] = mockPrisma.paymentMethod.update.mock.calls[0] as [
+        { where: { id: string }; data: { deletedAt: Date } },
+      ];
+      expect(args.where).toEqual({ id: 'pm-2' });
+      expect(args.data.deletedAt).toBeInstanceOf(Date);
       expect(mockAudit.record).toHaveBeenCalled();
+    });
+
+    it('no encuentra un medio ya borrado, así que no re-emite el tombstone', async () => {
+      // El segundo borrado tiene que ser 404, no un re-estampado que vuelva a
+      // empujar la fila por el feed.
+      mockPrisma.paymentMethod.findFirst.mockResolvedValue(null);
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        service.deletePaymentMethod('t-1', owner, 'pm-2'),
+      ).rejects.toBeInstanceOf(FormattedException);
+      expect(mockPrisma.paymentMethod.update).not.toHaveBeenCalled();
     });
   });
 

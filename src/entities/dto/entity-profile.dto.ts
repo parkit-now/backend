@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { PaymentMethodInvoiceMode, PaymentMethodType } from '@prisma/client';
 import type { BranchStatus } from '@prisma/client';
 import { EntityAddressDto } from './entity-address.dto';
@@ -247,6 +247,16 @@ export class PaymentMethodSummaryDto {
 
   @ApiProperty({ format: 'date-time', description: 'Creation timestamp.' })
   createdAt: string;
+
+  @ApiPropertyOptional({
+    format: 'date-time',
+    nullable: true,
+    description:
+      'Baja lógica. No nulo = este medio se borró; el feed de cambios lo ' +
+      'manda igual para que los equipos offline se enteren y lo saquen de su ' +
+      'copia local.',
+  })
+  deletedAt: string | null;
 }
 
 /**

@@ -23,6 +23,11 @@ invoiceMode: PaymentMethodInvoiceMode ;
 })
 createdAt: Date ;
 @ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+deletedAt: Date  | null;
+@ApiProperty({
   type: `integer`,
   format: `int32`,
 })

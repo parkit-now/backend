@@ -23,6 +23,10 @@ export function toPaymentMethodDto(pm: PaymentMethod): PaymentMethodSummaryDto {
     version: pm.version,
     updatedAt: pm.updatedAt.toISOString(),
     createdAt: pm.createdAt.toISOString(),
+    // Viaja SIEMPRE, incluso nulo: es el tombstone. Un cliente que estuvo
+    // offline se entera de la baja porque el feed le manda esta fila con la
+    // fecha puesta; sin el campo no tendría cómo distinguirla de una viva.
+    deletedAt: pm.deletedAt ? pm.deletedAt.toISOString() : null,
   };
 }
 

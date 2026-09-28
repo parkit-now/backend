@@ -86,7 +86,7 @@ export class EntitiesService {
   async getProfile(tenantId: string): Promise<EntityProfileDto> {
     const tenant = await this.loadTenant(tenantId);
     const paymentMethods = await this.prisma.paymentMethod.findMany({
-      where: { tenantId },
+      where: { tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     });
     return toEntityProfileDto(tenant, paymentMethods);
@@ -176,7 +176,7 @@ export class EntitiesService {
   ): Promise<PaymentMethodSummaryDto[]> {
     await this.loadTenant(tenantId);
     const methods = await this.prisma.paymentMethod.findMany({
-      where: { tenantId },
+      where: { tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     });
     return methods.map(toPaymentMethodDto);
@@ -186,6 +186,10 @@ export class EntitiesService {
     tenantId: string,
     query: PaymentMethodChangesQueryDto,
   ): Promise<PaymentMethodChangesResponseDto> {
+    // NO filtra `deletedAt`, a propósito: mandar la fila borrada con su
+    // `deletedAt` no nulo es exactamente cómo la baja llega a un equipo que
+    // estuvo offline. Filtrarla acá reintroduciría el bug que la columna vino
+    // a cerrar. Igual que `RatesService.pullChanges`.
     const items = await this.prisma.paymentMethod.findMany({
       where: { tenantId, syncSeq: { gt: query.afterSeq } },
       orderBy: { syncSeq: 'asc' },
@@ -225,7 +229,7 @@ export class EntitiesService {
     paymentMethodId: string,
   ): Promise<void> {
     const method = await this.prisma.paymentMethod.findFirst({
-      where: { id: paymentMethodId, tenantId },
+      where: { id: paymentMethodId, tenantId, deletedAt: null },
     });
     if (!method) {
       throw new FormattedException(
@@ -245,7 +249,20 @@ export class EntitiesService {
         ErrorCodes.PAYMENT_METHOD_SYSTEM_LOCKED,
       );
     }
-    await this.prisma.paymentMethod.delete({ where: { id: paymentMethodId } });
+    // BAJA LÓGICA, no DELETE.
+    //
+    // Un DELETE físico no deja rastro que el sync pueda contar: el feed
+    // incremental sólo puede mencionar filas que existen, así que la baja
+    // quedaba encerrada en la máquina que la ejecutó y todos los demás equipos
+    // conservaban el medio para siempre, seleccionable al cobrar. Estampando
+    // `deletedAt` se dispara el trigger que bumpea `syncSeq`, la fila vuelve a
+    // aparecer en el feed, y el cliente la borra al ver el tombstone.
+    //
+    // Mismo patrón que `rates` y `vehicles`.
+    await this.prisma.paymentMethod.update({
+      where: { id: paymentMethodId },
+      data: { deletedAt: new Date(), version: { increment: 1 } },
+    });
     await this.audit.record({
       action: AuditActions.PAYMENT_METHOD_TOGGLED,
       entityType: 'payment_method',
@@ -263,7 +280,7 @@ export class EntitiesService {
     dto: TogglePaymentMethodDto,
   ): Promise<PaymentMethodSummaryDto> {
     const method = await this.prisma.paymentMethod.findFirst({
-      where: { id: paymentMethodId, tenantId },
+      where: { id: paymentMethodId, tenantId, deletedAt: null },
     });
     if (!method) {
       throw new FormattedException(

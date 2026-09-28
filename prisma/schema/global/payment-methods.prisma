@@ -55,6 +55,11 @@ model PaymentMethod {
   invoiceMode PaymentMethodInvoiceMode @default(none) @map("invoice_mode")
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  // Baja lógica. El feed de cambios NO la filtra: mandar la fila con
+  // `deletedAt` no nulo es cómo la baja llega a los equipos offline. Sin esto
+  // el borrado quedaba encerrado en la máquina que lo ejecutó.
+  deletedAt DateTime?         @map("deleted_at") @db.Timestamptz(6)
+
   version   Int               @default(1)
   syncSeq   Int               @default(dbgenerated("nextval('payment_methods_sync_seq')")) @map("sync_seq")
   updatedAt DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
