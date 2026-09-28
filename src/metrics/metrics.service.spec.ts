@@ -625,11 +625,52 @@ describe('MetricsService', () => {
         (where) => where.leftAt as DateRange,
       );
 
-      expect(windows).toHaveLength(3);
-      const durations = windows.map((w) => w.lt.getTime() - w.gte.getTime());
+      const durations = windows
+        .slice(0, 3)
+        .map((w) => w.lt.getTime() - w.gte.getTime());
       // A full-day baseline against today-so-far would fake a slump all morning.
       expect(new Set(durations).size).toBe(1);
       expect(durations[0]).toBeLessThanOrEqual(86_400_000);
+    });
+
+    it('adds active open-entry value to today and month projections', async () => {
+      seedDays({
+        [today]: { revenue: 5000, in: 3, out: 2 },
+      });
+      mockTenant.entry.findMany.mockImplementation(({ where }: WhereArgs) => {
+        if (where.leftAt === null) {
+          return Promise.resolve([
+            {
+              enteredAt: new Date(Date.now() - 70 * 60_000),
+              rateSnapshotHourPriceArs: new Prisma.Decimal(1000),
+              rateSnapshotStayPriceArs: new Prisma.Decimal(0),
+              rateSnapshotFractionPriceArs: new Prisma.Decimal(100),
+              rateSnapshotMediaEstadiaPriceArs: new Prisma.Decimal(0),
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const result = await service.getSummary({});
+
+      expect(result.projections.todayWithOpenEntries.openEntries).toBe(1);
+      expect(result.projections.todayWithOpenEntries.value).toBeGreaterThan(
+        result.today.revenue,
+      );
+      expect(result.projections.monthWithOpenEntries.value).toBeGreaterThan(0);
+    });
+
+    it('reports low confidence when trend history is missing', async () => {
+      seedDays({
+        [today]: { revenue: 5000, in: 3, out: 2 },
+      });
+
+      const result = await service.getSummary({});
+
+      expect(result.projections.todayHistoricalForecast.historicalDays).toBe(0);
+      expect(result.projections.todayHistoricalForecast.confidence).toBe('low');
+      expect(result.projections.monthHistoricalForecast.confidence).toBe('low');
     });
 
     it('honours an explicit timezone', async () => {

@@ -5,6 +5,10 @@ FROM oven/bun:1.2-debian AS builder
 
 WORKDIR /app
 
+# Puppeteer (via @arcasdk/pdf) must not download its own Chrome: the runner
+# uses the system Chromium below.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Bring lockfile + manifests first to maximize layer caching.
 COPY package.json bun.lock* ./
 COPY prisma ./prisma
@@ -24,12 +28,23 @@ FROM oven/bun:1.2-debian AS runner
 
 WORKDIR /app
 
-# Prisma needs libssl at runtime; install once and clean apt cache.
+# Prisma needs libssl at runtime; Chromium + fonts render the ARCA invoice
+# PDFs (@arcasdk/pdf prints HTML through Puppeteer). Install once and clean
+# the apt cache.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
+     chromium fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
-ENV NODE_ENV=production
+# Debian's chromium wrapper reads /etc/chromium.d/*: Cloud Run's sandbox
+# doesn't allow Chrome's own, so it runs with --no-sandbox (validated in the
+# Etapa 0 spike).
+RUN echo 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"' \
+  > /etc/chromium.d/parkit-no-sandbox
+
+ENV NODE_ENV=production \
+  PUPPETEER_SKIP_DOWNLOAD=true \
+  PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # PORT is set by Cloud Run - do not override it
 
 COPY package.json bun.lock* ./

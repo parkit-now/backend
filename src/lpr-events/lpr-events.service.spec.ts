@@ -90,6 +90,7 @@ describe('LprEventsService', () => {
       imageUrl: null,
       bestCaptureId: null,
       candidates: [],
+      plateBbox: null,
       version: 1,
       syncSeq: 1,
       createdAt: now,
@@ -174,6 +175,63 @@ describe('LprEventsService', () => {
     };
     expect(updateArg.data.imageStoragePath).toBeNull();
     expect(updateArg.data.imageUrl).toBeNull();
+  });
+
+  describe('plateBbox', () => {
+    const bbox = { x: 0.41, y: 0.62, w: 0.09, h: 0.04 };
+
+    it('persists the bbox that comes with a new event', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(null);
+      mockTenant.lprDetectionEvent.create.mockResolvedValue(row());
+
+      await service.upsert({ ...dto, plateBbox: bbox }, actor);
+
+      const createArg = mockTenant.lprDetectionEvent.create.mock
+        .calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(createArg.data.plateBbox).toEqual(bbox);
+    });
+
+    it('keeps the stored bbox when the client re-upserts without one', async () => {
+      const existing = row({ plateBbox: bbox });
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(existing);
+      mockTenant.lprDetectionEvent.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.lprDetectionEvent.findFirstOrThrow.mockResolvedValue(existing);
+
+      await service.upsert(dto, actor);
+
+      const updateArg = mockTenant.lprDetectionEvent.updateMany.mock
+        .calls[0][0] as { data: Record<string, unknown> };
+      expect(updateArg.data.plateBbox).toEqual(bbox);
+    });
+
+    it('accepts a corrected bbox from the client', async () => {
+      // A diferencia de imageStoragePath, este campo SÍ es del capturador: el
+      // servidor no tiene forma de derivarlo.
+      const nuevo = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+      const existing = row({ plateBbox: bbox });
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(existing);
+      mockTenant.lprDetectionEvent.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.lprDetectionEvent.findFirstOrThrow.mockResolvedValue(existing);
+
+      await service.upsert({ ...dto, plateBbox: nuevo }, actor);
+
+      const updateArg = mockTenant.lprDetectionEvent.updateMany.mock
+        .calls[0][0] as { data: Record<string, unknown> };
+      expect(updateArg.data.plateBbox).toEqual(nuevo);
+    });
+
+    it('maps a missing bbox to null, which means "legacy image format"', async () => {
+      mockTenant.lprDetectionEvent.findFirst.mockResolvedValue(null);
+      mockTenant.lprDetectionEvent.create.mockResolvedValue(
+        row({ plateBbox: null }),
+      );
+
+      const result = await service.upsert(dto, actor);
+
+      expect(result.plateBbox).toBeNull();
+    });
   });
 
   describe('uploadImage', () => {

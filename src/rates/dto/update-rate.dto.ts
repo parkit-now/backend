@@ -94,4 +94,16 @@ export class UpdateRateDto {
   @IsInt()
   @Min(1)
   shortcutNumber?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Si los autos que están adentro con esta tarifa pasan a los precios ' +
+      'nuevos. Ausente o false = se quedan con el precio que tenían al ' +
+      'entrar, que es el comportamiento histórico. Sólo aplica si el body ' +
+      'trae algún precio: mandarlo con un cambio de nombre no hace nada.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  applyToOpenEntries?: boolean;
 }

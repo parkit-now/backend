@@ -100,6 +100,12 @@ export class EntryDto {
   @ApiPropertyOptional({ type: Number })
   ticketNumber: number | null;
 
+  @ApiProperty({
+    description:
+      'Facturada por fuera de Parkit: el checkbox «Facturada» de las playas sin ARCA.',
+  })
+  manuallyInvoiced: boolean;
+
   @ApiProperty({ type: Number })
   version: number;
 

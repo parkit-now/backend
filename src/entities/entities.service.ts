@@ -86,7 +86,7 @@ export class EntitiesService {
   async getProfile(tenantId: string): Promise<EntityProfileDto> {
     const tenant = await this.loadTenant(tenantId);
     const paymentMethods = await this.prisma.paymentMethod.findMany({
-      where: { tenantId },
+      where: { tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     });
     return toEntityProfileDto(tenant, paymentMethods);
@@ -176,7 +176,7 @@ export class EntitiesService {
   ): Promise<PaymentMethodSummaryDto[]> {
     await this.loadTenant(tenantId);
     const methods = await this.prisma.paymentMethod.findMany({
-      where: { tenantId },
+      where: { tenantId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
     });
     return methods.map(toPaymentMethodDto);
@@ -186,6 +186,10 @@ export class EntitiesService {
     tenantId: string,
     query: PaymentMethodChangesQueryDto,
   ): Promise<PaymentMethodChangesResponseDto> {
+    // NO filtra `deletedAt`, a propósito: mandar la fila borrada con su
+    // `deletedAt` no nulo es exactamente cómo la baja llega a un equipo que
+    // estuvo offline. Filtrarla acá reintroduciría el bug que la columna vino
+    // a cerrar. Igual que `RatesService.pullChanges`.
     const items = await this.prisma.paymentMethod.findMany({
       where: { tenantId, syncSeq: { gt: query.afterSeq } },
       orderBy: { syncSeq: 'asc' },
@@ -225,7 +229,7 @@ export class EntitiesService {
     paymentMethodId: string,
   ): Promise<void> {
     const method = await this.prisma.paymentMethod.findFirst({
-      where: { id: paymentMethodId, tenantId },
+      where: { id: paymentMethodId, tenantId, deletedAt: null },
     });
     if (!method) {
       throw new FormattedException(
@@ -245,7 +249,20 @@ export class EntitiesService {
         ErrorCodes.PAYMENT_METHOD_SYSTEM_LOCKED,
       );
     }
-    await this.prisma.paymentMethod.delete({ where: { id: paymentMethodId } });
+    // BAJA LÓGICA, no DELETE.
+    //
+    // Un DELETE físico no deja rastro que el sync pueda contar: el feed
+    // incremental sólo puede mencionar filas que existen, así que la baja
+    // quedaba encerrada en la máquina que la ejecutó y todos los demás equipos
+    // conservaban el medio para siempre, seleccionable al cobrar. Estampando
+    // `deletedAt` se dispara el trigger que bumpea `syncSeq`, la fila vuelve a
+    // aparecer en el feed, y el cliente la borra al ver el tombstone.
+    //
+    // Mismo patrón que `rates` y `vehicles`.
+    await this.prisma.paymentMethod.update({
+      where: { id: paymentMethodId },
+      data: { deletedAt: new Date(), version: { increment: 1 } },
+    });
     await this.audit.record({
       action: AuditActions.PAYMENT_METHOD_TOGGLED,
       entityType: 'payment_method',
@@ -263,7 +280,7 @@ export class EntitiesService {
     dto: TogglePaymentMethodDto,
   ): Promise<PaymentMethodSummaryDto> {
     const method = await this.prisma.paymentMethod.findFirst({
-      where: { id: paymentMethodId, tenantId },
+      where: { id: paymentMethodId, tenantId, deletedAt: null },
     });
     if (!method) {
       throw new FormattedException(
@@ -308,10 +325,32 @@ export class EntitiesService {
       }
     }
 
+    // Facturar al cobrar sólo tiene sentido con ARCA vinculada. Sin esta guarda
+    // el desktop offline —que sólo ve el modo del medio, no la cuenta— le
+    // promete al operario "la factura se emite al sincronizar" y no se emite
+    // nada. Volver a `none` siempre se permite.
+    if (dto.invoiceMode !== undefined && dto.invoiceMode !== 'none') {
+      const arca = await this.prisma.arcaAccount.findUnique({
+        // `tenantId` EXPLÍCITO: `arca_accounts` no está en TENANT_MODELS.
+        where: { tenantId },
+        select: { status: true },
+      });
+      if (arca?.status !== 'linked' && arca?.status !== 'cert_expired') {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          `Payment method ${paymentMethodId} cannot be invoiced: this entity has no ARCA account linked.`,
+          '/tenants/:tenantId/payment-methods',
+          ErrorCodes.ARCA_NOT_LINKED,
+        );
+      }
+    }
+
     const data: Prisma.PaymentMethodUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.isDefault !== undefined) data.isDefault = dto.isDefault;
+    if (dto.invoiceMode !== undefined) data.invoiceMode = dto.invoiceMode;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       // A single default per entity: clearing the rest keeps the invariant.
@@ -333,7 +372,11 @@ export class EntitiesService {
       entityId: paymentMethodId,
       actorUserId: user.id,
       tenantId,
-      metadata: { enabled: dto.enabled, isDefault: dto.isDefault },
+      metadata: {
+        enabled: dto.enabled,
+        isDefault: dto.isDefault,
+        invoiceMode: dto.invoiceMode,
+      },
     });
     return toPaymentMethodDto(updated);
   }

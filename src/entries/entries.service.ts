@@ -1,12 +1,15 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Optional } from '@nestjs/common';
 import { MembershipRole, PaymentIntentStatus, Prisma } from '@prisma/client';
 import type { PaymentMethodType, User, UserMembership } from '@prisma/client';
 import { AuditActions } from '../audit/audit.service';
+import type { CreatedInvoice } from '../arca/invoices.service';
+import { InvoicesService } from '../arca/invoices.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { CloseEntryDto } from './dto/close-entry.dto';
+import { CloseEntryResponseDto } from './dto/close-entry-response.dto';
 import { CorrectEntryDto } from './dto/correct-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
@@ -45,6 +48,7 @@ type EntryAuditSnapshot = {
   rateSnapshotMediaEstadiaPriceArs: number | null;
   cashSessionId: string | null;
   ticketNumber: number | null;
+  manuallyInvoiced: boolean;
   payments: PaymentSnapshot[];
 };
 type CorrectionEconomicImpact = {
@@ -59,6 +63,22 @@ type CorrectionEconomicImpact = {
 
 const MONEY_EPSILON = 0.005;
 const UNDERCHARGE_RATIO = 0.95;
+const NON_AUDITED_CORRECTION_FIELDS = new Set<keyof EntryAuditSnapshot>([
+  'color',
+  'notes',
+]);
+const SENSITIVE_CORRECTION_FIELDS = new Set<keyof EntryAuditSnapshot>([
+  'enteredAt',
+  'leftAt',
+  'amountPaid',
+  'payments',
+  'rateId',
+  'rateSnapshotName',
+  'rateSnapshotHourPriceArs',
+  'rateSnapshotStayPriceArs',
+  'rateSnapshotFractionPriceArs',
+  'rateSnapshotMediaEstadiaPriceArs',
+]);
 
 function toDto(entry: PrismaEntry): EntryDto {
   return {
@@ -93,6 +113,7 @@ function toDto(entry: PrismaEntry): EntryDto {
         : null,
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
+    manuallyInvoiced: entry.manuallyInvoiced,
     source: entry.source,
     vehicleType: entry.vehicleType,
     entryImageUrl: entry.entryImageUrl,
@@ -334,6 +355,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     ),
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
+    manuallyInvoiced: entry.manuallyInvoiced,
     payments: activePayments(entry),
   };
 }
@@ -341,7 +363,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
 function diffSnapshots(
   before: EntryAuditSnapshot,
   after: EntryAuditSnapshot,
-): string[] {
+): Array<keyof EntryAuditSnapshot> {
   const fields: Array<keyof EntryAuditSnapshot> = [
     'plate',
     'color',
@@ -358,6 +380,7 @@ function diffSnapshots(
     'rateSnapshotStayPriceArs',
     'rateSnapshotFractionPriceArs',
     'rateSnapshotMediaEstadiaPriceArs',
+    'manuallyInvoiced',
     'payments',
   ];
 
@@ -443,6 +466,9 @@ export class EntriesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantContext: TenantContextService,
+    // Opcional: la facturación es un agregado del cierre, no una dependencia.
+    // Sin ella (tests, módulos que no importan ArcaModule) se cierra igual.
+    @Optional() private readonly invoices?: InvoicesService,
   ) {}
 
   async createEntry(data: CreateEntryDto): Promise<EntryDto> {
@@ -518,9 +544,10 @@ export class EntriesService {
     data: CloseEntryDto,
     user?: User,
     membership?: UserMembership | null,
-  ): Promise<EntryDto> {
+  ): Promise<CloseEntryResponseDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const leftAt = data.leftAt ? new Date(data.leftAt) : new Date();
+    let createdInvoice: CreatedInvoice | null = null;
 
     // Compute amountPaid: sum of payments[] if provided, otherwise use the
     // directly provided amountPaid (legacy / offline fallback).
@@ -661,10 +688,57 @@ export class EntriesService {
         }
       }
 
+      // La factura nace en la MISMA transacción que el cierre (pendiente o
+      // "no requiere"); se emite recién después del commit, ver abajo.
+      if (this.invoices && computedAmount !== undefined) {
+        createdInvoice = await this.invoices.createForClosedEntry(tx, {
+          tenantId,
+          entryId,
+          total: computedAmount,
+          paymentMethodIds: (data.payments ?? []).map((p) => p.paymentMethodId),
+          receiverCuit: data.invoiceReceiverCuit,
+        });
+
+        // Cobro que tenía que facturarse y no se pudo por el certificado
+        // vencido: queda en la auditoría para que el dueño lo vea en la web
+        // (el operario sólo ve el aviso en el cobro).
+        if (createdInvoice?.errorCode === ErrorCodes.ARCA_CERT_EXPIRED) {
+          await tx.auditLog.create({
+            data: {
+              action: AuditActions.INVOICE_CERT_EXPIRED,
+              entityType: 'entry',
+              entityId: entryId,
+              actorUserId: user?.id ?? null,
+              tenantId,
+              severity: 'warn',
+              metadata: {
+                origin: 'operational_exit',
+                plate: current.plate,
+                cashSessionId: data.cashSessionId ?? current.cashSessionId,
+                ticketNumber: current.ticketNumber,
+                chargedAmount: roundMoney(computedAmount),
+                invoiceId: createdInvoice.invoiceId,
+                actorRole: actorRole(membership),
+              },
+            },
+          });
+        }
+      }
+
       return tx.entry.findUniqueOrThrow({ where: { id: entryId } });
     });
 
-    return toDto(entry);
+    // Después del commit: ARCA puede tardar o estar caída y eso NUNCA puede
+    // deshacer un cobro. `issueAfterClose` no tira.
+    let invoice: CloseEntryResponseDto['invoice'] = null;
+    if (this.invoices && createdInvoice) {
+      const { invoiceId, issueNow } = createdInvoice as CreatedInvoice;
+      invoice = issueNow
+        ? await this.invoices.issueAfterClose(invoiceId, user?.id)
+        : await this.invoices.summaryOrNull(invoiceId);
+    }
+
+    return { ...toDto(entry), invoice };
   }
 
   async correctEntry(
@@ -703,7 +777,12 @@ export class EntriesService {
         );
       }
 
-      if (current.cashSession?.closedAt) {
+      // Marcar «Facturada» a mano no toca la plata: se permite también con la
+      // caja cerrada, que es justo cuando el dueño revisa qué facturó.
+      const onlyManualInvoice = Object.entries(data).every(
+        ([key, value]) => key === 'manuallyInvoiced' || value === undefined,
+      );
+      if (current.cashSession?.closedAt && !onlyManualInvoice) {
         throw new FormattedException(
           'Conflict',
           HttpStatus.CONFLICT,
@@ -716,7 +795,9 @@ export class EntriesService {
       const isActive = current.leftAt === null;
       if (
         isActive &&
-        (data.leftAt !== undefined || data.payments !== undefined)
+        (data.leftAt !== undefined ||
+          data.payments !== undefined ||
+          data.manuallyInvoiced !== undefined)
       ) {
         throw new FormattedException(
           'Conflict',
@@ -764,6 +845,23 @@ export class EntriesService {
         activePayments(current),
         nextPayments,
       );
+      // Una factura emitida no se edita: cambiar el monto dejaría el cobro y
+      // el comprobante fiscal diciendo cosas distintas. Anularla es una nota
+      // de crédito, que se hace desde ARCA (fuera del MVP).
+      if (
+        amountsChanged &&
+        this.invoices &&
+        (await this.invoices.hasIssuedInvoice(tx, tenantId, entryId))
+      ) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'The entry has an issued invoice: its amount cannot change.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.INVOICE_ALREADY_ISSUED,
+        );
+      }
+
       const reasonRequired =
         membership?.role === MembershipRole.operator &&
         (timeChanged || amountsChanged);
@@ -812,6 +910,9 @@ export class EntriesService {
       }
       if (data.payments !== undefined) {
         updateData.amountPaid = nextAmountPaid;
+      }
+      if (data.manuallyInvoiced !== undefined) {
+        updateData.manuallyInvoiced = data.manuallyInvoiced;
       }
 
       await tx.entry.update({
@@ -862,20 +963,12 @@ export class EntriesService {
       });
       const afterSnapshot = snapshotEntry(after);
       const changedFields = diffSnapshots(before, afterSnapshot);
-      if (changedFields.length > 0) {
-        const sensitive = changedFields.some((field) =>
-          [
-            'enteredAt',
-            'leftAt',
-            'amountPaid',
-            'payments',
-            'rateId',
-            'rateSnapshotName',
-            'rateSnapshotHourPriceArs',
-            'rateSnapshotStayPriceArs',
-            'rateSnapshotFractionPriceArs',
-            'rateSnapshotMediaEstadiaPriceArs',
-          ].includes(field),
+      const auditableChangedFields = changedFields.filter(
+        (field) => !NON_AUDITED_CORRECTION_FIELDS.has(field),
+      );
+      if (auditableChangedFields.length > 0) {
+        const sensitive = auditableChangedFields.some((field) =>
+          SENSITIVE_CORRECTION_FIELDS.has(field),
         );
         await tx.auditLog.create({
           data: {

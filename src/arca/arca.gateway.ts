@@ -1,0 +1,151 @@
+import type { ArcaEnvironment } from '@prisma/client';
+
+/** Token de inyección: en runtime `ArcaSdkGateway`, en tests `FakeArcaGateway`. */
+export const ARCA_GATEWAY = Symbol('ARCA_GATEWAY');
+
+/** Con qué certificado y en nombre de qué CUIT se habla con ARCA. */
+export interface ArcaCredentials {
+  readonly cuit: string;
+  readonly certPem: string;
+  /** Clave privada YA descifrada. Nunca se loguea ni se persiste así. */
+  readonly keyPem: string;
+  readonly certFingerprint: string;
+  readonly environment: ArcaEnvironment;
+}
+
+/** Lo que se manda a `FECAESolicitar`, con los nombres de ARCA. */
+export interface ArcaVoucherRequest {
+  readonly PtoVta: number;
+  readonly CbteTipo: number;
+  readonly Concepto: number;
+  readonly DocTipo: number;
+  readonly DocNro: number;
+  readonly CbteDesde: number;
+  readonly CbteHasta: number;
+  readonly CbteFch: string;
+  readonly FchServDesde?: string;
+  readonly FchServHasta?: string;
+  readonly FchVtoPago?: string;
+  readonly ImpTotal: number;
+  readonly ImpTotConc: number;
+  readonly ImpNeto: number;
+  readonly ImpOpEx: number;
+  readonly ImpIVA: number;
+  readonly ImpTrib: number;
+  readonly MonId: string;
+  readonly MonCotiz: number;
+  readonly CondicionIVAReceptorId: number;
+  readonly Iva?: ReadonlyArray<{
+    readonly Id: number;
+    readonly BaseImp: number;
+    readonly Importe: number;
+  }>;
+}
+
+export interface ArcaMessage {
+  readonly code?: number;
+  readonly msg: string;
+}
+
+export interface ArcaVoucherResult {
+  readonly approved: boolean;
+  readonly cae?: string;
+  /** `AAAAMMDD`. */
+  readonly caeVto?: string;
+  /** Observaciones y errores de ARCA, juntos: es lo que se le muestra al dueño. */
+  readonly messages: readonly ArcaMessage[];
+  /** Respuesta cruda, para `arca_requests`. */
+  readonly raw: unknown;
+}
+
+export interface ArcaVoucherInfo {
+  readonly cae: string;
+  /** `AAAAMMDD`. */
+  readonly caeVto?: string;
+  readonly impTotal?: number;
+}
+
+/**
+ * Falla al hablar con ARCA: red, timeout, WSAA, servicio caído. `outcomeUnknown`
+ * dice si el comprobante PUDO haber llegado (timeout de `createVoucher`): en
+ * ese caso no se puede dar por fallido sin consultar antes.
+ */
+export class ArcaUnavailableError extends Error {
+  constructor(
+    message: string,
+    readonly outcomeUnknown = false,
+  ) {
+    super(message);
+    this.name = 'ArcaUnavailableError';
+  }
+}
+
+/**
+ * ARCA respondió, pero con errores de negocio (p. ej. un punto de venta que
+ * no existe). Extiende `ArcaUnavailableError` para que quien ya lo maneja como
+ * "no se pudo" siga igual; quien necesita distinguirlo, pregunta por esta.
+ */
+export class ArcaRequestError extends ArcaUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArcaRequestError';
+  }
+}
+
+/**
+ * El WSAA no entrega otro ticket porque ya hay uno vigente para ese alias
+ * (`coe.alreadyAuthenticated`) que Parkit no tiene guardado con este
+ * certificado. Pasa al renovar: el certificado nuevo comparte el alias del
+ * viejo, y el ticket del viejo sigue vivo hasta 12 h. El WSAA valida la firma
+ * y la autorización antes de contestar esto, así que el certificado es bueno.
+ */
+export class ArcaAlreadyAuthenticatedError extends ArcaUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArcaAlreadyAuthenticatedError';
+  }
+}
+
+/**
+ * El WSAA rechazó el certificado: no es un corte de red, reintentar no sirve.
+ * `not_authorized`: el certificado no tiene asociado el servicio en el
+ * Administrador de Relaciones (o en WSASS). `cert_rejected`: ARCA no confía en
+ * el certificado (vencido, de otro entorno, revocado).
+ */
+export class ArcaAuthError extends Error {
+  constructor(
+    readonly kind: 'not_authorized' | 'cert_rejected',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ArcaAuthError';
+  }
+}
+
+/**
+ * Lo único que Parkit necesita de ARCA. Cada implementación resuelve el ticket
+ * del WSAA por su cuenta: quien llama sólo pasa las credenciales.
+ */
+export interface ArcaGateway {
+  getServerStatus(creds: ArcaCredentials): Promise<unknown>;
+  getIvaReceptorTypes(creds: ArcaCredentials): Promise<unknown>;
+  getSalesPoints(creds: ArcaCredentials): Promise<unknown>;
+  getTaxpayerDetails(creds: ArcaCredentials, cuit: string): Promise<unknown>;
+  /** Último número autorizado (0 si no hay ninguno). */
+  getLastVoucher(
+    creds: ArcaCredentials,
+    ptoVta: number,
+    cbteTipo: number,
+  ): Promise<number>;
+  createVoucher(
+    creds: ArcaCredentials,
+    voucher: ArcaVoucherRequest,
+  ): Promise<ArcaVoucherResult>;
+  /** `null` si ARCA no tiene ese comprobante. */
+  getVoucherInfo(
+    creds: ArcaCredentials,
+    cbteNro: number,
+    ptoVta: number,
+    cbteTipo: number,
+  ): Promise<ArcaVoucherInfo | null>;
+}

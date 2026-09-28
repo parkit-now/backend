@@ -96,6 +96,9 @@ async function bootstrap() {
       origin: '*',
       methods: 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
       allowedHeaders: 'Content-Type, Authorization',
+      // El panel lee el nombre del PDF de la factura de este header; sin
+      // exponerlo, el navegador lo oculta en un request cross-origin.
+      exposedHeaders: 'Content-Disposition',
     });
 
     logger.log('CORS enabled');

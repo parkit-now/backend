@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type Rate } from '@prisma/client';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
@@ -9,6 +9,10 @@ import { ListRatesQueryDto } from './dto/list-rates-query.dto';
 import { RateDto } from './dto/rate.dto';
 import { RateChangesQueryDto } from './dto/rate-changes-query.dto';
 import { UpdateRateDto } from './dto/update-rate.dto';
+import {
+  OpenEntriesByRateDto,
+  OpenEntriesForRateDto,
+} from './dto/open-entries-by-rate.dto';
 
 type PrismaRate = Prisma.RateGetPayload<Record<string, never>>;
 
@@ -26,6 +30,26 @@ type RateChangesResponse = {
   items: RateDto[];
   maxSeq: number;
 };
+
+/**
+ * Si esta edición toca algún precio.
+ *
+ * Es lo que decide si la propagación tiene sentido. El nombre, el atajo y el
+ * estado activo/inactivo no cambian lo que se cobra, así que una edición que
+ * sólo toca eso NO propaga nada aunque venga el flag en true.
+ *
+ * `autoFractionPrice` a propósito no cuenta: es una preferencia del formulario
+ * y el motor de cobro ni la lee. Pero prenderla reescribe `fractionPriceArs`,
+ * y ese sí cuenta — el disparador es siempre el campo de precio.
+ */
+function hasPriceChange(data: UpdateRateDto): boolean {
+  return (
+    data.hourPriceArs !== undefined ||
+    data.fractionPriceArs !== undefined ||
+    data.mediaEstadiaPriceArs !== undefined ||
+    data.stayPriceArs !== undefined
+  );
+}
 
 @Injectable()
 export class RatesService {
@@ -91,12 +115,42 @@ export class RatesService {
     return { items: items.map(toDto), maxSeq };
   }
 
+  /**
+   * Cuántos autos hay adentro con cada tarifa.
+   *
+   * Lo consume la web para decidir si preguntar al guardar un cambio de
+   * precios. Usa el índice `entries_tenant_left_at_idx`.
+   */
+  async countOpenEntriesByRate(): Promise<OpenEntriesByRateDto> {
+    const tenantPrisma = this.prisma.getTenantClient();
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+
+    const groups = await tenantPrisma.entry.groupBy({
+      by: ['rateId'],
+      where: { tenantId, leftAt: null },
+      _count: { _all: true },
+    });
+
+    const counts: OpenEntriesForRateDto[] = [];
+    let withoutRate = 0;
+    for (const group of groups) {
+      if (group.rateId === null) {
+        withoutRate = group._count._all;
+        continue;
+      }
+      counts.push({ rateId: group.rateId, openEntries: group._count._all });
+    }
+
+    return { counts, withoutRate };
+  }
+
   async updateRate(
     rateId: string,
     expectedVersion: number,
     data: UpdateRateDto,
   ) {
-    const tenantPrisma = this.prisma.getTenantClient();
+    // Sin `getTenantClient()`: todo corre dentro de `$transaction`, que entrega
+    // un cliente crudo. Por eso cada `where` de acá abajo lleva `tenantId`.
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
     const updateData: Prisma.RateUpdateManyMutationInput = {
@@ -118,31 +172,103 @@ export class RatesService {
     if (data.shortcutNumber !== undefined)
       updateData.shortcutNumber = data.shortcutNumber;
 
-    const result = await tenantPrisma.rate.updateMany({
-      where: {
-        tenantId,
-        id: rateId,
-        version: expectedVersion,
-        deletedAt: null,
-      },
-      data: updateData,
+    return this.prisma.$transaction(async (tx) => {
+      // `$transaction` entrega un cliente CRUDO, sin la extensión de tenant, así
+      // que cada `where` lleva `tenantId` explícito. No es decorativo: sin eso
+      // se tocarían filas de otro estacionamiento.
+      const result = await tx.rate.updateMany({
+        where: {
+          tenantId,
+          id: rateId,
+          version: expectedVersion,
+          deletedAt: null,
+        },
+        data: updateData,
+      });
+
+      // El chequeo de versión va PRIMERO: así una edición que llega con una
+      // versión vieja no propaga nada a las estadías.
+      if (result.count === 0) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'Rate was changed by another write. Refresh and retry with the latest version.',
+          `/tenants/:tenantId/rates/${rateId}`,
+          ErrorCodes.CONFLICT,
+        );
+      }
+
+      const updated = await tx.rate.findUniqueOrThrow({
+        where: { id: rateId },
+      });
+
+      if (data.applyToOpenEntries === true && hasPriceChange(data)) {
+        await this.propagatePricesToOpenEntries({
+          tx,
+          tenantId,
+          rate: updated,
+        });
+      }
+
+      return toDto(updated);
+    });
+  }
+
+  /**
+   * Reescribe el snapshot de precios de las estadías ABIERTAS con esta tarifa.
+   *
+   * ESTO ROMPE, A PEDIDO, LA INMUTABILIDAD DEL SNAPSHOT
+   *
+   * El snapshot se congela al entrar justamente para que una edición de tarifa
+   * no le cambie el precio a un auto que ya está adentro. Sigue siendo así por
+   * defecto: esto corre SÓLO si el dueño contestó que sí a una pregunta
+   * explícita. Las estadías ya cerradas no se tocan nunca.
+   *
+   * SE ESCRIBEN LOS CUATRO PRECIOS, aunque haya cambiado uno solo, y salen de
+   * la fila ya actualizada y no del DTO parcial. Es lo que cumple lo que
+   * promete el diálogo —"quedan con la tarifa tal como está ahora"— y evita
+   * dejar en un estado mixto a una estadía cuyo snapshot ya hubiera divergido,
+   * por ejemplo porque alguien la corrigió a mano.
+   *
+   * `rateSnapshotName` NO se toca: la pregunta es sobre precios. Renombrar una
+   * tarifa no pregunta nada, así que propagar el nombre acá sería una regla
+   * inconsistente y una sorpresa en el ticket.
+   *
+   * NO SE INCREMENTA `version`, Y ES DELIBERADO
+   *
+   * `version` en `entries` es el token de concurrencia del EGRESO. Si este lote
+   * lo incrementara, todo cobro que llegue con la versión cacheada rebotaría
+   * con 409 — y un 409 en el egreso es un auto trabado en la barrera porque el
+   * dueño tocó un precio desde la web. No hay lost-update que proteger: los
+   * conjuntos de columnas son disjuntos, `CloseEntryDto` no tiene ningún campo
+   * de snapshot. El trigger bumpea `sync_seq` igual, así que la propagación
+   * viaja por `/entries/changes` sin invalidarle la versión a nadie.
+   */
+  private async propagatePricesToOpenEntries(input: {
+    tx: Prisma.TransactionClient;
+    tenantId: string;
+    rate: Rate;
+  }): Promise<void> {
+    const { tx, tenantId, rate } = input;
+
+    // `findMany` + `updateMany` por ids, y no un `updateMany` directo por
+    // `rateId`: así el conjunto que se audita es EXACTAMENTE el que se escribió.
+    const targets = await tx.entry.findMany({
+      where: { tenantId, rateId: rate.id, leftAt: null },
+      select: { id: true, plate: true, ticketNumber: true },
     });
 
-    if (result.count === 0) {
-      throw new FormattedException(
-        'Conflict',
-        HttpStatus.CONFLICT,
-        'Rate was changed by another write. Refresh and retry with the latest version.',
-        `/tenants/:tenantId/rates/${rateId}`,
-        ErrorCodes.CONFLICT,
-      );
-    }
+    if (targets.length === 0) return;
 
-    return toDto(
-      await tenantPrisma.rate.findUniqueOrThrow({
-        where: { id: rateId },
-      }),
-    );
+    await tx.entry.updateMany({
+      where: { tenantId, id: { in: targets.map((t) => t.id) } },
+      data: {
+        rateSnapshotHourPriceArs: rate.hourPriceArs,
+        rateSnapshotFractionPriceArs: rate.fractionPriceArs,
+        rateSnapshotMediaEstadiaPriceArs: rate.mediaEstadiaPriceArs,
+        rateSnapshotStayPriceArs: rate.stayPriceArs,
+      },
+    });
   }
 
   /**

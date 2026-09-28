@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { PaymentMethodType } from '@prisma/client';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { PaymentMethodInvoiceMode, PaymentMethodType } from '@prisma/client';
 import type { BranchStatus } from '@prisma/client';
 import { EntityAddressDto } from './entity-address.dto';
 import { LPR_IMAGE_RETENTION_DAYS_OPTIONS } from './update-entity-profile.dto';
@@ -216,6 +216,15 @@ export class PaymentMethodSummaryDto {
 
   @ApiProperty({
     description:
+      'Facturación al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = queda pendiente para el Historial.',
+    enum: PaymentMethodInvoiceMode,
+    enumName: 'PaymentMethodInvoiceMode',
+    example: PaymentMethodInvoiceMode.none,
+  })
+  invoiceMode: PaymentMethodInvoiceMode;
+
+  @ApiProperty({
+    description:
       'Whether this is a built-in system method — `cash` and `transfer` (seeded with the entity), plus `mercadopago_qr` (created when the Mercado Pago account is linked). System methods can be renamed and enabled/disabled, but never deleted. Enabling an integration-backed one (`mercadopago_qr`) requires its account to be linked.',
     example: true,
   })
@@ -238,6 +247,16 @@ export class PaymentMethodSummaryDto {
 
   @ApiProperty({ format: 'date-time', description: 'Creation timestamp.' })
   createdAt: string;
+
+  @ApiPropertyOptional({
+    format: 'date-time',
+    nullable: true,
+    description:
+      'Baja lógica. No nulo = este medio se borró; el feed de cambios lo ' +
+      'manda igual para que los equipos offline se enteren y lo saquen de su ' +
+      'copia local.',
+  })
+  deletedAt: string | null;
 }
 
 /**

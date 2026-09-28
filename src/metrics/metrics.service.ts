@@ -5,6 +5,7 @@ import { TenantContextService } from '../database/tenant-context.service';
 import { readCapacity } from '../entities/entity-settings';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import { calcStayPrice } from '../entries/pricing';
 import { MetricsTzQueryDto } from './dto/metrics-tz-query.dto';
 import { MetricsWindowQueryDto } from './dto/metrics-window-query.dto';
 import {
@@ -27,6 +28,8 @@ import {
   DayComparisonDto,
   DayTotalsDto,
   MetricsSummaryDto,
+  ProjectionConfidence,
+  RevenueProjectionDto,
 } from './dto/summary-response.dto';
 import {
   Bucket,
@@ -56,6 +59,8 @@ const TOP_PLATES_INSTANCE = '/tenants/:tenantId/metrics/top-plates';
 const DEFAULT_TOP_PLATES = 10;
 
 const MS_PER_MINUTE = 60_000;
+const HISTORICAL_WEEKDAY_SAMPLES = 8;
+const MONTH_REMAINING_WEEKDAY_SAMPLES = 4;
 
 /** The part of a cash session that defines its window. */
 type SessionBounds = { id: string; openedAt: Date; closedAt: Date | null };
@@ -87,6 +92,12 @@ function deltaPct(current: number, baseline: number): number | null {
  */
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function confidenceFor(samples: number): ProjectionConfidence {
+  if (samples >= 6) return 'high';
+  if (samples >= 3) return 'medium';
+  return 'low';
 }
 
 /**
@@ -180,16 +191,42 @@ export class MetricsService {
     const previousDayKey = shiftDayKey(day, -1);
     const previousWeekKey = shiftDayKey(day, -7);
 
-    const [occupancy, today, previousDay, previousWeek, pendingLprEvents] =
+    const [
+      occupancy,
+      today,
+      previousDay,
+      previousWeek,
+      pendingLprEvents,
+      openPortfolio,
+      monthRevenue,
+    ] = await Promise.all([
+      this.computeOccupancy(),
+      this.dayTotals(day, tz, elapsedMs),
+      this.dayTotals(previousDayKey, tz, elapsedMs),
+      this.dayTotals(previousWeekKey, tz, elapsedMs),
+      tenantPrisma.lprDetectionEvent.count({
+        where: { status: LprDetectionStatus.pending, archivedAt: null },
+      }),
+      this.openEntriesProjection(generatedAt),
+      this.monthToDateRevenue(day, tz, generatedAt),
+    ]);
+
+    const [todayHistoricalForecast, monthHistoricalForecast] =
       await Promise.all([
-        this.computeOccupancy(),
-        this.dayTotals(day, tz, elapsedMs),
-        this.dayTotals(previousDayKey, tz, elapsedMs),
-        this.dayTotals(previousWeekKey, tz, elapsedMs),
-        tenantPrisma.lprDetectionEvent.count({
-          where: { status: LprDetectionStatus.pending, archivedAt: null },
-        }),
+        this.todayHistoricalForecast(day, tz, elapsedMs, today.revenue),
+        this.monthHistoricalForecast(day, tz, monthRevenue),
       ]);
+
+    const todayWithOpenEntries = this.projection(
+      today.revenue + openPortfolio.value,
+      openPortfolio.count,
+      0,
+    );
+    const monthWithOpenEntries = this.projection(
+      monthRevenue + openPortfolio.value,
+      openPortfolio.count,
+      0,
+    );
 
     return {
       tz,
@@ -202,6 +239,12 @@ export class MetricsService {
         previousWeek: this.withDeltas(today, previousWeek),
       },
       alerts: { pendingLprEvents },
+      projections: {
+        todayWithOpenEntries,
+        todayHistoricalForecast,
+        monthWithOpenEntries,
+        monthHistoricalForecast,
+      },
     };
   }
 
@@ -738,6 +781,144 @@ export class MetricsService {
       vehiclesIn,
       vehiclesOut: closed._count,
     };
+  }
+
+  private projection(
+    value: number,
+    openEntries: number,
+    historicalDays: number,
+  ): RevenueProjectionDto {
+    return {
+      value: roundMoney(value),
+      openEntries,
+      historicalDays,
+      confidence: confidenceFor(historicalDays),
+    };
+  }
+
+  private async openEntriesProjection(
+    asOf: Date,
+  ): Promise<{ value: number; count: number }> {
+    const rows = await this.prisma.getTenantClient().entry.findMany({
+      where: { leftAt: null },
+      select: {
+        enteredAt: true,
+        rateSnapshotHourPriceArs: true,
+        rateSnapshotStayPriceArs: true,
+        rateSnapshotFractionPriceArs: true,
+        rateSnapshotMediaEstadiaPriceArs: true,
+      },
+    });
+
+    const value = rows.reduce((sum, entry) => {
+      const elapsedMinutes =
+        (asOf.getTime() - entry.enteredAt.getTime()) / MS_PER_MINUTE;
+      return (
+        sum +
+        calcStayPrice(elapsedMinutes, {
+          hour: Number(entry.rateSnapshotHourPriceArs ?? 0),
+          stay: Number(entry.rateSnapshotStayPriceArs ?? 0),
+          fraction: Number(entry.rateSnapshotFractionPriceArs ?? 0),
+          mediaEstadia: Number(entry.rateSnapshotMediaEstadiaPriceArs ?? 0),
+        })
+      );
+    }, 0);
+
+    return { value: roundMoney(value), count: rows.length };
+  }
+
+  private async fullDayRevenue(dayKey: DayKey, tz: string): Promise<number> {
+    const { gte, lt } = partialDayRangeIn(dayKey, tz, Number.MAX_SAFE_INTEGER);
+    const result = await this.prisma.getTenantClient().entry.aggregate({
+      _sum: { amountPaid: true },
+      where: { leftAt: { gte, lt } },
+    });
+    return Number(result._sum.amountPaid ?? 0);
+  }
+
+  private async monthToDateRevenue(
+    dayKey: DayKey,
+    tz: string,
+    asOf: Date,
+  ): Promise<number> {
+    const monthStart = `${dayKey.slice(0, 8)}01`;
+    const from = partialDayRangeIn(monthStart, tz, 0).gte;
+    const result = await this.prisma.getTenantClient().entry.aggregate({
+      _sum: { amountPaid: true },
+      where: { leftAt: { gte: from, lt: asOf } },
+    });
+    return Number(result._sum.amountPaid ?? 0);
+  }
+
+  private async todayHistoricalForecast(
+    dayKey: DayKey,
+    tz: string,
+    elapsedMs: number,
+    todayRevenue: number,
+  ): Promise<RevenueProjectionDto> {
+    const samples: number[] = [];
+
+    for (
+      let cursor = shiftDayKey(dayKey, -7);
+      samples.length < HISTORICAL_WEEKDAY_SAMPLES;
+      cursor = shiftDayKey(cursor, -7)
+    ) {
+      const partial = await this.dayTotals(cursor, tz, elapsedMs);
+      const full = await this.fullDayRevenue(cursor, tz);
+      if (partial.revenue > 0 && full >= partial.revenue) {
+        samples.push(full / partial.revenue);
+      }
+      if (cursor < shiftDayKey(dayKey, -7 * 24)) break;
+    }
+
+    if (samples.length === 0 || todayRevenue === 0) {
+      return this.projection(todayRevenue, 0, samples.length);
+    }
+
+    const factor =
+      samples.reduce((sum, sample) => sum + sample, 0) / samples.length;
+    return this.projection(todayRevenue * factor, 0, samples.length);
+  }
+
+  private async monthHistoricalForecast(
+    dayKey: DayKey,
+    tz: string,
+    monthRevenue: number,
+  ): Promise<RevenueProjectionDto> {
+    const remainingDays = this.remainingDaysInMonth(dayKey);
+    let projectedRemainder = 0;
+    let samples = 0;
+
+    for (const remaining of remainingDays) {
+      const sameWeekday: number[] = [];
+      for (
+        let cursor = shiftDayKey(remaining, -7);
+        sameWeekday.length < MONTH_REMAINING_WEEKDAY_SAMPLES;
+        cursor = shiftDayKey(cursor, -7)
+      ) {
+        const revenue = await this.fullDayRevenue(cursor, tz);
+        if (revenue > 0) sameWeekday.push(revenue);
+        if (cursor < shiftDayKey(dayKey, -7 * 24)) break;
+      }
+      if (sameWeekday.length === 0) continue;
+      samples += sameWeekday.length;
+      projectedRemainder +=
+        sameWeekday.reduce((sum, revenue) => sum + revenue, 0) /
+        sameWeekday.length;
+    }
+
+    return this.projection(monthRevenue + projectedRemainder, 0, samples);
+  }
+
+  private remainingDaysInMonth(dayKey: DayKey): DayKey[] {
+    const [year, month] = dayKey.split('-').map(Number);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const currentDay = Number(dayKey.slice(8, 10));
+    const days: DayKey[] = [];
+    for (let day = currentDay + 1; day <= daysInMonth; day++) {
+      days.push(`${dayKey.slice(0, 8)}${String(day).padStart(2, '0')}`);
+    }
+    return days;
   }
 
   private withDeltas(

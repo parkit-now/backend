@@ -1,4 +1,5 @@
 
+import {Prisma} from '@prisma/client'
 import {Type} from 'class-transformer'
 import {IsOptional,IsRFC3339,IsString} from 'class-validator'
 import {ApiProperty} from '@nestjs/swagger'
@@ -66,4 +67,6 @@ imageDeletedAt?: Date;
 @IsOptional()
 @IsString()
 bestCaptureId?: string;
+@IsOptional()
+plateBbox?: Prisma.InputJsonValue;
 }

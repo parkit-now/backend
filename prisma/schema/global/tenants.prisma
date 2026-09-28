@@ -92,6 +92,12 @@ model Tenant {
   // Intentos de cobro con QR (global/payment-intents.prisma).
   paymentIntents       PaymentIntent[]
 
+  // `@unique` sobre `ArcaAccount.tenantId`: una playa vincula a lo sumo una.
+  arcaAccount          ArcaAccount?
+  arcaRequests         ArcaRequest[]
+  invoiceReceivers     InvoiceReceiver[]
+  invoices             Invoice[]
+
   @@index([cuit])
   @@map("tenants")
 }

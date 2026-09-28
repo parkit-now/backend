@@ -16,11 +16,26 @@ describe('RatesService', () => {
       updateMany: jest.fn(),
       deleteMany: jest.fn(),
       findUniqueOrThrow: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    entry: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    auditLog: {
+      create: jest.fn(),
     },
   };
 
   const mockPrisma = {
     getTenantClient: jest.fn().mockReturnValue(mockTenant),
+    // `updateRate` corre dentro de una transacción. El doble ejecuta el
+    // callback con el mismo mock, así que las aserciones siguen siendo sobre
+    // `mockTenant` — lo que importa verificar es QUÉ se escribe, no que Prisma
+    // sepa abrir una transacción.
+    $transaction: jest.fn((cb: (tx: typeof mockTenant) => unknown): unknown =>
+      cb(mockTenant),
+    ),
   };
 
   const mockTenantContext = {
@@ -156,6 +171,167 @@ describe('RatesService', () => {
           where: { syncSeq: { gt: 5 } },
         }),
       );
+    });
+  });
+
+  describe('updateRate y la propagación a los autos adentro', () => {
+    const abiertas = [
+      { id: 'e-1', plate: 'AA111AA', ticketNumber: 1 },
+      { id: 'e-2', plate: 'BB222BB', ticketNumber: 2 },
+    ];
+
+    function tarifaEditada() {
+      const before = makeRate();
+      const after = makeRate({
+        hourPriceArs: new Prisma.Decimal(3900),
+        version: 2,
+      });
+      mockTenant.rate.findFirst.mockResolvedValue(before);
+      mockTenant.rate.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.rate.findUniqueOrThrow.mockResolvedValue(after);
+      return after;
+    }
+
+    it('reescribe los cuatro precios del snapshot desde la tarifa ya actualizada', async () => {
+      const after = tarifaEditada();
+      mockTenant.entry.findMany.mockResolvedValue(abiertas);
+      mockTenant.entry.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.updateRate('r-1', 1, {
+        hourPriceArs: 3900,
+        applyToOpenEntries: true,
+      });
+
+      const [args] = mockTenant.entry.updateMany.mock.calls[0] as [
+        { where: unknown; data: Record<string, unknown> },
+      ];
+      expect(args.where).toEqual({
+        tenantId: 'tenant-1',
+        id: { in: ['e-1', 'e-2'] },
+      });
+      expect(args.data).toEqual({
+        rateSnapshotHourPriceArs: after.hourPriceArs,
+        rateSnapshotFractionPriceArs: after.fractionPriceArs,
+        rateSnapshotMediaEstadiaPriceArs: after.mediaEstadiaPriceArs,
+        rateSnapshotStayPriceArs: after.stayPriceArs,
+      });
+    });
+
+    it('NO incrementa la version de las estadías: un 409 al salir es un auto trabado', async () => {
+      // `version` en `entries` es el token de concurrencia del EGRESO. Si este
+      // lote lo tocara, todo cobro que llegue con la versión cacheada rebotaría
+      // con 409 y el auto se quedaría en la barrera porque el dueño cambió un
+      // precio desde la web. No hay lost-update que proteger: el cobro no
+      // escribe ningún campo del snapshot.
+      tarifaEditada();
+      mockTenant.entry.findMany.mockResolvedValue(abiertas);
+      mockTenant.entry.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.updateRate('r-1', 1, {
+        hourPriceArs: 3900,
+        applyToOpenEntries: true,
+      });
+
+      const [args] = mockTenant.entry.updateMany.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      expect(args.data).not.toHaveProperty('version');
+    });
+
+    it('no toca el nombre del snapshot', async () => {
+      // Renombrar una tarifa no pregunta nada, así que propagar el nombre sería
+      // una regla inconsistente y una sorpresa en el ticket.
+      tarifaEditada();
+      mockTenant.entry.findMany.mockResolvedValue(abiertas);
+      mockTenant.entry.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.updateRate('r-1', 1, {
+        name: 'OTRO NOMBRE',
+        hourPriceArs: 3900,
+        applyToOpenEntries: true,
+      });
+
+      const [args] = mockTenant.entry.updateMany.mock.calls[0] as [
+        { data: Record<string, unknown> },
+      ];
+      expect(args.data).not.toHaveProperty('rateSnapshotName');
+    });
+
+    it('sin el flag no toca ninguna estadía', async () => {
+      // La regresión del comportamiento histórico: por defecto el snapshot es
+      // inmutable y un auto adentro conserva el precio con el que entró.
+      tarifaEditada();
+
+      await service.updateRate('r-1', 1, { hourPriceArs: 3900 });
+
+      expect(mockTenant.entry.findMany).not.toHaveBeenCalled();
+      expect(mockTenant.entry.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('con el flag pero sin cambios de precio, no hace nada y no falla', async () => {
+      // Un 400 acá mandaría a `failed` una operación encolada offline y
+      // dejaría un pendiente que nadie puede destrabar.
+      tarifaEditada();
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        service.updateRate('r-1', 1, {
+          name: 'OTRO NOMBRE',
+          applyToOpenEntries: true,
+        }),
+      ).resolves.toBeDefined();
+
+      expect(mockTenant.entry.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('sin autos adentro no escribe ni una fila de auditoría', async () => {
+      tarifaEditada();
+      mockTenant.entry.findMany.mockResolvedValue([]);
+
+      await service.updateRate('r-1', 1, {
+        hourPriceArs: 3900,
+        applyToOpenEntries: true,
+      });
+
+      expect(mockTenant.entry.updateMany).not.toHaveBeenCalled();
+      expect(mockTenant.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('una version vieja no propaga nada', async () => {
+      // El chequeo de versión corre primero, dentro de la misma transacción.
+      mockTenant.rate.findFirst.mockResolvedValue(makeRate());
+      mockTenant.rate.updateMany.mockResolvedValue({ count: 0 });
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        service.updateRate('r-1', 99, {
+          hourPriceArs: 3900,
+          applyToOpenEntries: true,
+        }),
+      ).rejects.toBeInstanceOf(FormattedException);
+
+      expect(mockTenant.entry.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('propaga precios a autos adentro sin generar auditoría', async () => {
+      tarifaEditada();
+      mockTenant.entry.findMany.mockResolvedValue(abiertas);
+      mockTenant.entry.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.updateRate('r-1', 1, {
+        hourPriceArs: 3900,
+        applyToOpenEntries: true,
+      });
+
+      const [args] = mockTenant.entry.updateMany.mock.calls[0] as [
+        { data: Record<string, unknown>; where: Record<string, unknown> },
+      ];
+      expect(args.where).toEqual({
+        tenantId: 'tenant-1',
+        id: { in: ['e-1', 'e-2'] },
+      });
+      expect(Number(args.data.rateSnapshotHourPriceArs)).toBe(3900);
+      expect(mockTenant.auditLog.create).not.toHaveBeenCalled();
     });
   });
 

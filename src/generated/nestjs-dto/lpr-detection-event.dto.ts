@@ -57,6 +57,7 @@ imageUrl: string  | null;
 imageDeletedAt: Date  | null;
 bestCaptureId: string  | null;
 candidates: Prisma.JsonValue ;
+plateBbox: Prisma.JsonValue  | null;
 @ApiProperty({
   type: `integer`,
   format: `int32`,

@@ -9,6 +9,8 @@ model Entry {
   enteredAt  DateTime  @default(now()) @map("entered_at")
   leftAt     DateTime? @map("left_at")
   amountPaid Decimal?  @map("amount_paid") @db.Decimal(10, 2)
+  /// Checkbox "Facturada" para las playas sin integración con ARCA.
+  manuallyInvoiced Boolean @default(false) @map("manually_invoiced")
 
   // LPR fields — populated on automatic ingress; null for manual entries.
   source         String      @default("manual") @db.VarChar(10)
@@ -24,7 +26,15 @@ model Entry {
   syncSeq   Int      @default(dbgenerated("nextval('entries_sync_seq')")) @map("sync_seq")
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  // Rate snapshot — captured at entry creation, immutable afterwards.
+  // Snapshot de tarifa — se congela al ingresar.
+  //
+  // Ninguna edición de tarifa lo mueve por sí sola. Hay exactamente DOS formas
+  // de reescribirlo, las dos con una persona decidiendo: corregir la estadía y
+  // elegir otra tarifa (`correctEntry`), o que el dueño edite los PRECIOS y
+  // responda que sí a pasar los autos que están adentro (`updateRate` con
+  // `applyToOpenEntries`). Las estadías ya cerradas no se tocan nunca.
+  //
+  // El cobro sale SIEMPRE de acá, nunca de releer la tarifa viva.
   rateId                       String?  @map("rate_id") @db.Uuid
   rateSnapshotName             String?  @map("rate_snapshot_name") @db.VarChar(120)
   rateSnapshotHourPriceArs     Decimal? @map("rate_snapshot_hour_price_ars") @db.Decimal(12, 2)
@@ -46,6 +56,7 @@ model Entry {
   cashSession CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
 
   paymentTransactions PaymentTransaction[]
+  invoice             Invoice?
   lprDetectionEvents  LprDetectionEvent[]
   // Intentos de cobro con QR de Mercado Pago (global/payment-intents.prisma).
   // Es una lista, pero a lo sumo UNO puede estar vivo a la vez: lo garantiza el

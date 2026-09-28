@@ -1,0 +1,77 @@
+// Factura electrónica de una estadía. Migración 20260924235900_arca_invoicing.sql.
+//
+// Tenant-local y syncable (está en `TENANT_MODELS`): el desktop la baja por
+// `/changes`. La crea el backend, no el cliente, así que el id sí tiene default.
+
+enum InvoiceStatus {
+  not_required
+  pending
+  issuing
+  issued
+  error
+
+  @@map("invoice_status")
+}
+
+model Invoice {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// UNIQUE: nunca dos facturas para la misma estadía.
+  entryId String @unique @map("entry_id") @db.Uuid
+  entry   Entry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  status           InvoiceStatus
+  errorCode        String?       @map("error_code") @db.VarChar(64)
+  errorMessage     String?       @map("error_message")
+  attempts         Int           @default(0)
+  issuingStartedAt DateTime?     @map("issuing_started_at") @db.Timestamptz(6)
+
+  environment  ArcaEnvironment?
+  emisorCuit   String?          @map("emisor_cuit") @db.VarChar(11)
+  cbteTipo     Int?             @map("cbte_tipo") @db.SmallInt
+  ptoVta       Int?             @map("pto_vta")
+  /// Se guarda ANTES de llamar a ARCA para poder reconciliar si la llamada se
+  /// corta. Si ARCA rechaza, vuelve a null.
+  cbteNro      Int?             @map("cbte_nro")
+  cae          String?          @db.VarChar(14)
+  caeVto       DateTime?        @map("cae_vto") @db.Date
+  cbteFch      DateTime?        @map("cbte_fch") @db.Date
+  fchServDesde DateTime?        @map("fch_serv_desde") @db.Date
+  fchServHasta DateTime?        @map("fch_serv_hasta") @db.Date
+
+  receptorDocTipo        Int?    @map("receptor_doc_tipo") @db.SmallInt
+  receptorDocNro         String? @map("receptor_doc_nro") @db.VarChar(11)
+  receptorNombre         String? @map("receptor_nombre")
+  receptorCondicionIvaId Int?    @map("receptor_condicion_iva_id") @db.SmallInt
+
+  impTotal Decimal  @map("imp_total") @db.Decimal(12, 2)
+  impNeto  Decimal? @map("imp_neto") @db.Decimal(12, 2)
+  impIva   Decimal? @map("imp_iva") @db.Decimal(12, 2)
+  ivaRate  Decimal? @map("iva_rate") @db.Decimal(5, 2)
+
+  // Foto del emisor al emitir: el PDF dice lo que decía ese día.
+  emisorRazonSocial     String?           @map("emisor_razon_social")
+  emisorDomicilio       String?           @map("emisor_domicilio")
+  emisorCondicionIva    ArcaTaxCondition? @map("emisor_condicion_iva")
+  emisorIibb            String?           @map("emisor_iibb") @db.VarChar(30)
+  emisorInicioActividad DateTime?         @map("emisor_inicio_actividad") @db.Date
+
+  issuedByUserId String?   @map("issued_by_user_id") @db.Uuid
+  issuedAt       DateTime? @map("issued_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  version   Int      @default(1)
+  syncSeq   Int      @default(dbgenerated("nextval('invoices_sync_seq')")) @map("sync_seq")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  arcaRequests ArcaRequest[]
+
+  // `invoices_voucher_number_idx` (único, parcial WHERE cbte_nro IS NOT NULL) e
+  // `invoices_issuing_idx` (parcial) viven sólo en SQL.
+  @@index([tenantId, syncSeq], map: "invoices_tenant_sync_seq_idx")
+  @@index([tenantId, status], map: "invoices_tenant_status_idx")
+  @@map("invoices")
+}

@@ -33,6 +33,7 @@ import { RateChangesQueryDto } from './dto/rate-changes-query.dto';
 import { RateChangesResponseDto } from './dto/rate-changes-response.dto';
 import { RateDto } from './dto/rate.dto';
 import { UpdateRateDto } from './dto/update-rate.dto';
+import { OpenEntriesByRateDto } from './dto/open-entries-by-rate.dto';
 import { RatesService } from './rates.service';
 
 @ApiTags('Rates')
@@ -63,6 +64,28 @@ export class RatesController {
   })
   async pullChanges(@Query() query: RateChangesQueryDto) {
     return this.ratesService.pullChanges(query);
+  }
+
+  /**
+   * Va declarado ANTES de cualquier `@Get(':rateId')` futuro: `'open-entries'`
+   * es un literal, y si algún día se agrega una ruta por id, Nest resolvería
+   * ésta como un id si quedara después.
+   */
+  @Get('open-entries')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    summary: 'Cuántos autos hay adentro con cada tarifa',
+    description:
+      'Para decidir si preguntar al dueño si un cambio de precios alcanza a ' +
+      'los autos que ya están en el estacionamiento.',
+  })
+  @ApiOkResponse({ type: OpenEntriesByRateDto })
+  @ApiParam({
+    name: 'tenantId',
+    description: 'The ID of the tenant (parking lot)',
+  })
+  async openEntriesByRate() {
+    return this.ratesService.countOpenEntriesByRate();
   }
 
   @Post()
