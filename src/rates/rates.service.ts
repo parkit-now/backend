@@ -1,6 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { Prisma, type Rate, type User } from '@prisma/client';
-import { AuditActions } from '../audit/audit.service';
+import { Prisma, type Rate } from '@prisma/client';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
@@ -31,14 +30,6 @@ type RateChangesResponse = {
   items: RateDto[];
   maxSeq: number;
 };
-
-/**
- * Cuántas estadías afectadas se listan en la auditoría.
- *
- * El conteo total va aparte y sin tope; esto acota el JSON en una playa
- * grande, con un flag `truncated` para que se note que la lista está cortada.
- */
-const AUDIT_AFFECTED_CAP = 200;
 
 /**
  * Si esta edición toca algún precio.
@@ -157,7 +148,6 @@ export class RatesService {
     rateId: string,
     expectedVersion: number,
     data: UpdateRateDto,
-    user?: User,
   ) {
     // Sin `getTenantClient()`: todo corre dentro de `$transaction`, que entrega
     // un cliente crudo. Por eso cada `where` de acá abajo lleva `tenantId`.
@@ -186,11 +176,6 @@ export class RatesService {
       // `$transaction` entrega un cliente CRUDO, sin la extensión de tenant, así
       // que cada `where` lleva `tenantId` explícito. No es decorativo: sin eso
       // se tocarían filas de otro estacionamiento.
-      const before =
-        data.applyToOpenEntries === true
-          ? await tx.rate.findFirst({ where: { tenantId, id: rateId } })
-          : null;
-
       const result = await tx.rate.updateMany({
         where: {
           tenantId,
@@ -222,8 +207,6 @@ export class RatesService {
           tx,
           tenantId,
           rate: updated,
-          before,
-          actorUserId: user?.id ?? null,
         });
       }
 
@@ -265,8 +248,6 @@ export class RatesService {
     tx: Prisma.TransactionClient;
     tenantId: string;
     rate: Rate;
-    before: Rate | null;
-    actorUserId: string | null;
   }): Promise<void> {
     const { tx, tenantId, rate } = input;
 
@@ -286,39 +267,6 @@ export class RatesService {
         rateSnapshotFractionPriceArs: rate.fractionPriceArs,
         rateSnapshotMediaEstadiaPriceArs: rate.mediaEstadiaPriceArs,
         rateSnapshotStayPriceArs: rate.stayPriceArs,
-      },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        action: AuditActions.RATE_PRICES_PROPAGATED,
-        entityType: 'rate',
-        entityId: rate.id,
-        actorUserId: input.actorUserId,
-        tenantId,
-        // `warn`: cambia lo que se le va a cobrar a autos que ya están
-        // adentro. Es lo primero que hay que poder encontrar cuando un
-        // conductor discute un ticket.
-        severity: 'warn',
-        metadata: {
-          rateName: rate.name,
-          before: input.before && {
-            hour: input.before.hourPriceArs.toString(),
-            fraction: input.before.fractionPriceArs.toString(),
-            mediaEstadia: input.before.mediaEstadiaPriceArs.toString(),
-            stay: input.before.stayPriceArs.toString(),
-          },
-          after: {
-            hour: rate.hourPriceArs.toString(),
-            fraction: rate.fractionPriceArs.toString(),
-            mediaEstadia: rate.mediaEstadiaPriceArs.toString(),
-            stay: rate.stayPriceArs.toString(),
-          },
-          affectedCount: targets.length,
-          // El cap evita un JSON gigante en una playa de 500 cocheras.
-          affected: targets.slice(0, AUDIT_AFFECTED_CAP),
-          truncated: targets.length > AUDIT_AFFECTED_CAP,
-        },
       },
     });
   }

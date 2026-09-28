@@ -21,8 +21,7 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { MembershipRole, type User } from '@prisma/client';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { MembershipRole } from '@prisma/client';
 import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
@@ -115,14 +114,8 @@ export class RatesController {
     @Param('rateId', ParseUUIDPipe) rateId: string,
     @Query() query: ExpectedVersionQueryDto,
     @Body() dto: UpdateRateDto,
-    @CurrentUser() user: User,
   ) {
-    return this.ratesService.updateRate(
-      rateId,
-      query.expectedVersion,
-      dto,
-      user,
-    );
+    return this.ratesService.updateRate(rateId, query.expectedVersion, dto);
   }
 
   @Delete(':rateId')

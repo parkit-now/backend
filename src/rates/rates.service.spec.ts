@@ -313,7 +313,7 @@ describe('RatesService', () => {
       expect(mockTenant.entry.updateMany).not.toHaveBeenCalled();
     });
 
-    it('audita con el conteo real y los precios de antes y después', async () => {
+    it('propaga precios a autos adentro sin generar auditoría', async () => {
       tarifaEditada();
       mockTenant.entry.findMany.mockResolvedValue(abiertas);
       mockTenant.entry.updateMany.mockResolvedValue({ count: 2 });
@@ -323,20 +323,15 @@ describe('RatesService', () => {
         applyToOpenEntries: true,
       });
 
-      const [args] = mockTenant.auditLog.create.mock.calls[0] as [
-        {
-          data: {
-            action: string;
-            severity: string;
-            metadata: Record<string, unknown>;
-          };
-        },
+      const [args] = mockTenant.entry.updateMany.mock.calls[0] as [
+        { data: Record<string, unknown>; where: Record<string, unknown> },
       ];
-      expect(args.data.action).toBe('rate.prices_propagated');
-      expect(args.data.severity).toBe('warn');
-      expect(args.data.metadata.affectedCount).toBe(2);
-      expect(args.data.metadata.before).toMatchObject({ hour: '1000' });
-      expect(args.data.metadata.after).toMatchObject({ hour: '3900' });
+      expect(args.where).toEqual({
+        tenantId: 'tenant-1',
+        id: { in: ['e-1', 'e-2'] },
+      });
+      expect(Number(args.data.rateSnapshotHourPriceArs)).toBe(3900);
+      expect(mockTenant.auditLog.create).not.toHaveBeenCalled();
     });
   });
 
