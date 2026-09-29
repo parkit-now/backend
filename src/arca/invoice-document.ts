@@ -1,4 +1,3 @@
-import type { InvoiceData } from '@arcasdk/pdf';
 import type { ArcaTaxCondition, Invoice } from '@prisma/client';
 import { CbteTipos, DOC_TIPO_CUIT } from './resolve-voucher';
 
@@ -24,11 +23,18 @@ const RECEPTOR_CONDICION: Readonly<Record<number, string>> = {
   16: 'Monotributo Trabajador Independiente Promovido',
 };
 
-const LETTER_BY_TIPO: Readonly<Record<number, string>> = {
+export type InvoiceLetter = 'A' | 'B' | 'C';
+
+const LETTER_BY_TIPO: Readonly<Record<number, InvoiceLetter>> = {
   [CbteTipos.A]: 'A',
   [CbteTipos.B]: 'B',
   [CbteTipos.C]: 'C',
 };
+
+/** Tipo de documento del receptor, como lo pide el QR (RG 4892). */
+const DOC_TIPO_SIN_IDENTIFICAR = 99;
+
+const ARCA_QR_BASE_URL = 'https://www.afip.gob.ar/fe/qr/';
 
 const AR_DATE_TIME = new Intl.DateTimeFormat('es-AR', {
   timeZone: 'America/Argentina/Buenos_Aires',
@@ -45,7 +51,60 @@ const ARS = new Intl.NumberFormat('es-AR', {
   maximumFractionDigits: 2,
 });
 
-/** Una factura emitida, con todo lo que el PDF necesita. */
+/**
+ * Todo lo que el desktop necesita para dibujar el comprobante (el PDF lo arma
+ * él, ver `invoiceDocument.ts` en front-desktop). Las fechas van `AAAA-MM-DD`.
+ */
+export interface InvoiceDocument {
+  readonly emisor: {
+    readonly razonSocial: string;
+    readonly domicilioComercial: string;
+    readonly condicionIva: string;
+    readonly cuit: string;
+    readonly iibb: string;
+    readonly fechaInicioActividades: string | null;
+  };
+  readonly receptor: {
+    readonly razonSocial: string;
+    readonly condicionIva: string;
+    readonly documentoTipo: 'CUIT' | 'Sin Identificar';
+    readonly documentoNro: string;
+  };
+  readonly cbteTipo: number;
+  readonly cbteLetra: InvoiceLetter;
+  readonly puntoVenta: number;
+  readonly cbteNro: number;
+  readonly cbteFecha: string;
+  readonly condicionVenta: string;
+  readonly fechaServicioDesde: string | null;
+  readonly fechaServicioHasta: string | null;
+  readonly fechaVtoPago: string;
+  readonly items: {
+    readonly descripcion: string;
+    readonly cantidad: number;
+    readonly unidadMedida: string;
+    readonly precioUnitario: number;
+    readonly subtotal: number;
+    /** Sólo en la A, que discrimina IVA. */
+    readonly alicuotaIva: number | null;
+  }[];
+  readonly importeNetoGravado: number;
+  /** Sólo en la A: el IVA por alícuota. */
+  readonly iva: {
+    readonly descripcion: string;
+    readonly baseImponible: number;
+    readonly importe: number;
+  }[];
+  readonly importeIva: number;
+  readonly importeTotal: number;
+  readonly cae: string;
+  readonly caeFechaVencimiento: string;
+  readonly observaciones: string | null;
+  /** El link del QR que exige la RG 4892, ya armado. */
+  readonly qrUrl: string;
+}
+
+/** Una factura emitida, con todo lo que el comprobante necesita. */
 export type IssuedInvoice = Invoice & {
   cbteTipo: number;
   ptoVta: number;
@@ -71,7 +130,7 @@ export function isPrintable(invoice: Invoice): invoice is IssuedInvoice {
 }
 
 /**
- * Arma los datos del PDF a partir de la factura emitida, SÓLO con lo que se
+ * Arma el comprobante a partir de la factura emitida, SÓLO con lo que se
  * guardó al emitir (la foto del emisor): si el dueño después cambia la razón
  * social o el domicilio, el comprobante de ese día sigue diciendo lo mismo.
  *
@@ -81,7 +140,7 @@ export function isPrintable(invoice: Invoice): invoice is IssuedInvoice {
  *   muestra `importeNetoGravado` como «Subtotal», por eso va el total.
  * - **C:** el total, sin IVA.
  */
-export function buildInvoicePdfData(
+export function buildInvoiceDocument(
   invoice: IssuedInvoice,
   entry: { plate: string; enteredAt: Date; leftAt: Date | null },
   /**
@@ -94,7 +153,7 @@ export function buildInvoicePdfData(
     iibb: null,
     inicioActividad: null,
   },
-): InvoiceData {
+): InvoiceDocument {
   const iibb = invoice.emisorIibb ?? missing.iibb;
   const inicioActividad =
     invoice.emisorInicioActividad ?? missing.inicioActividad;
@@ -107,6 +166,8 @@ export function buildInvoicePdfData(
   const itemPrice = discriminaIva ? neto : total;
   const withCuit =
     invoice.receptorDocTipo === DOC_TIPO_CUIT && !!invoice.receptorDocNro;
+  const receptorDocNro = withCuit ? invoice.receptorDocNro! : '0';
+  const cbteFecha = isoDate(invoice.cbteFch);
 
   return {
     emisor: {
@@ -117,7 +178,7 @@ export function buildInvoicePdfData(
         : '',
       cuit: invoice.emisorCuit,
       iibb: iibb ?? '',
-      fechaInicioActividades: inicioActividad ? arcaDate(inicioActividad) : '',
+      fechaInicioActividades: inicioActividad ? isoDate(inicioActividad) : null,
     },
     receptor: {
       razonSocial: invoice.receptorNombre ?? 'Consumidor Final',
@@ -125,25 +186,21 @@ export function buildInvoicePdfData(
         RECEPTOR_CONDICION[invoice.receptorCondicionIvaId ?? 5] ??
         'Consumidor Final',
       documentoTipo: withCuit ? 'CUIT' : 'Sin Identificar',
-      documentoNro: withCuit ? invoice.receptorDocNro! : '0',
+      documentoNro: receptorDocNro,
     },
     cbteTipo: invoice.cbteTipo,
     cbteLetra: letter,
     puntoVenta: invoice.ptoVta,
-    cbteDesde: invoice.cbteNro,
-    cbteHasta: invoice.cbteNro,
-    cbteFecha: arcaDate(invoice.cbteFch),
-    concepto: 2,
-    moneda: 'PES',
-    cotizacion: 1,
+    cbteNro: invoice.cbteNro,
+    cbteFecha,
     condicionVenta: 'Contado',
-    ...(invoice.fchServDesde && {
-      fechaServicioDesde: arcaDate(invoice.fchServDesde),
-    }),
-    ...(invoice.fchServHasta && {
-      fechaServicioHasta: arcaDate(invoice.fchServHasta),
-    }),
-    fechaVtoPago: arcaDate(invoice.cbteFch),
+    fechaServicioDesde: invoice.fchServDesde
+      ? isoDate(invoice.fchServDesde)
+      : null,
+    fechaServicioHasta: invoice.fchServHasta
+      ? isoDate(invoice.fchServHasta)
+      : null,
+    fechaVtoPago: cbteFecha,
     items: [
       {
         descripcion: stayDescription(entry),
@@ -151,45 +208,69 @@ export function buildInvoicePdfData(
         unidadMedida: 'unidades',
         precioUnitario: itemPrice,
         subtotal: itemPrice,
-        ...(discriminaIva && { alicuotaIva: rate }),
+        alicuotaIva: discriminaIva ? rate : null,
       },
     ],
     importeNetoGravado: discriminaIva ? neto : total,
-    ...(discriminaIva && {
-      iva: [
-        {
-          id: 0,
-          descripcion: `${rate}%`,
-          baseImponible: neto,
-          importe: iva,
-        },
-      ],
-    }),
+    iva: discriminaIva
+      ? [{ descripcion: `${rate}%`, baseImponible: neto, importe: iva }]
+      : [],
     importeIva: discriminaIva ? iva : 0,
     importeTotal: total,
     cae: invoice.cae,
-    caeFechaVencimiento: arcaDate(invoice.caeVto),
-    ...(letter === 'B' &&
-      iva > 0 && {
-        observaciones: `Régimen de Transparencia Fiscal al Consumidor (Ley 27.743) – IVA contenido: $${ARS.format(iva)}`,
-      }),
+    caeFechaVencimiento: isoDate(invoice.caeVto),
+    observaciones:
+      letter === 'B' && iva > 0
+        ? `Régimen de Transparencia Fiscal al Consumidor (Ley 27.743) – IVA contenido: $${ARS.format(iva)}`
+        : null,
+    qrUrl: arcaQrUrl({
+      fecha: cbteFecha,
+      cuit: Number(invoice.emisorCuit),
+      ptoVta: invoice.ptoVta,
+      tipoCmp: invoice.cbteTipo,
+      nroCmp: invoice.cbteNro,
+      importe: total,
+      tipoDocRec: withCuit ? DOC_TIPO_CUIT : DOC_TIPO_SIN_IDENTIFICAR,
+      nroDocRec: Number(receptorDocNro) || 0,
+      codAut: Number(invoice.cae),
+    }),
   };
 }
 
 /**
- * `AB123CD-86390928613357-0001-00000006.pdf`: patente, CAE y número de
- * comprobante. Sólo letras, números y guiones: sirve en cualquier sistema de
- * archivos y en el header sin escapar nada.
+ * El QR de la RG 4892: `https://www.afip.gob.ar/fe/qr/?p=` + el JSON del
+ * comprobante en base64, con las claves en este orden.
+ *
+ * @see https://www.afip.gob.ar/fe/qr/especificaciones.asp
  */
-export function invoicePdfFileName(
-  invoice: IssuedInvoice,
-  plate: string,
-): string {
-  const pv = String(invoice.ptoVta).padStart(4, '0');
-  const nro = String(invoice.cbteNro).padStart(8, '0');
-  const safePlate =
-    plate.toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SIN-PATENTE';
-  return `${safePlate}-${invoice.cae}-${pv}-${nro}.pdf`;
+export function arcaQrUrl(input: {
+  fecha: string;
+  cuit: number;
+  ptoVta: number;
+  tipoCmp: number;
+  nroCmp: number;
+  importe: number;
+  tipoDocRec: number;
+  nroDocRec: number;
+  codAut: number;
+}): string {
+  const payload = {
+    ver: 1,
+    fecha: input.fecha,
+    cuit: input.cuit,
+    ptoVta: input.ptoVta,
+    tipoCmp: input.tipoCmp,
+    nroCmp: input.nroCmp,
+    importe: input.importe,
+    moneda: 'PES',
+    ctz: 1,
+    tipoDocRec: input.tipoDocRec,
+    nroDocRec: input.nroDocRec,
+    tipoCodAut: 'E',
+    codAut: input.codAut,
+  };
+  const base64 = Buffer.from(JSON.stringify(payload)).toString('base64');
+  return `${ARCA_QR_BASE_URL}?p=${base64}`;
 }
 
 /** «Estadía AB123CD – 24/09/2026 10:00 a 24/09/2026 12:30». */
@@ -204,9 +285,9 @@ function stayDescription(entry: {
     : `Estadía ${entry.plate} – desde ${from}`;
 }
 
-/** Columna `@db.Date` (00:00 UTC) → `AAAAMMDD`. */
-function arcaDate(value: Date): string {
-  return value.toISOString().slice(0, 10).replace(/-/g, '');
+/** Columna `@db.Date` (00:00 UTC) → `AAAA-MM-DD`. */
+function isoDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
 }
 
 /** `24/09/2026 10:00` en hora argentina (sin la coma de `es-AR`). */

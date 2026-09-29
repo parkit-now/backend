@@ -8,7 +8,6 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
-  StreamableFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -17,7 +16,6 @@ import {
   ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
-  ApiProduces,
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
@@ -30,6 +28,7 @@ import {
   InvoiceBatchResponseDto,
   IssueInvoiceBatchDto,
 } from './dto/issue-invoice-batch.dto';
+import { InvoiceDocumentDto } from './dto/invoice-document.dto';
 import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
@@ -38,7 +37,7 @@ import {
   InvoiceReceiversQueryDto,
 } from './dto/invoice-receiver.dto';
 import { TaxpayerDto } from './dto/taxpayer.dto';
-import { InvoicePdfService } from './invoice-pdf.service';
+import { InvoiceDocumentService } from './invoice-document.service';
 import { InvoicesService } from './invoices.service';
 
 @ApiTags('Invoices')
@@ -49,7 +48,7 @@ import { InvoicesService } from './invoices.service';
 export class InvoicesController {
   constructor(
     private readonly invoicesService: InvoicesService,
-    private readonly invoicePdfService: InvoicePdfService,
+    private readonly invoiceDocumentService: InvoiceDocumentService,
   ) {}
 
   @Post('entries/:entryId/invoice')
@@ -127,26 +126,20 @@ export class InvoicesController {
     return this.invoicesService.issueBatch(dto.entryIds, user?.id);
   }
 
-  @Get('invoices/:invoiceId/pdf')
+  @Get('invoices/:invoiceId/document')
   @ApiOperation({
-    summary: 'PDF de una factura emitida',
+    summary: 'Datos del comprobante de una factura emitida',
     description:
-      'Se genera a demanda con los datos guardados al emitir (la razón ' +
-      'social de ese día, no la actual). 409 INVOICE_NOT_ISSUED si todavía ' +
-      'no tiene CAE; 503 INVOICE_PDF_FAILED si no se pudo generar.',
+      'Todo lo que el desktop necesita para armar el PDF (el backend no lo ' +
+      'dibuja), con los datos guardados al emitir: la razón social de ese ' +
+      'día, no la actual. 409 INVOICE_NOT_ISSUED si todavía no tiene CAE.',
   })
-  @ApiProduces('application/pdf')
-  @ApiOkResponse({ schema: { type: 'string', format: 'binary' } })
+  @ApiOkResponse({ type: InvoiceDocumentDto })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
-  async pdf(
+  async document(
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
-  ): Promise<StreamableFile> {
-    const pdf = await this.invoicePdfService.render(invoiceId);
-    return new StreamableFile(pdf.content, {
-      type: 'application/pdf',
-      disposition: `attachment; filename="${pdf.fileName}"`,
-      length: pdf.content.length,
-    });
+  ): Promise<InvoiceDocumentDto> {
+    return this.invoiceDocumentService.get(invoiceId);
   }
 
   @Get('invoices/changes')
