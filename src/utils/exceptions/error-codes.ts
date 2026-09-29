@@ -283,10 +283,8 @@ export const ErrorCodes = {
   // DEPRECADO desde la Etapa 5: un receptor que no recibe A sale B
   // identificada. Queda porque hay facturas viejas con este codigo guardado.
   INVOICE_RECEIVER_NOT_A: 'INVOICE_RECEIVER_NOT_A',
-  // El PDF solo existe para una factura emitida (con CAE).
+  // El comprobante (PDF) solo existe para una factura emitida (con CAE).
   INVOICE_NOT_ISSUED: 'INVOICE_NOT_ISSUED',
-  // No se pudo generar el PDF (Chromium no arranco o se colgo).
-  INVOICE_PDF_FAILED: 'INVOICE_PDF_FAILED',
 
   // Validacion del body / query
   VALIDATION_FAILED: 'VALIDATION_FAILED',
