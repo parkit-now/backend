@@ -32,7 +32,6 @@
   },
   "dependencies": {
     "@arcasdk/core": "2.0.2",
-    "@arcasdk/pdf": "^0.2.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.0.1",
