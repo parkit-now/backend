@@ -53,6 +53,8 @@ const TENANTS = {
   once: '11111111-1111-4111-8111-111111111111',
   belgrano: '22222222-2222-4222-8222-222222222222',
   palermo: '33333333-3333-4333-8333-333333333333',
+  recoleta: '44444444-4444-4444-8444-444444444444',
+  almagro: '55555555-5555-4555-8555-555555555555',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -356,6 +358,48 @@ const TENANT_PROFILES: SeedTenantProfile[] = [
     geocodingSource: 'manual',
     geocodedAt: GEOCODED_AT,
   },
+  // Recoleta y Almagro existen para que la app del conductor tenga un mapa con
+  // varias playas cerca de destinos típicos (Recoleta, Hospital Italiano).
+  {
+    id: TENANTS.recoleta,
+    name: 'Estacionamiento Recoleta',
+    legalName: 'Cocheras Palermo SRL',
+    cuit: '30709988774',
+    email: 'recoleta@parkit.test',
+    phone: '+541148012020',
+    capacityTotal: 30,
+    address: `AV PUEYRREDON 1850, Comuna 2, ${CABA}`,
+    streetName: 'AV PUEYRREDON',
+    streetNumber: '1850',
+    floor: null,
+    cityName: CABA,
+    stateName: CABA,
+    postalCode: null,
+    latitude: '-34.588921',
+    longitude: '-58.396612',
+    geocodingSource: 'georef',
+    geocodedAt: GEOCODED_AT,
+  },
+  {
+    id: TENANTS.almagro,
+    name: 'Estacionamiento Almagro',
+    legalName: 'Estacionamientos Centro SA',
+    cuit: '30711223343',
+    email: 'almagro@parkit.test',
+    phone: '+541149587070',
+    capacityTotal: 24,
+    address: `GASCON 520, Comuna 5, ${CABA}`,
+    streetName: 'GASCON',
+    streetNumber: '520',
+    floor: null,
+    cityName: CABA,
+    stateName: CABA,
+    postalCode: null,
+    latitude: '-34.606412',
+    longitude: '-58.423805',
+    geocodingSource: 'georef',
+    geocodedAt: GEOCODED_AT,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -552,6 +596,36 @@ const RATES: SeedRate[] = [
     fractionPriceArs: '1700.00',
     shortcutNumber: 2,
   },
+  {
+    key: 'recoleta-auto',
+    seq: SEQ.rate + 9,
+    tenantId: TENANTS.recoleta,
+    name: 'AUTO POR HORA',
+    hourPriceArs: '5800.00',
+    stayPriceArs: '26000.00',
+    fractionPriceArs: '3400.00',
+    shortcutNumber: 1,
+  },
+  {
+    key: 'almagro-auto',
+    seq: SEQ.rate + 11,
+    tenantId: TENANTS.almagro,
+    name: 'AUTO POR HORA',
+    hourPriceArs: '3900.00',
+    stayPriceArs: '18000.00',
+    fractionPriceArs: '2300.00',
+    shortcutNumber: 1,
+  },
+  {
+    key: 'almagro-moto',
+    seq: SEQ.rate + 12,
+    tenantId: TENANTS.almagro,
+    name: 'MOTO POR HORA',
+    hourPriceArs: '2100.00',
+    stayPriceArs: '9500.00',
+    fractionPriceArs: '1300.00',
+    shortcutNumber: 2,
+  },
 ];
 
 const RATES_BY_KEY = new Map(RATES.map((r) => [r.key, r]));
@@ -617,6 +691,24 @@ const SCHEDULES: SeedSchedule[] = [
     openMinute: 0,
     closeMinute: 1440,
   })),
+  ...([...WEEKDAYS, 'saturday'] as ScheduleDay[]).map((day) => ({
+    tenantId: TENANTS.recoleta,
+    day,
+    openMinute: 7 * 60,
+    closeMinute: 23 * 60,
+  })),
+  ...WEEKDAYS.map((day) => ({
+    tenantId: TENANTS.almagro,
+    day,
+    openMinute: 8 * 60,
+    closeMinute: 21 * 60,
+  })),
+  {
+    tenantId: TENANTS.almagro,
+    day: 'saturday',
+    openMinute: 9 * 60,
+    closeMinute: 14 * 60,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2064,25 +2156,75 @@ async function seedOnboarding(): Promise<void> {
   // Servicios: sólo amenities. Los códigos VEHICLE_* se retiraron — "qué
   // vehículos acepta la playa" vive en `vehicle_types.accepted`, y las plazas
   // en `tenant.settings.capacity.total`.
-  const demoServices: Record<string, { code: string; enabled: boolean }[]> = {
-    [TENANTS.once]: [{ code: 'ADVANCE_RESERVATION', enabled: true }],
+  // Reservas (SCRUM-214): una sola tarifa para cobrarlas, sin distinción de
+  // vehículo, y un cupo de plazas reservables. Las playas de la app del
+  // conductor usan su tarifa de auto; Belgrano no toma reservas.
+  const demoServices: Record<
+    string,
+    {
+      code: string;
+      enabled: boolean;
+      reservationRateKey?: string;
+      reservableSpots?: number;
+    }[]
+  > = {
+    [TENANTS.once]: [
+      {
+        code: 'ADVANCE_RESERVATION',
+        enabled: true,
+        reservationRateKey: 'once-auto',
+        reservableSpots: 5,
+      },
+    ],
     [TENANTS.belgrano]: [{ code: 'ADVANCE_RESERVATION', enabled: false }],
-    [TENANTS.palermo]: [{ code: 'ADVANCE_RESERVATION', enabled: true }],
+    [TENANTS.palermo]: [
+      {
+        code: 'ADVANCE_RESERVATION',
+        enabled: true,
+        reservationRateKey: 'palermo-auto',
+        reservableSpots: 10,
+      },
+    ],
+    [TENANTS.recoleta]: [
+      {
+        code: 'ADVANCE_RESERVATION',
+        enabled: true,
+        reservationRateKey: 'recoleta-auto',
+        reservableSpots: 8,
+      },
+    ],
+    [TENANTS.almagro]: [
+      {
+        code: 'ADVANCE_RESERVATION',
+        enabled: true,
+        reservationRateKey: 'almagro-auto',
+        reservableSpots: 6,
+      },
+    ],
   };
   for (const [tenantId, rows] of Object.entries(demoServices)) {
     for (const r of rows) {
       const code = r.code as ServiceCode;
+      const rate = r.reservationRateKey
+        ? RATES.find((candidate) => candidate.key === r.reservationRateKey)
+        : undefined;
+      if (r.reservationRateKey && !rate) {
+        throw new Error(`Unknown seed rate key "${r.reservationRateKey}".`);
+      }
+      const fields = {
+        enabled: r.enabled,
+        reservationRateId: rate ? seedUuidV7(rate.seq) : null,
+        reservableSpots: r.reservableSpots ?? null,
+      };
       const existing = await prisma.service.findFirst({
         where: { tenantId, code },
       });
       if (!existing) {
-        await prisma.service.create({
-          data: { tenantId, code, enabled: r.enabled },
-        });
-      } else if (existing.enabled !== r.enabled) {
+        await prisma.service.create({ data: { tenantId, code, ...fields } });
+      } else {
         await prisma.service.update({
           where: { id: existing.id },
-          data: { enabled: r.enabled },
+          data: fields,
         });
       }
     }
