@@ -7,6 +7,7 @@ import {
   missingDeclaredAddressFields,
   readDeclaredAddress,
 } from '../entities/tenant-address';
+import { findScheduleIssues } from '../schedules/schedule-issues';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import {
   FormattedException,
@@ -44,6 +45,7 @@ export class OnboardingService {
     user: User,
     dto: CreateApplicationDto,
   ): Promise<OnboardingApplicationDto> {
+    this.assertSchedulesValid(dto.schedules);
     const application = await this.prisma.onboardingApplication.create({
       data: {
         applicantUserId: user.id,
@@ -89,6 +91,9 @@ export class OnboardingService {
     this.assertEditable(application);
 
     const merged = { ...declaredEntityOf(application), ...this.cleanDto(dto) };
+    // `schedules` se REEMPLAZA entero (el merge es superficial), así que lo que
+    // hay que validar es la lista resultante, no sólo la del PATCH.
+    this.assertSchedulesValid(merged.schedules);
 
     const updated = await this.prisma.onboardingApplication.update({
       where: { id: applicationId },
@@ -142,6 +147,7 @@ export class OnboardingService {
     const application = await this.loadOwnedApplication(user, applicationId);
     this.assertEditable(application);
     this.assertDeclaredAddressComplete(application);
+    this.assertSchedulesValid(declaredEntityOf(application).schedules);
 
     const updated = await this.prisma.onboardingApplication.update({
       where: { id: applicationId },
@@ -271,6 +277,57 @@ export class OnboardingService {
             `declaredEntity.location.${field}`,
             `${field} is required to submit the application for review`,
             'isNotEmpty',
+          ),
+      ),
+    );
+  }
+
+  /**
+   * Los horarios declarados son OPCIONALES, pero si vienen tienen que ser
+   * coherentes: se aprueban tal cual y se materializan como `schedules` del
+   * tenant, donde `SchedulesService` rechazaría rangos invertidos o solapados.
+   * Detectarlo acá evita que Ops apruebe una solicitud con horarios rotos.
+   *
+   * Corre en create/update/submit (un borrador viejo no tiene `schedules`, así
+   * que no afecta). 422 con `ONBOARDING_NOT_SUBMITTABLE` y `validationsErrors`
+   * apuntando a `declaredEntity.schedules.<i>`, igual que el chequeo de
+   * domicilio.
+   */
+  private assertSchedulesValid(schedules: unknown): void {
+    if (!Array.isArray(schedules) || schedules.length === 0) return;
+    const ranges = schedules.map((item: unknown) => {
+      const row = (item ?? {}) as Record<string, unknown>;
+      return {
+        day: String(row.day),
+        openMinute: Number(row.openMinute),
+        closeMinute: Number(row.closeMinute),
+      };
+    });
+    const issues = findScheduleIssues(ranges);
+    if (issues.length === 0) return;
+
+    throw new FormattedExceptionWithValidation(
+      'Unprocessable Entity',
+      HttpStatus.UNPROCESSABLE_ENTITY,
+      `The declared schedules are invalid: ${issues
+        .map((i) =>
+          i.kind === 'invalid_range'
+            ? `#${i.index} closeMinute must be greater than openMinute`
+            : `#${i.index} overlaps #${i.overlapsWith}`,
+        )
+        .join('; ')}`,
+      '/onboarding/applications',
+      ErrorCodes.ONBOARDING_NOT_SUBMITTABLE,
+      issues.map(
+        (i) =>
+          new ValidationErr(
+            `declaredEntity.schedules.${i.index}`,
+            i.kind === 'invalid_range'
+              ? 'closeMinute must be greater than openMinute'
+              : `The range overlaps the range #${i.overlapsWith} on the same day`,
+            i.kind === 'invalid_range'
+              ? 'SCHEDULE_INVALID_RANGE'
+              : 'SCHEDULE_OVERLAP',
           ),
       ),
     );
