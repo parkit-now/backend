@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { CreateScheduleDto } from '../../../schedules/dto/create-schedule.dto';
 import { EntityAddressDto } from '../../../entities/dto/entity-address.dto';
 import { ApplicationDocumentDto } from '../../../onboarding/dto/onboarding-response.dto';
 import type { ApplicationStatusFilter } from './list-applications-query.dto';
@@ -23,10 +24,13 @@ export class ApplicationDto {
   name: string;
 
   @ApiProperty({
-    description: 'Declared legal name of the entity.',
+    type: String,
+    nullable: true,
+    description:
+      'Declared legal name of the entity. `null` when not declared (no longer asked at sign-up).',
     example: 'Estacionamientos del Centro S.A.',
   })
-  legalName: string;
+  legalName: string | null;
 
   @ApiProperty({
     description: 'Email of the applicant user (no display name exists yet).',
@@ -41,10 +45,13 @@ export class ApplicationDto {
   email: string;
 
   @ApiProperty({
-    description: 'Declared Argentine tax id (CUIT).',
+    type: String,
+    nullable: true,
+    description:
+      'Declared Argentine tax id (CUIT). `null` when not declared (no longer asked at sign-up).',
     example: '30712345679',
   })
-  cuit: string;
+  cuit: string | null;
 
   @ApiProperty({
     type: 'integer',
@@ -85,6 +92,23 @@ export class ApplicationDto {
  * declared entity data, uploaded documents and review outcome.
  */
 export class ApplicationDetailDto extends ApplicationDto {
+  @ApiProperty({
+    type: 'integer',
+    nullable: true,
+    minimum: 0,
+    description:
+      'Declared total parking spots. `null` when the applicant skipped the operational step (approval then creates the tenant with capacity 0).',
+    example: 110,
+  })
+  totalSpots: number | null;
+
+  @ApiProperty({
+    type: [CreateScheduleDto],
+    description:
+      'Declared opening hours, one row per range (a day may have several). Empty when the applicant skipped the operational step. Created as the tenant schedules on approval.',
+  })
+  schedules: CreateScheduleDto[];
+
   @ApiProperty({
     type: String,
     nullable: true,
