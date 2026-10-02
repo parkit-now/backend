@@ -1,4 +1,5 @@
-import type { ApplicationStatus, Prisma } from '@prisma/client';
+import type { ApplicationStatus, Prisma, ScheduleDay } from '@prisma/client';
+import type { CreateScheduleDto } from '../../schedules/dto/create-schedule.dto';
 import { readDeclaredAddress } from '../../entities/tenant-address';
 import {
   declaredEntityOf,
@@ -63,15 +64,36 @@ function declaredString(
   return typeof value === 'string' ? value : null;
 }
 
+function declaredSchedules(
+  entity: Record<string, unknown>,
+): CreateScheduleDto[] {
+  const raw = entity.schedules;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item: unknown) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    return typeof row.day === 'string' &&
+      typeof row.openMinute === 'number' &&
+      typeof row.closeMinute === 'number'
+      ? [
+          {
+            day: row.day as ScheduleDay,
+            openMinute: row.openMinute,
+            closeMinute: row.closeMinute,
+          },
+        ]
+      : [];
+  });
+}
+
 export function toApplicationDto(app: ApplicationPayload): ApplicationDto {
   const entity = declaredEntityOf(app);
   return {
     id: app.id,
     name: declaredString(entity, 'name') ?? '',
-    legalName: declaredString(entity, 'legalName') ?? '',
+    legalName: declaredString(entity, 'legalName'),
     applicantEmail: app.applicant.email,
     email: declaredString(entity, 'email') ?? '',
-    cuit: declaredString(entity, 'cuit') ?? '',
+    cuit: declaredString(entity, 'cuit'),
     docsCount: app._count.documents,
     status: toExternalStatus(app.status),
     submittedAt: app.submittedAt ? app.submittedAt.toISOString() : null,
@@ -87,6 +109,9 @@ export function toApplicationDetailDto(
   return {
     ...toApplicationDto(app),
     phone: declaredString(entity, 'phone'),
+    totalSpots:
+      typeof entity.totalSpots === 'number' ? entity.totalSpots : null,
+    schedules: declaredSchedules(entity),
     // `address` sale de `location.formatted` cuando existe y cae al `address`
     // plano de los borradores viejos: el revisor tiene que ver la MISMA
     // dirección que se va a materializar al aprobar, no una copia desfasada.

@@ -265,8 +265,9 @@ export class UpdateEntityProfileDto {
   email?: string;
 
   @ApiPropertyOptional({
-    description: 'New contact phone number of the entity.',
-    example: '+54 11 5555-1234',
+    description:
+      'New contact phone number of the entity, in international E.164 format (`+5491123456789`). The format is only enforced when the value CHANGES: legacy profiles keep their stored free-text phone, and sending it back unchanged is accepted.',
+    example: '+5491155551234',
   })
   @IsOptional()
   @IsString()

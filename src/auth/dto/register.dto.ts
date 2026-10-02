@@ -1,5 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 /**
  * Self-registration payload. No role is accepted: every self-registered user
@@ -11,6 +18,21 @@ import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
  * approved; operators are linked to lots via invitations.
  */
 export class RegisterDto {
+  @ApiProperty({
+    description:
+      'Full name of the person registering (first and last name). Stored in `public.users.name` and in the Supabase `user_metadata.full_name`.',
+    minLength: 1,
+    maxLength: 120,
+    example: 'Jane Doe',
+  })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
   @ApiProperty({
     description: 'Email address used for login. Must be unique platform-wide.',
     format: 'email',

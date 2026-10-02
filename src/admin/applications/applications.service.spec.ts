@@ -20,6 +20,7 @@ describe('ApplicationsService', () => {
   const tx = {
     tenant: { create: jest.fn() },
     service: { createMany: jest.fn() },
+    schedule: { createMany: jest.fn() },
     userMembership: { create: jest.fn() },
     paymentMethod: { createMany: jest.fn() },
     onboardingApplication: { update: jest.fn() },
@@ -240,6 +241,53 @@ describe('ApplicationsService', () => {
       expect(settings).toEqual({ capacity: { total: 55 } });
       // Las semánticas de merge del helper se cubren en
       // `entity-settings.spec.ts`; acá se fija la forma que produce approve().
+    });
+
+    it('crea los horarios declarados en la misma transacción, con tenantId', async () => {
+      const schedules = [
+        { day: 'monday', openMinute: 480, closeMinute: 720 },
+        { day: 'monday', openMinute: 720, closeMinute: 1200 },
+        { day: 'saturday', openMinute: 0, closeMinute: 1440 },
+      ];
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(
+          pendingApp('user', { ...declaredWithLocation, schedules }),
+        )
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      expect(tx.schedule.createMany).toHaveBeenCalledTimes(1);
+      const arg = tx.schedule.createMany.mock.calls[0][0] as {
+        data: Record<string, unknown>[];
+      };
+      expect(arg.data).toEqual(
+        schedules.map((r) => ({ ...r, tenantId: 'tenant-1' })),
+      );
+      // Orden: el tenant existe antes de colgarle horarios.
+      expect(tx.tenant.create.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.schedule.createMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('aprueba sin horarios ni datos fiscales: no crea schedules y deja null', async () => {
+      const minimo = {
+        name: 'Centro',
+        email: 'acme@x.com',
+        phone: '+5491123456789',
+        location: declaredWithLocation.location,
+      };
+      mockPrisma.onboardingApplication.findUnique
+        .mockResolvedValueOnce(pendingApp('user', minimo))
+        .mockResolvedValueOnce(approvedListPayload());
+
+      await service.approve(admin, 'app-1');
+
+      expect(tx.schedule.createMany).not.toHaveBeenCalled();
+      const data = tenantCreateData();
+      expect(data.legalName).toBeNull();
+      expect(data.cuit).toBeNull();
+      expect(data.settings).toEqual({ capacity: { total: 0 } });
     });
 
     it('aprueba con capacidad 0 cuando el borrador no declara `totalSpots`', async () => {

@@ -32,11 +32,22 @@ export class UsersService {
    * Idempotent by design: social OAuth may auto-provision this row in SQL
    * triggers before the backend touches it.
    */
-  create(input: { id: string; role: UserRole; email: string }): Promise<User> {
+  create(input: {
+    id: string;
+    role: UserRole;
+    email: string;
+    name?: string;
+  }): Promise<User> {
     return this.prisma.user.upsert({
       where: { id: input.id },
       create: input,
-      update: { role: input.role, email: input.email },
+      update: {
+        role: input.role,
+        email: input.email,
+        // Sólo se pisa si viene: un OAuth que ya provisionó el nombre desde el
+        // trigger SQL no debe quedar en null por un upsert sin `name`.
+        ...(input.name !== undefined ? { name: input.name } : {}),
+      },
     });
   }
 
@@ -57,6 +68,7 @@ export class UsersService {
     return {
       id: user.id,
       email: user.email,
+      name: user.name,
       role: user.role,
       memberships: memberships.map((m) => ({
         tenantId: m.tenantId,

@@ -1,11 +1,16 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { MpAccountStatus, PaymentMethodType } from '@prisma/client';
 import type { Prisma, User } from '@prisma/client';
+import { isPhoneNumber } from 'class-validator';
 import { PaginatedAuditDto } from '../audit/dto/paginated-audit.dto';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
-import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import {
+  FormattedException,
+  FormattedExceptionWithValidation,
+  ValidationErr,
+} from '../utils/exceptions/http-exception/formatted-exeption';
 import { resolvePagination } from '../utils/pagination/pagination-query.dto';
 import { EntityAuditQueryDto } from './dto/entity-audit-query.dto';
 import {
@@ -92,12 +97,41 @@ export class EntitiesService {
     return toEntityProfileDto(tenant, paymentMethods);
   }
 
+  /**
+   * El teléfono se guarda en E.164 (`+5491123456789`), pero los perfiles viejos
+   * tienen texto libre. Por eso NO se valida en el DTO (rompería un PATCH que
+   * reenvía el perfil entero con el teléfono viejo): sólo se exige el formato
+   * cuando el valor CAMBIA respecto del guardado.
+   */
+  private assertPhoneIfChanged(
+    next: string | undefined,
+    stored: string | null,
+  ): void {
+    if (next === undefined || next === stored) return;
+    if (isPhoneNumber(next)) return;
+    throw new FormattedExceptionWithValidation(
+      'Validation Error',
+      HttpStatus.BAD_REQUEST,
+      'Validation failed for the request',
+      '/entities/profile',
+      ErrorCodes.VALIDATION_FAILED,
+      [
+        new ValidationErr(
+          'phone',
+          'phone must be a valid phone number in E.164 format (+549...)',
+          'isPhoneNumber',
+        ),
+      ],
+    );
+  }
+
   async updateProfile(
     tenantId: string,
     user: User,
     dto: UpdateEntityProfileDto,
   ): Promise<EntityProfileDto> {
     const tenant = await this.loadTenant(tenantId);
+    this.assertPhoneIfChanged(dto.phone, tenant.phone);
 
     const data: Prisma.TenantUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;

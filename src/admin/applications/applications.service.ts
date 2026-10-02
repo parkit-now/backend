@@ -1,5 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { MembershipRole } from '@prisma/client';
+import type { ScheduleDay } from '@prisma/client';
 import type { ApplicationStatus, User } from '@prisma/client';
 import { AuditActions } from '../../audit/audit.service';
 import { PrismaService } from '../../database/prisma.service';
@@ -49,6 +50,7 @@ interface DeclaredEntity {
   email?: string;
   phone?: string;
   totalSpots?: number;
+  schedules?: { day: ScheduleDay; openMinute: number; closeMinute: number }[];
 }
 
 @Injectable()
@@ -170,6 +172,23 @@ export class ApplicationsService {
           settings,
         },
       });
+
+      // Horarios declarados → filas de `schedules` del tenant nuevo. Se usa el
+      // cliente transaccional CRUDO (no `getTenantClient()`), así que `tenantId`
+      // va explícito. `sync_seq` y `version` salen de los defaults de la
+      // columna (`nextval('schedules_sync_seq')` / 1), igual que un alta por
+      // `SchedulesService`. Se validaron al crear/enviar la solicitud; no se
+      // revalidan acá para no frenar solicitudes ya en revisión.
+      if (entity.schedules?.length) {
+        await tx.schedule.createMany({
+          data: entity.schedules.map((range) => ({
+            tenantId: tenant.id,
+            day: range.day,
+            openMinute: range.openMinute,
+            closeMinute: range.closeMinute,
+          })),
+        });
+      }
 
       // The applicant becomes the owner of the new entity via UserMembership.
       await tx.userMembership.create({
