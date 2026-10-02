@@ -891,8 +891,13 @@ export class MetricsService {
 
     for (const remaining of remainingDays) {
       const sameWeekday: number[] = [];
+      // Only fully elapsed days are history. Walking back from a day late in
+      // the month lands on today (still open, so a partial total) or on other
+      // future days; step over those instead of sampling them.
+      let first = shiftDayKey(remaining, -7);
+      while (first >= dayKey) first = shiftDayKey(first, -7);
       for (
-        let cursor = shiftDayKey(remaining, -7);
+        let cursor = first;
         sameWeekday.length < MONTH_REMAINING_WEEKDAY_SAMPLES;
         cursor = shiftDayKey(cursor, -7)
       ) {
