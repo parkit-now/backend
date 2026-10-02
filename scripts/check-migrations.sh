@@ -68,14 +68,15 @@ fi
 
 # ── 2. Timestamps duplicados ─────────────────────────────────────────────────
 duplicates="$(
-  find "$MIGRATIONS_DIR" -maxdepth 1 -name '*.sql' -printf '%f\n' \
+  find "$MIGRATIONS_DIR" -maxdepth 1 -name '*.sql' -exec basename {} \; \
     | cut -c1-14 | sort | uniq -d
 )"
 
 if [[ -n "$duplicates" ]]; then
   echo "$duplicates" | while read -r ts; do
     echo "  timestamp $ts:" >&2
-    find "$MIGRATIONS_DIR" -maxdepth 1 -name "${ts}_*.sql" -printf '    %f\n' >&2
+    find "$MIGRATIONS_DIR" -maxdepth 1 -name "${ts}_*.sql" \
+      -exec basename {} \; | sed 's/^/    /' >&2
   done
   fail "Dos migraciones comparten timestamp: el orden entre ellas es indefinido.
   Renombrá una con un timestamp posterior."
