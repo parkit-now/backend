@@ -118,6 +118,14 @@ export const ErrorCodes = {
   // Services (amenities)
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',
   SERVICE_INVALID_CODE: 'SERVICE_INVALID_CODE',
+  // Tarifa y cupo de reservas sólo se configuran en ADVANCE_RESERVATION.
+  SERVICE_CONFIG_NOT_SUPPORTED: 'SERVICE_CONFIG_NOT_SUPPORTED',
+  // La tarifa elegida para las reservas no existe en la playa, está borrada o
+  // inactiva.
+  SERVICE_RESERVATION_RATE_NOT_FOUND: 'SERVICE_RESERVATION_RATE_NOT_FOUND',
+  // El cupo de reservas supera la capacidad declarada de la playa.
+  SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY:
+    'SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY',
 
   // Mercado Pago (integracion de cobros)
   // El webhook llego pero MP_WEBHOOK_SECRET no esta cargada: no podemos

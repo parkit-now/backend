@@ -25,10 +25,15 @@ model Rate {
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   entries Entry[]
+  // Servicio de reservas que la usa para cobrarlas (services.reservation_rate_id).
+  reservationServices Service[]
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
+  // Destino de FKs compuestas (services.reservation_rate_id): impide apuntar a
+  // la tarifa de otro tenant.
+  @@unique([tenantId, id], map: "rates_tenant_id_id_key")
   @@index([tenantId], map: "rates_tenant_id_idx")
   @@index([tenantId, syncSeq], map: "rates_tenant_sync_seq_idx")
   @@index([tenantId, updatedAt], map: "rates_tenant_updated_at_idx")

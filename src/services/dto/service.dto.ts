@@ -14,6 +14,23 @@ export class ServiceDto {
   @ApiProperty()
   enabled: boolean;
 
+  @ApiProperty({
+    format: 'uuid',
+    nullable: true,
+    type: String,
+    description:
+      'ADVANCE_RESERVATION: tarifa con la que se cobran las reservas. null = sin configurar.',
+  })
+  reservationRateId: string | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'ADVANCE_RESERVATION: plazas que se pueden reservar a la vez. null = sin configurar.',
+  })
+  reservableSpots: number | null;
+
   @ApiProperty({ type: Number })
   version: number;
 
