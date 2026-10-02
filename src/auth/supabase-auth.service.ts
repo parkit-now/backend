@@ -50,6 +50,7 @@ export class SupabaseAuthService implements OnModuleInit {
   }
 
   async register(input: {
+    name: string;
     email: string;
     password: string;
   }): Promise<{ user: User; session: SessionDto }> {
@@ -64,6 +65,7 @@ export class SupabaseAuthService implements OnModuleInit {
         // authorization source of truth; on every token mint the
         // `custom_access_token_hook` re-reads the DB role into the claim.
         app_metadata: { role: 'user' },
+        user_metadata: { full_name: input.name },
       });
 
     if (createErr || !created.user) {
@@ -82,6 +84,7 @@ export class SupabaseAuthService implements OnModuleInit {
       user = await this.users.create({
         id: authUserId,
         email: input.email,
+        name: input.name,
         role: 'user',
       });
     } catch (err) {

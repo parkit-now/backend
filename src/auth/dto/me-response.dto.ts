@@ -40,6 +40,15 @@ export class MeResponseDto {
   email: string;
 
   @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Full name of the user, or `null` for accounts created before the name was required (or social logins without a name).',
+    example: 'Jane Doe',
+  })
+  name: string | null;
+
+  @ApiProperty({
     enum: UserRole,
     description: 'GLOBAL platform role (`admin | user`).',
   })
