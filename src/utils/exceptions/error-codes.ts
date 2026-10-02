@@ -115,6 +115,21 @@ export const ErrorCodes = {
   SCHEDULE_INVALID_RANGE: 'SCHEDULE_INVALID_RANGE',
   SCHEDULE_OVERLAP: 'SCHEDULE_OVERLAP',
 
+  // Driver API (app del conductor)
+  // La playa no existe, no está activa o no tiene ubicación publicada: para el
+  // conductor es lo mismo, no se distingue.
+  DRIVER_PARKING_NOT_FOUND: 'DRIVER_PARKING_NOT_FOUND',
+  // La playa no toma reservas: el servicio está apagado o le falta la tarifa
+  // o el cupo de reservas (ver services.reservation_rate_id/reservable_spots).
+  DRIVER_RESERVATIONS_DISABLED: 'DRIVER_RESERVATIONS_DISABLED',
+  // Ventana de la reserva (ingreso/egreso).
+  RESERVATION_EXIT_NOT_AFTER_ENTRY: 'RESERVATION_EXIT_NOT_AFTER_ENTRY',
+  RESERVATION_ENTRY_IN_PAST: 'RESERVATION_ENTRY_IN_PAST',
+  RESERVATION_ENTRY_TOO_FAR: 'RESERVATION_ENTRY_TOO_FAR',
+  RESERVATION_STAY_TOO_LONG: 'RESERVATION_STAY_TOO_LONG',
+  // La playa cierra en algún momento entre el ingreso y el egreso.
+  RESERVATION_OUTSIDE_OPENING_HOURS: 'RESERVATION_OUTSIDE_OPENING_HOURS',
+
   // Services (amenities)
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',
   SERVICE_INVALID_CODE: 'SERVICE_INVALID_CODE',
