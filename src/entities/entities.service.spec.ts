@@ -6,7 +6,10 @@ import { AuditService } from '../audit/audit.service';
 import { AuditEventDto } from '../audit/dto/audit-event.dto';
 import { PrismaService } from '../database/prisma.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
-import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import {
+  FormattedException,
+  FormattedExceptionWithValidation,
+} from '../utils/exceptions/http-exception/formatted-exeption';
 import { EntitiesService } from './entities.service';
 
 const owner: User = {
@@ -190,6 +193,29 @@ describe('EntitiesService', () => {
       expect(mockAudit.record).toHaveBeenCalled();
     });
 
+    it('rechaza un teléfono nuevo que no está en E.164', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(tenant());
+
+      const error = await service
+        .updateProfile('t-1', owner, { phone: '1122334455' })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(FormattedExceptionWithValidation);
+      expect(mockPrisma.tenant.update).not.toHaveBeenCalled();
+    });
+
+    it('acepta reenviar sin cambios un teléfono viejo en texto libre', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(
+        tenant({ phone: '+54 11 5555-1234' }),
+      );
+      mockPrisma.tenant.update.mockResolvedValue(tenant());
+      mockPrisma.paymentMethod.findMany.mockResolvedValue([]);
+
+      await service.updateProfile('t-1', owner, { phone: '+54 11 5555-1234' });
+
+      expect(mockPrisma.tenant.update).toHaveBeenCalled();
+    });
+
     it('persists a new LPR image retention window', async () => {
       mockPrisma.tenant.findUnique.mockResolvedValue(
         tenant({ lprImageRetentionDays: 60 }),
@@ -251,7 +277,7 @@ describe('EntitiesService', () => {
       expect(unlink.data.entryCameraId).toBeNull();
 
       mockPrisma.tenant.update.mockClear();
-      await service.updateProfile('t-1', owner, { phone: '1122334455' });
+      await service.updateProfile('t-1', owner, { phone: '+5491122334455' });
       const untouched = mockPrisma.tenant.update.mock.calls[0][0] as {
         data: Record<string, unknown>;
       };

@@ -1,16 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEmail,
   IsInt,
   IsNotEmpty,
   IsOptional,
+  IsPhoneNumber,
   IsString,
   Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { UpdateEntityAddressDto } from '../../entities/dto/entity-address.dto';
+import { CreateScheduleDto } from '../../schedules/dto/create-schedule.dto';
 
 /**
  * The single entity declared in an onboarding application. On approval it is
@@ -53,17 +57,24 @@ export class DeclaredEntityDto {
   @Type(() => UpdateEntityAddressDto)
   location?: UpdateEntityAddressDto;
 
-  @ApiProperty({
-    description: 'Registered legal name of the entity.',
+  @ApiPropertyOptional({
+    description:
+      'Registered legal name of the entity. OPCIONAL: ya no se pide en el alta, se completa después desde la configuración del perfil. Ausente → el tenant queda con `legalName` en null.',
     example: 'Estacionamientos del Centro S.A.',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  legalName: string;
+  legalName?: string;
 
-  @ApiProperty({ example: '30123456789', description: 'CUIT, 11 digits' })
+  @ApiPropertyOptional({
+    example: '30123456789',
+    description:
+      'CUIT, 11 digits. OPCIONAL: ya no se pide en el alta. Si viene, tiene que tener 11 dígitos.',
+  })
+  @IsOptional()
   @Matches(/^\d{11}$/, { message: 'CUIT must have 11 digits' })
-  cuit: string;
+  cuit?: string;
 
   @ApiProperty({
     format: 'email',
@@ -74,11 +85,13 @@ export class DeclaredEntityDto {
   email: string;
 
   @ApiProperty({
-    description: 'Contact phone of the entity.',
-    example: '+541145678900',
+    description:
+      'Contact phone of the person in charge, in international E.164 format (with the leading `+` and country code, no spaces).',
+    example: '+5491123456789',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsPhoneNumber(undefined, {
+    message: 'phone must be a valid phone number in E.164 format (+549...)',
+  })
   phone: string;
 
   @ApiPropertyOptional({
@@ -92,4 +105,17 @@ export class DeclaredEntityDto {
   @IsInt()
   @Min(0)
   totalSpots?: number;
+
+  @ApiPropertyOptional({
+    type: [CreateScheduleDto],
+    maxItems: 28,
+    description:
+      'Horarios de atención declarados: una fila por franja (un día puede tener varias). Se crean como `schedules` del tenant al aprobar. Se validan con la misma regla que `/schedules` (open < close, sin solapes en el mismo día; franjas contiguas OK) y, si no cumplen, se responde 422 `ONBOARDING_NOT_SUBMITTABLE` con `validationsErrors` en `declaredEntity.schedules.<i>`. Un PATCH con `schedules` REEMPLAZA la lista entera.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(28)
+  @ValidateNested({ each: true })
+  @Type(() => CreateScheduleDto)
+  schedules?: CreateScheduleDto[];
 }
