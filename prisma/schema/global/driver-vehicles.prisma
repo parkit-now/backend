@@ -3,13 +3,14 @@
 // Global y no tenant-local: el vehículo es del conductor y lo usa en cualquier
 // playa; se lee siempre por `userId`. Patente normalizada y única por
 // conductor; un solo principal (índice único parcial, sólo en el SQL: Prisma
-// no expresa índices parciales). `kind` es car | suv_pickup | motorcycle (CHECK
-// en el SQL). Backend-only: RLS sin policies.
+// no expresa índices parciales). `category` es una categoría de la
+// plataforma (FK a `vehicle_categories`, migración 20261005120300; antes `kind`).
+// Que sea RESERVABLE lo valida la API, no la base. Backend-only: RLS sin policies.
 
 model DriverVehicle {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   plate     String   @db.VarChar(10)
-  kind      String   @db.VarChar(20)
+  category  String   @db.VarChar(20)
   brand     String?  @db.VarChar(60)
   model     String?  @db.VarChar(60)
   isPrimary Boolean  @default(false) @map("is_primary")
@@ -18,6 +19,8 @@ model DriverVehicle {
 
   userId String @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  categoryRef VehicleCategory @relation(fields: [category], references: [code], onUpdate: Cascade)
 
   @@unique([userId, plate], map: "driver_vehicles_user_plate_key")
   @@map("driver_vehicles")

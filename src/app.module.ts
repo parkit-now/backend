@@ -7,6 +7,7 @@ import { HealthModule } from './health/health.module';
 import { UsersModule } from './users/users.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { VehicleTypesModule } from './vehicle-types/vehicle-types.module';
+import { VehicleCategoriesModule } from './vehicle-categories/vehicle-categories.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { EntriesModule } from './entries/entries.module';
 import { PasswordRecoveryModule } from './password-recovery/password-recovery.module';
@@ -39,6 +40,7 @@ import { ReservationsModule } from './reservations/reservations.module';
     HealthModule,
     TenantsModule,
     VehiclesModule,
+    VehicleCategoriesModule,
     VehicleTypesModule,
     EntriesModule,
     OnboardingModule,

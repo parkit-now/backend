@@ -43,6 +43,9 @@ amountPaid?: Prisma.Decimal;
 vehicleType?: string;
 @IsOptional()
 @IsString()
+vehicleTypeId?: string;
+@IsOptional()
+@IsString()
 entryImageUrl?: string;
 @IsOptional()
 @IsString()

@@ -35,7 +35,7 @@ const prisma = {
 };
 
 const driverService = { quoteForReservation: jest.fn() };
-const driverVehicles = { findOwnedKind: jest.fn() };
+const driverVehicles = { findOwnedCategory: jest.fn() };
 
 const gateway = new FakeReservationPaymentGateway();
 const lifecycle = new ReservationLifecycleService(
@@ -146,7 +146,7 @@ describe('DriverReservationsService', () => {
         Promise.resolve({ id: 'pay-1', createdAt: NOW, ...data }),
     );
     prisma.reservation.findUnique.mockResolvedValue(null);
-    driverVehicles.findOwnedKind.mockResolvedValue('car');
+    driverVehicles.findOwnedCategory.mockResolvedValue('car');
     driverService.quoteForReservation.mockResolvedValue(
       quoted(input.entryAt, input.exitAt),
     );
@@ -179,7 +179,8 @@ describe('DriverReservationsService', () => {
         rateSnapshotMediaEstadiaPriceArs: 27000,
         rateSnapshotStayPriceArs: 45000,
       });
-      expect(args.data).not.toHaveProperty('vehicleKind');
+      // Snapshot de la categoría del vehículo del conductor al reservar.
+      expect(args.data).toMatchObject({ vehicleCategory: 'car' });
       expect(result).toMatchObject({
         state: DriverReservationStateDto.active,
         cancellable: true,
@@ -224,13 +225,13 @@ describe('DriverReservationsService', () => {
     });
 
     it('rechaza una patente que no es de un vehículo del conductor', async () => {
-      driverVehicles.findOwnedKind.mockResolvedValue(null);
+      driverVehicles.findOwnedCategory.mockResolvedValue(null);
       await expectFailure(
         service.create(USER, input, NOW),
         HttpStatus.UNPROCESSABLE_ENTITY,
         'RESERVATION_VEHICLE_NOT_FOUND',
       );
-      expect(driverVehicles.findOwnedKind).toHaveBeenCalledWith(
+      expect(driverVehicles.findOwnedCategory).toHaveBeenCalledWith(
         USER,
         'AB123CD',
       );

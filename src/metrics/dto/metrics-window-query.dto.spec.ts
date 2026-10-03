@@ -59,4 +59,29 @@ describe('MetricsWindowQueryDto', () => {
       cashSessionId: ['isUuid'],
     });
   });
+
+  describe('filtro por categoría de vehículo', () => {
+    it.each([
+      'car',
+      'suv',
+      'pickup',
+      'van',
+      'motorcycle',
+      'bicycle',
+      'truck',
+      'other',
+    ])('accepts the category %s', async (vehicleCategory) => {
+      expect(await failures({ ...WINDOW, vehicleCategory })).toEqual({});
+    });
+
+    it('rejects a category that does not exist', async () => {
+      expect(
+        await failures({ ...WINDOW, vehicleCategory: 'monopatin' }),
+      ).toEqual({ vehicleCategory: ['isIn'] });
+    });
+
+    it('keeps accepting the deprecated vehicleType filter', async () => {
+      expect(await failures({ ...WINDOW, vehicleType: 'Auto' })).toEqual({});
+    });
+  });
 });

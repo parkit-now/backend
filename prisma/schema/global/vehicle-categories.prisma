@@ -1,0 +1,29 @@
+/// Categorías de vehículo de la PLATAFORMA (migración 20261005120000).
+///
+/// Lista cerrada y global: se cambia sólo por migración. No es un enum de
+/// Postgres porque necesita etiqueta, orden, si se puede reservar y, a futuro,
+/// un recargo, y a un enum no se le pueden quitar valores.
+///
+/// Los tipos de cada estacionamiento (`VehicleType`) tienen un nombre libre que
+/// el dueño edita; la categoría es lo que el catálogo, el conductor, las
+/// reservas, los ingresos y las métricas usan de verdad. Los códigos
+/// disponibles en TypeScript salen de `VEHICLE_CATEGORIES`
+/// (src/vehicle-categories), y un spec los compara con lo que siembra la
+/// migración.
+///
+/// Backend-only: RLS prendida y cero policies.
+model VehicleCategory {
+  code       String  @id @db.VarChar(20)
+  label      String  @db.VarChar(40)
+  sortOrder  Int     @unique @map("sort_order") @db.SmallInt
+  reservable Boolean @default(false)
+
+  typeDefaults    VehicleTypeDefault[]
+  catalogDefaults VehicleCatalogDefault[]
+  vehicleTypes    VehicleType[]
+  entries         Entry[]
+  driverVehicles  DriverVehicle[]
+  reservations    Reservation[]
+
+  @@map("vehicle_categories")
+}

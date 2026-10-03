@@ -24,6 +24,7 @@ describe('MetricsController', () => {
     getPaymentMethodBreakdown: jest.fn(),
     getTopPlates: jest.fn(),
     getOccupancy: jest.fn(),
+    getVehicleCategoryBreakdown: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -60,6 +61,7 @@ describe('MetricsController', () => {
       ['getSummary'],
       ['getRevenue'],
       ['getPaymentMethodBreakdown'],
+      ['getVehicleCategoryBreakdown'],
       ['getTopPlates'],
       ['getOccupancy'],
     ])('%s requires the owner entity role', (handler) => {
@@ -137,6 +139,23 @@ describe('MetricsController', () => {
       await controller.getTopPlates(query);
 
       expect(mockMetricsService.getTopPlates).toHaveBeenCalledWith(query);
+    });
+
+    it('delegates the vehicle category breakdown with the query as is', async () => {
+      const query = {
+        from: '2026-08-07T13:00:00-03:00',
+        to: '2026-08-10T13:00:00-03:00',
+        vehicleCategory: 'suv' as const,
+      };
+      mockMetricsService.getVehicleCategoryBreakdown.mockResolvedValue({
+        totalStays: 0,
+      });
+
+      await controller.getVehicleCategoryBreakdown(query);
+
+      expect(
+        mockMetricsService.getVehicleCategoryBreakdown,
+      ).toHaveBeenCalledWith(query);
     });
 
     it('exposes occupancy without any query parameter', async () => {

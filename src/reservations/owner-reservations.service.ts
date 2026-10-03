@@ -1,3 +1,4 @@
+import { isVehicleCategory } from '../vehicle-categories/vehicle-categories';
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { normalizePlate } from '../driver/driver-rules';
@@ -160,6 +161,9 @@ function toDto(row: ReservationWithDriver): OwnerReservationDto {
     code: `R-${row.id.replace(/-/g, '').slice(-6).toUpperCase()}`,
     status: row.status,
     vehiclePlate: row.vehiclePlate,
+    vehicleCategory: isVehicleCategory(row.vehicleCategory)
+      ? row.vehicleCategory
+      : null,
     driverName: row.user.name,
     entryAt: row.entryAt.toISOString(),
     exitAt: row.exitAt.toISOString(),

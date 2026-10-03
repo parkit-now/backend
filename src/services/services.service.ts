@@ -32,7 +32,7 @@ function toDto(service: PrismaService_): ServiceDto {
 }
 
 const RULE_FIELDS = [
-  'reservationVehicleKinds',
+  'reservationVehicleCategories',
   'acceptanceMode',
   'approvalWindowMinutes',
   'freeCancelMinutes',
@@ -55,7 +55,7 @@ const DEFAULT_ROW: ServiceRow = {
   enabled: false,
   reservationRateId: null,
   reservableSpots: null,
-  reservationVehicleKinds: [],
+  reservationVehicleCategories: [],
   reservationHoursMode: 'opening',
   acceptanceMode: 'auto',
   approvalWindowMinutes: 15,
@@ -103,7 +103,7 @@ function readinessOf(
     reservableSpots: row.reservableSpots,
     capacityTotal: ctx.capacityTotal,
     rateUsable: ctx.rateUsable,
-    vehicleKinds: row.reservationVehicleKinds,
+    vehicleCategories: row.reservationVehicleCategories,
     hoursMode: row.reservationHoursMode,
     scheduleCount: ctx.scheduleCount,
     reservationHourCount: ctx.reservationHourCount,
@@ -121,7 +121,7 @@ function toCatalogItem(
     enabled: r.enabled,
     reservationRateId: r.reservationRateId,
     reservableSpots: r.reservableSpots,
-    reservationVehicleKinds: r.reservationVehicleKinds,
+    reservationVehicleCategories: r.reservationVehicleCategories,
     reservationHoursMode: r.reservationHoursMode,
     acceptanceMode: r.acceptanceMode,
     approvalWindowMinutes: r.approvalWindowMinutes,

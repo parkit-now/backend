@@ -57,6 +57,8 @@ describe('VehicleTypesService', () => {
     tenantId: TENANT,
     name: 'Utilitario',
     accepted: true,
+    category: 'van',
+    categoryInferred: false,
     version: 1,
     syncSeq: 5,
     deletedAt: null,
@@ -144,7 +146,28 @@ describe('VehicleTypesService', () => {
   });
 
   describe('createVehicleType', () => {
-    it('crea con el tenant del contexto y accepted por defecto en true', async () => {
+    it('con categoría explícita la guarda y NO la marca como inferida', async () => {
+      mockTenant.vehicleType.create.mockResolvedValue(makeType());
+
+      await service.createVehicleType({
+        id: TYPE,
+        name: 'pepe',
+        category: 'motorcycle',
+      });
+
+      expect(mockTenant.vehicleType.create).toHaveBeenCalledWith({
+        data: {
+          id: TYPE,
+          name: 'pepe',
+          accepted: true,
+          category: 'motorcycle',
+          categoryInferred: false,
+          tenantId: TENANT,
+        },
+      });
+    });
+
+    it('caja vieja (sin categoría): infiere por el nombre y queda inferida', async () => {
       mockTenant.vehicleType.create.mockResolvedValue(makeType());
 
       await service.createVehicleType({ id: TYPE, name: 'Utilitario' });
@@ -154,9 +177,41 @@ describe('VehicleTypesService', () => {
           id: TYPE,
           name: 'Utilitario',
           accepted: true,
+          category: 'van',
+          categoryInferred: true,
           tenantId: TENANT,
         },
       });
+    });
+
+    it.each(['pepe', 'Camioneta'])(
+      'caja vieja con un nombre que no se reconoce (%s): other inferida',
+      async (name) => {
+        mockTenant.vehicleType.create.mockResolvedValue(makeType());
+
+        await service.createVehicleType({ id: TYPE, name });
+
+        expect(mockTenant.vehicleType.create).toHaveBeenCalledWith({
+          data: {
+            id: TYPE,
+            name,
+            accepted: true,
+            category: 'other',
+            categoryInferred: true,
+            tenantId: TENANT,
+          },
+        });
+      },
+    );
+
+    it('el DTO devuelve category y categoryInferred', async () => {
+      mockTenant.vehicleType.create.mockResolvedValue(
+        makeType({ category: 'pickup', categoryInferred: true }),
+      );
+
+      const dto = await service.createVehicleType({ id: TYPE, name: 'x' });
+
+      expect(dto).toMatchObject({ category: 'pickup', categoryInferred: true });
     });
 
     it('nombre repetido (P2002) -> 409 VEHICLE_TYPE_DUPLICATE', async () => {
@@ -189,6 +244,40 @@ describe('VehicleTypesService', () => {
         where: { id: TYPE, tenantId: TENANT, version: 1, deletedAt: null },
         data: { version: { increment: 1 }, accepted: false },
       });
+    });
+
+    it('guardar la categoría apaga categoryInferred', async () => {
+      mockTenant.vehicleType.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.vehicleType.findUniqueOrThrow.mockResolvedValue(
+        makeType({ version: 2, category: 'suv' }),
+      );
+
+      await service.updateVehicleType(TYPE, 1, { category: 'suv' });
+
+      expect(mockTenant.vehicleType.updateMany).toHaveBeenCalledWith({
+        where: { id: TYPE, tenantId: TENANT, version: 1, deletedAt: null },
+        data: {
+          version: { increment: 1 },
+          category: 'suv',
+          categoryInferred: false,
+        },
+      });
+    });
+
+    it('editar sólo el nombre NO toca la categoría ni su marca de inferida', async () => {
+      mockTenant.vehicleType.updateMany.mockResolvedValue({ count: 1 });
+      mockTenant.vehicleType.findUniqueOrThrow.mockResolvedValue(
+        makeType({ version: 2 }),
+      );
+
+      await service.updateVehicleType(TYPE, 1, { name: 'Furgón' });
+
+      const [call] = mockTenant.vehicleType.updateMany.mock.calls as [
+        [{ data: Record<string, unknown> }],
+      ];
+      const { data } = call[0];
+      expect(data).not.toHaveProperty('category');
+      expect(data).not.toHaveProperty('categoryInferred');
     });
 
     it('version vieja -> 409 CONFLICT', async () => {

@@ -1,9 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { ServiceCode } from '@prisma/client';
-import {
-  RESERVATION_HOURS_MODES,
-  RESERVATION_VEHICLE_KINDS,
-} from '../reservation-readiness';
+import { RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import { RESERVATION_HOURS_MODES } from '../reservation-readiness';
 
 const REQUIREMENTS = ['mp_account', 'spots', 'hours', 'vehicles', 'rate'];
 
@@ -57,14 +55,15 @@ export class ServiceCatalogItemDto {
   reservableSpots: number | null;
 
   @ApiProperty({
-    enum: RESERVATION_VEHICLE_KINDS,
-    enumName: 'ReservationVehicleKind',
+    ...RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY,
     isArray: true,
     description:
-      'Tipos de vehículo (los de DriverVehicle.kind) que pueden reservar ' +
-      '(sólo ADVANCE_RESERVATION; vacío en otros códigos).',
+      'Categorías de vehículo (las de `GET /vehicle-categories` con ' +
+      '`reservable = true`) que pueden reservar desde la app ' +
+      '(sólo ADVANCE_RESERVATION; vacío en otros códigos). Es independiente ' +
+      'de qué tipos se aceptan en la caja (`vehicle_types.accepted`).',
   })
-  reservationVehicleKinds: string[];
+  reservationVehicleCategories: string[];
 
   @ApiProperty({
     enum: RESERVATION_HOURS_MODES,

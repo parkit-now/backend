@@ -1,6 +1,7 @@
 
 import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
+import {VehicleCategoryEntity} from './vehicle-category.entity'
 import {WhitelistEntity} from './whitelist.entity'
 import {RateEntity} from './rate.entity'
 import {CashSessionEntity} from './cash-session.entity'
@@ -38,6 +39,9 @@ amountPaid: Prisma.Decimal  | null;
 manuallyInvoiced: boolean ;
 source: string ;
 vehicleType: string  | null;
+vehicleTypeId: string  | null;
+vehicleCategory: string  | null;
+vehicleCategoryRef?: VehicleCategoryEntity  | null;
 entryImageUrl: string  | null;
 entryCameraId: string  | null;
 exitImageUrl: string  | null;

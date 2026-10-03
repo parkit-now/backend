@@ -28,8 +28,9 @@ model Service {
 
   // Reglas de ADVANCE_RESERVATION (migración 20261003120000). Los defaults son
   // los del producto; la API sólo los deja tocar en ese código.
-  // `reservationVehicleKinds` ⊆ car | suv_pickup | motorcycle (CHECK en SQL).
-  reservationVehicleKinds String[] @default([]) @map("reservation_vehicle_kinds")
+  // `reservationVehicleCategories` ⊆ car | suv | pickup | van | motorcycle (las
+  // reservables; CHECK en SQL, migración 20261005120300). Antes `kinds`.
+  reservationVehicleCategories String[] @default([]) @map("reservation_vehicle_categories")
   // opening = horario de apertura; custom = filas de `reservation_hours`.
   reservationHoursMode    String   @default("opening") @map("reservation_hours_mode")
   // auto | manual.

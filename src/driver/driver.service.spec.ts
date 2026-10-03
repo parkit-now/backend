@@ -57,7 +57,7 @@ const reservationRate = (hour: number, overrides: object = {}) => ({
 const reservationService = (overrides: object = {}) => ({
   enabled: true,
   reservableSpots: 5,
-  reservationVehicleKinds: ['car', 'suv_pickup'],
+  reservationVehicleCategories: ['car', 'suv'],
   reservationHoursMode: 'opening',
   acceptanceMode: 'auto',
   freeCancelMinutes: 60,
@@ -74,7 +74,7 @@ describe('DriverService', () => {
     mpAccount: { findUnique: jest.fn() },
     $extends: jest.fn(() => mockTenantClient),
   };
-  const driverVehicles = { findOwnedKind: jest.fn() };
+  const driverVehicles = { findOwnedCategory: jest.fn() };
   const service = new DriverService(
     prisma as unknown as PrismaService,
     driverVehicles as unknown as DriverVehiclesService,
@@ -96,7 +96,7 @@ describe('DriverService', () => {
     prisma.mpAccount.findUnique.mockResolvedValue({
       status: MpAccountStatus.linked,
     });
-    driverVehicles.findOwnedKind.mockResolvedValue('car');
+    driverVehicles.findOwnedCategory.mockResolvedValue('car');
     mockTenantClient.entry.count.mockResolvedValue(8);
     mockTenantClient.reservation.findMany.mockResolvedValue([]);
   });
@@ -115,7 +115,7 @@ describe('DriverService', () => {
         acceptsReservations: true,
         reservationHourPriceArs: 1800,
         reservationFractionPriceArs: 150,
-        reservationVehicleKinds: ['car', 'suv_pickup'],
+        reservationVehicleCategories: ['car', 'suv'],
         reservationRules: {
           acceptanceMode: 'auto',
           freeCancelMinutes: 60,
@@ -156,7 +156,7 @@ describe('DriverService', () => {
         { reservationRate: reservationRate(1800, { deletedAt: NOW }) },
       ],
       ['sin cupo', { reservableSpots: 0 }],
-      ['sin tipos de vehículo', { reservationVehicleKinds: [] }],
+      ['sin tipos de vehículo', { reservationVehicleCategories: [] }],
       ['más cupo que la capacidad', { reservableSpots: 21 }],
     ])('no toma reservas con %s', async (_, overrides) => {
       mockTenantClient.service.findFirst.mockResolvedValue(
@@ -171,7 +171,7 @@ describe('DriverService', () => {
         acceptsReservations: false,
         reservationHourPriceArs: null,
         reservationFractionPriceArs: null,
-        reservationVehicleKinds: null,
+        reservationVehicleCategories: null,
         reservationHours: null,
         reservationRules: null,
       });
@@ -336,26 +336,38 @@ describe('DriverService', () => {
       const withPlate = { ...window, vehiclePlate: 'AB123CD' };
 
       it('cotiza si el tipo del vehículo está aceptado', async () => {
-        driverVehicles.findOwnedKind.mockResolvedValue('suv_pickup');
+        driverVehicles.findOwnedCategory.mockResolvedValue('suv');
         const quote = await service.quote('tenant-once', withPlate, USER, NOW);
         expect(quote.totalArs).toBe(5400);
-        expect(driverVehicles.findOwnedKind).toHaveBeenCalledWith(
+        expect(driverVehicles.findOwnedCategory).toHaveBeenCalledWith(
           USER,
           'AB123CD',
         );
       });
 
       it('rechaza un tipo de vehículo que la playa no acepta', async () => {
-        driverVehicles.findOwnedKind.mockResolvedValue('motorcycle');
+        driverVehicles.findOwnedCategory.mockResolvedValue('motorcycle');
         await expectRejection(
           service.quote('tenant-once', withPlate, USER, NOW),
           HttpStatus.UNPROCESSABLE_ENTITY,
-          'RESERVATION_VEHICLE_KIND_NOT_ACCEPTED',
+          'RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED',
         );
       });
 
+      it.each(['pickup', 'van'])(
+        'rechaza la categoría %s si la playa sólo acepta auto y SUV (422)',
+        async (category) => {
+          driverVehicles.findOwnedCategory.mockResolvedValue(category);
+          await expectRejection(
+            service.quote('tenant-once', withPlate, USER, NOW),
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            'RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED',
+          );
+        },
+      );
+
       it('rechaza una patente que no es del conductor', async () => {
-        driverVehicles.findOwnedKind.mockResolvedValue(null);
+        driverVehicles.findOwnedCategory.mockResolvedValue(null);
         await expectRejection(
           service.quote('tenant-once', withPlate, USER, NOW),
           HttpStatus.UNPROCESSABLE_ENTITY,
@@ -365,14 +377,14 @@ describe('DriverService', () => {
 
       it('sin patente no valida el tipo de vehículo', async () => {
         await service.quote('tenant-once', window, USER, NOW);
-        expect(driverVehicles.findOwnedKind).not.toHaveBeenCalled();
+        expect(driverVehicles.findOwnedCategory).not.toHaveBeenCalled();
       });
 
       it('quoteForReservation valida el tipo que le pasan', async () => {
         await expectRejection(
           service.quoteForReservation('tenant-once', window, NOW, 'motorcycle'),
           HttpStatus.UNPROCESSABLE_ENTITY,
-          'RESERVATION_VEHICLE_KIND_NOT_ACCEPTED',
+          'RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED',
         );
       });
     });

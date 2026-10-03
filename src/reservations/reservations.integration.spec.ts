@@ -78,7 +78,7 @@ describe('reservas: recorrido completo (integración del módulo)', () => {
           policy: policy(mode),
         }),
     };
-    const vehicles = { findOwnedKind: () => Promise.resolve('car') };
+    const vehicles = { findOwnedCategory: () => Promise.resolve('car') };
     driver = new DriverReservationsService(
       db as unknown as PrismaService,
       driverService as unknown as DriverService,

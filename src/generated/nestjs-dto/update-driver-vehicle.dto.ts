@@ -11,9 +11,6 @@ export class UpdateDriverVehicleDto {
 plate?: string;
 @IsOptional()
 @IsString()
-kind?: string;
-@IsOptional()
-@IsString()
 brand?: string;
 @IsOptional()
 @IsString()

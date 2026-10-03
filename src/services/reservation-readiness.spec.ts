@@ -9,7 +9,7 @@ const READY: ReservationReadinessInput = {
   reservableSpots: 5,
   capacityTotal: 20,
   rateUsable: true,
-  vehicleKinds: ['car'],
+  vehicleCategories: ['car'],
   hoursMode: 'opening',
   scheduleCount: 7,
   reservationHourCount: 0,
@@ -61,7 +61,7 @@ describe('computeReservationReadiness', () => {
 
   it('marca vehicles sin ningún tipo', () => {
     expect(
-      computeReservationReadiness({ ...READY, vehicleKinds: [] }).missing,
+      computeReservationReadiness({ ...READY, vehicleCategories: [] }).missing,
     ).toEqual(['vehicles']);
   });
 
@@ -99,7 +99,7 @@ describe('computeReservationReadiness', () => {
         reservableSpots: null,
         capacityTotal: 20,
         rateUsable: false,
-        vehicleKinds: [],
+        vehicleCategories: [],
         hoursMode: 'opening',
         scheduleCount: 0,
         reservationHourCount: 0,

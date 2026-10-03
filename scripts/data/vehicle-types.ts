@@ -1,3 +1,5 @@
+import type { VehicleCategory } from '../../src/vehicle-categories/vehicle-categories';
+
 /**
  * Tipo de carrocería de cada modelo del catálogo semilla de la plataforma.
  *
@@ -37,10 +39,10 @@
  *   van    - utilitario / furgón, con o sin ventanas
  *
  * Esto clasifica por CARROCERÍA y se mantiene fiel al dato real: una Kangoo es
- * una van. Lo que se SIEMBRA es otra cosa —el nombre de un tipo de la
- * plantilla— y sale de `TEMPLATE_TYPE_NAME`. Se conservan separados a propósito:
- * falsear la carrocería para que coincida con la plantilla sería mentir en la
- * fuente, y la información ya no se recupera.
+ * una van. Lo que se SIEMBRA es otra cosa —la categoría de la plataforma
+ * (`vehicle_categories.code`)— y sale de `TEMPLATE_CATEGORY`. Hoy coinciden uno
+ * a uno, pero se conservan separados a propósito: la carrocería es el dato de
+ * la fuente y la categoría es una decisión nuestra que puede cambiar.
  */
 export type CatalogVehicleType = 'auto' | 'suv' | 'pickup' | 'van';
 
@@ -127,38 +129,22 @@ export const CARROCERIA_TO_TYPE: Record<string, CatalogVehicleType> = {
 };
 
 /**
- * Carrocería -> nombre del tipo por defecto con el que se siembra cada cuenta.
+ * Carrocería -> categoría de la plataforma con la que se siembra el modelo.
  *
- * `van -> Otro` es donde se reclasifican los 10 utilitarios (Kangoo, Partner,
- * Berlingo...). Los siete defaults no incluyen "Utilitario" A PROPÓSITO: es el
- * ejemplo canónico de la categoría que crea el dueño, y dejarlo afuera hace que
- * la feature se explique sola la primera vez que alguien la necesita.
+ * Desde la migración 20261005120100 la plantilla apunta a una CATEGORÍA y no al
+ * nombre de un tipo: el trigger de alta de cuentas cuelga cada modelo del tipo
+ * vivo más antiguo de esa categoría. Por eso los utilitarios (Kangoo, Partner,
+ * Berlingo, furgones y chasis) son `van` y ya no hay que mandarlos a "Otro".
  *
- * Si algún día "Utilitario" entrara como default, se cambia ESTA línea y los 10
- * se reclasifican solos.
+ * El generador valida cada categoría contra `VEHICLE_CATEGORIES`
+ * (src/vehicle-categories), que a su vez un spec compara con la migración.
  */
-export const TEMPLATE_TYPE_NAME: Record<CatalogVehicleType, string> = {
-  auto: 'Auto',
-  suv: 'SUV',
-  pickup: 'Pickup',
-  van: 'Otro',
+export const TEMPLATE_CATEGORY: Record<CatalogVehicleType, VehicleCategory> = {
+  auto: 'car',
+  suv: 'suv',
+  pickup: 'pickup',
+  van: 'van',
 };
-
-/**
- * Los siete tipos que siembra `vehicle_type_defaults`. Duplicado acá para que
- * el generador falle ANTES de emitir SQL si `TEMPLATE_TYPE_NAME` apunta a un
- * nombre que no existe. La FK a `vehicle_type_defaults(name)` es el backstop en
- * la base; esto avisa en el momento de generar.
- */
-export const DEFAULT_TYPE_NAMES = [
-  'Auto',
-  'Moto',
-  'Bici',
-  'SUV',
-  'Pickup',
-  'Camión',
-  'Otro',
-] as const;
 
 /**
  * Overrides curados: marca -> modelo -> tipo. Le ganan siempre a la carrocería

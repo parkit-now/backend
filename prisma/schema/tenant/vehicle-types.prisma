@@ -13,12 +13,24 @@
 /// Unicidad: índice único PARCIAL y de EXPRESIÓN sobre
 /// (tenant_id, lower(btrim(name))) acotado a `deleted_at IS NULL`. Prisma no
 /// puede expresar ninguna de las dos cosas, así que vive solo en
-/// supabase/migrations/20260901010804_vehicle_types.sql.
+/// supabase/migrations/20260901010804_vehicle_types.sql. Lo mismo vale para el
+/// índice parcial (tenant_id, category) de 20261005120000.
 model VehicleType {
   // UUIDv7 provisto por el cliente para soporte offline-first.
   id       String  @id @db.Uuid
   name     String  @db.VarChar(60)
   accepted Boolean @default(true)
+
+  /// Categoría de la plataforma (`vehicle_categories.code`). El `name` es sólo
+  /// la etiqueta que el dueño le pone en su playa; esto es lo que usan el
+  /// catálogo, el conductor, las reservas, los ingresos y las métricas.
+  category    String          @db.VarChar(20)
+  categoryRef VehicleCategory @relation(fields: [category], references: [code], onUpdate: Cascade)
+
+  /// true si la categoría la adivinó el sistema (backfill, o el alta de una caja
+  /// vieja que no manda categoría). La web muestra "Revisá la categoría" hasta
+  /// que el dueño la guarda: guardar `category` lo apaga.
+  categoryInferred Boolean @default(false) @map("category_inferred")
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

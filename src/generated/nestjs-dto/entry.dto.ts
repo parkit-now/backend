@@ -30,6 +30,7 @@ amountPaid: Prisma.Decimal  | null;
 manuallyInvoiced: boolean ;
 source: string ;
 vehicleType: string  | null;
+vehicleTypeId: string  | null;
 entryImageUrl: string  | null;
 entryCameraId: string  | null;
 exitImageUrl: string  | null;

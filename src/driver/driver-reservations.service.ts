@@ -1,3 +1,4 @@
+import { isVehicleCategory } from '../vehicle-categories/vehicle-categories';
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   Prisma,
@@ -99,11 +100,11 @@ export class DriverReservationsService {
 
     // La patente tiene que ser de un vehículo del conductor (SCRUM-285): es
     // la que la playa va a usar para reconocer la reserva en el ingreso.
-    const vehicleKind = await this.driverVehicles.findOwnedKind(
+    const vehicleCategory = await this.driverVehicles.findOwnedCategory(
       user,
       dto.vehiclePlate,
     );
-    if (!vehicleKind) {
+    if (!vehicleCategory) {
       throw new FormattedException(
         'Unprocessable Entity',
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -121,7 +122,7 @@ export class DriverReservationsService {
         dto.parkingId,
         { entryAt: dto.entryAt, exitAt: dto.exitAt },
         now,
-        vehicleKind,
+        vehicleCategory,
       );
     const entryAt = new Date(quote.entryAt);
     const exitAt = new Date(quote.exitAt);
@@ -156,6 +157,9 @@ export class DriverReservationsService {
             tenantId: dto.parkingId,
             userId: user.id,
             vehiclePlate: dto.vehiclePlate,
+            // Snapshot: el historial no depende de que el conductor edite su
+            // vehículo después.
+            vehicleCategory,
             entryAt,
             exitAt,
             totalArs: quote.totalArs,
@@ -473,6 +477,9 @@ export class DriverReservationsService {
       longitude:
         row.tenant.longitude === null ? null : Number(row.tenant.longitude),
       vehiclePlate: row.vehiclePlate,
+      vehicleCategory: isVehicleCategory(row.vehicleCategory)
+        ? row.vehicleCategory
+        : null,
       entryAt: row.entryAt.toISOString(),
       exitAt: row.exitAt.toISOString(),
       totalArs: Number(row.totalArs),

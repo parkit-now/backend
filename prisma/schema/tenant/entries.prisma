@@ -17,6 +17,14 @@ model Entry {
   // Snapshot de texto, igual que vehicleBrand/vehicleModel: un ingreso
   // histórico no debe cambiar si el dueño renombra o borra el tipo.
   vehicleType    String?     @map("vehicle_type") @db.VarChar(60)
+  // Tipo elegido al ingresar. SIN FK a propósito (migración 20261005120200): una
+  // caja sin conexión puede referenciar un tipo que el dueño borró mientras
+  // tanto, y no hay que perder un ingreso con plata por eso.
+  vehicleTypeId  String?     @map("vehicle_type_id") @db.Uuid
+  // Categoría de la plataforma, congelada al ingresar: si el dueño cambia la
+  // categoría de un tipo, los ingresos ya hechos conservan la que guardaron.
+  vehicleCategory    String?          @map("vehicle_category") @db.VarChar(20)
+  vehicleCategoryRef VehicleCategory? @relation(fields: [vehicleCategory], references: [code], onUpdate: Cascade, map: "entries_vehicle_category_fkey")
   entryImageUrl  String?     @map("entry_image_url")
   entryCameraId  String?     @map("entry_camera_id") @db.VarChar(100)
   exitImageUrl   String?     @map("exit_image_url")

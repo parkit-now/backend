@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { ScheduleDay } from '@prisma/client';
+import { RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
 
 /**
  * Contrato PÚBLICO de una playa para el conductor: subset estricto del modelo
@@ -107,14 +108,13 @@ export class DriverParkingDto {
   reservationFractionPriceArs: number | null;
 
   @ApiProperty({
-    enum: ['car', 'suv_pickup', 'motorcycle'],
-    enumName: 'ReservationVehicleKind',
+    ...RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY,
     isArray: true,
     nullable: true,
     description:
-      'Tipos de vehículo que pueden reservar. null si la playa no toma reservas.',
+      'Categorías de vehículo que pueden reservar. null si la playa no toma reservas.',
   })
-  reservationVehicleKinds: string[] | null;
+  reservationVehicleCategories: string[] | null;
 
   @ApiProperty({
     type: [DriverScheduleDto],

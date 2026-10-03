@@ -58,6 +58,9 @@ model Reservation {
   refundAttempts                   Int               @default(0) @map("refund_attempts")
   // Reglas de la playa al reservar (ver reservation-policy.ts).
   policySnapshot                   Json?             @map("policy_snapshot")
+  // Categoría del vehículo del conductor al reservar (snapshot, migración
+  // 20261005120300). NULL en las reservas anteriores.
+  vehicleCategory                  String?           @map("vehicle_category") @db.VarChar(20)
   createdAt                        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                        DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -67,6 +70,8 @@ model Reservation {
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Migración 20261004130000: `ON DELETE SET NULL`.
   cancelledByUser User? @relation("ReservationCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+
+  vehicleCategoryRef VehicleCategory? @relation(fields: [vehicleCategory], references: [code], onUpdate: Cascade, map: "reservations_vehicle_category_fkey")
 
   payments ReservationPayment[]
 

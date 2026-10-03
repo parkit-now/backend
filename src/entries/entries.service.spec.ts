@@ -1017,4 +1017,221 @@ describe('EntriesService', () => {
       });
     });
   });
+
+  describe('tipo y categoría del vehículo', () => {
+    const TYPE_ID = '88888888-8888-7888-8888-888888888888';
+
+    function setup(vehicleType: unknown = null) {
+      const tx = {
+        entry: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest
+            .fn()
+            .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+              Promise.resolve({
+                ...data,
+                enteredAt: new Date('2026-10-01T10:00:00.000Z'),
+                updatedAt: new Date('2026-10-01T10:00:00.000Z'),
+                version: 1,
+                syncSeq: 1,
+              }),
+            ),
+        },
+        vehicleType: { findFirst: jest.fn().mockResolvedValue(vehicleType) },
+        whitelist: { findFirst: jest.fn().mockResolvedValue(null) },
+      };
+      const prisma = {
+        $transaction: jest.fn((cb: (txArg: typeof tx) => unknown) => cb(tx)),
+      };
+      const subject = new EntriesService(
+        prisma as unknown as PrismaService,
+        { getTenantIdOrThrow: () => TENANT } as unknown as TenantContextService,
+      );
+      return { tx, subject };
+    }
+
+    const baseCreate = {
+      id: ENTRY,
+      plate: 'abc123',
+      enteredAt: '2026-10-01T10:00:00.000Z',
+    };
+
+    it('ingreso manual con vehicleTypeId: guarda id, nombre y categoría del tipo', async () => {
+      const { tx, subject } = setup({
+        id: TYPE_ID,
+        name: 'Autos',
+        category: 'car',
+      });
+
+      const dto = await subject.createEntry({
+        ...baseCreate,
+        vehicleTypeId: TYPE_ID,
+      });
+
+      const { data } = tx.entry.create.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).toMatchObject({
+        vehicleTypeId: TYPE_ID,
+        vehicleType: 'Autos',
+        vehicleCategory: 'car',
+      });
+      // El tipo se busca en el tenant del contexto, nunca por el id solo.
+      expect(tx.vehicleType.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: TYPE_ID, tenantId: TENANT } }),
+      );
+      expect(dto).toMatchObject({
+        vehicleTypeId: TYPE_ID,
+        vehicleType: 'Autos',
+        vehicleCategory: 'car',
+      });
+    });
+
+    it('caja vieja: sin tipo ni categoría el ingreso queda con todo en null', async () => {
+      const { tx, subject } = setup();
+
+      const dto = await subject.createEntry(baseCreate);
+
+      expect(tx.vehicleType.findFirst).not.toHaveBeenCalled();
+      expect(dto).toMatchObject({
+        vehicleType: null,
+        vehicleTypeId: null,
+        vehicleCategory: null,
+      });
+    });
+
+    it('tipo inexistente o de otro tenant: no falla y usa la categoría del cliente', async () => {
+      const { tx, subject } = setup(null);
+
+      await subject.createEntry({
+        ...baseCreate,
+        vehicleTypeId: TYPE_ID,
+        vehicleCategory: 'motorcycle',
+      });
+
+      const { data } = tx.entry.create.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).toMatchObject({
+        vehicleTypeId: null,
+        vehicleType: null,
+        vehicleCategory: 'motorcycle',
+      });
+    });
+
+    it('LPR: resuelve el tipo por el nombre que manda la cámara', async () => {
+      const { tx, subject } = setup({
+        id: TYPE_ID,
+        name: 'Pick-up',
+        category: 'pickup',
+      });
+
+      await subject.createStayFromLprEvent({
+        plate: 'ABC123',
+        vehicleType: 'pick-up',
+      });
+
+      const { data } = tx.entry.create.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).toMatchObject({
+        source: 'auto',
+        vehicleTypeId: TYPE_ID,
+        vehicleType: 'Pick-up',
+        vehicleCategory: 'pickup',
+      });
+    });
+
+    it('LPR sin tipo: queda en null, como antes', async () => {
+      const { tx, subject } = setup();
+
+      await subject.createStayFromLprEvent({ plate: 'ABC123' });
+
+      const { data } = tx.entry.create.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).toMatchObject({
+        vehicleType: null,
+        vehicleTypeId: null,
+        vehicleCategory: null,
+      });
+    });
+
+    it('corregir el tipo actualiza los tres campos y queda en la auditoría', async () => {
+      const current = {
+        id: ENTRY,
+        tenantId: TENANT,
+        plate: 'ABC123',
+        color: null,
+        cochera: null,
+        notes: null,
+        enteredAt: new Date('2026-09-08T10:00:00.000Z'),
+        leftAt: null,
+        amountPaid: null,
+        vehicleBrand: null,
+        vehicleModel: null,
+        vehicleType: null,
+        vehicleTypeId: null,
+        vehicleCategory: null,
+        rateId: null,
+        ticketNumber: null,
+        manuallyInvoiced: false,
+        version: 2,
+        syncSeq: 9,
+        updatedAt: new Date('2026-09-08T12:00:00.000Z'),
+        cashSession: null,
+        paymentTransactions: [],
+      };
+      const tx = {
+        entry: {
+          findFirst: jest.fn().mockResolvedValue(current),
+          update: jest.fn().mockResolvedValue(undefined),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            ...current,
+            vehicleType: 'Autos',
+            vehicleTypeId: TYPE_ID,
+            vehicleCategory: 'car',
+            version: 3,
+          }),
+        },
+        vehicleType: {
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: TYPE_ID, name: 'Autos', category: 'car' }),
+        },
+        paymentTransaction: { updateMany: jest.fn(), createMany: jest.fn() },
+        auditLog: { create: jest.fn().mockResolvedValue(undefined) },
+      };
+      const subject = new EntriesService(
+        {
+          $transaction: jest.fn((cb: (txArg: typeof tx) => unknown) => cb(tx)),
+        } as unknown as PrismaService,
+        { getTenantIdOrThrow: () => TENANT } as unknown as TenantContextService,
+      );
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { vehicleTypeId: TYPE_ID },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      const { data } = tx.entry.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).toMatchObject({
+        vehicleTypeId: TYPE_ID,
+        vehicleType: 'Autos',
+        vehicleCategory: 'car',
+      });
+      const audit = tx.auditLog.create.mock.calls[0][0] as {
+        data: { metadata: { changedFields: string[] } };
+      };
+      const changed = audit.data.metadata.changedFields;
+      expect(changed).toContain('vehicleType');
+      expect(changed).toContain('vehicleTypeId');
+      expect(changed).toContain('vehicleCategory');
+    });
+  });
 });

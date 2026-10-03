@@ -81,7 +81,7 @@ type LotData = {
    * ve el conductor (parking DTO) y las aplica la cotización.
    */
   reservation: {
-    vehicleKinds: string[];
+    vehicleCategories: string[];
     hoursMode: string;
     /** Horario efectivo: el propio en `custom`, el de apertura en `opening`. */
     hours: ScheduleRange[];
@@ -178,9 +178,9 @@ export class DriverService {
   ): Promise<QuoteDto> {
     // Con `vehiclePlate`, la cotización conoce el tipo de vehículo y valida
     // que la playa lo acepte, igual que la reserva.
-    let vehicleKind: string | undefined;
+    let vehicleCategory: string | undefined;
     if (dto.vehiclePlate) {
-      const kind = await this.driverVehicles.findOwnedKind(
+      const kind = await this.driverVehicles.findOwnedCategory(
         user,
         dto.vehiclePlate,
       );
@@ -191,10 +191,11 @@ export class DriverService {
           ErrorCodes.RESERVATION_VEHICLE_NOT_FOUND,
         );
       }
-      vehicleKind = kind;
+      vehicleCategory = kind;
     }
-    return (await this.quoteForReservation(parkingId, dto, now, vehicleKind))
-      .quote;
+    return (
+      await this.quoteForReservation(parkingId, dto, now, vehicleCategory)
+    ).quote;
   }
 
   /**
@@ -206,7 +207,7 @@ export class DriverService {
     parkingId: string,
     dto: CreateQuoteDto,
     now = new Date(),
-    vehicleKind?: string,
+    vehicleCategory?: string,
   ): Promise<{
     quote: QuoteDto;
     reservableSpots: number;
@@ -247,11 +248,15 @@ export class DriverService {
     }
     // `rate` no nulo ⇒ `lot.reservation` no nulo (ver loadLotData).
     const rules = lot.reservation;
-    if (rules && vehicleKind && !rules.vehicleKinds.includes(vehicleKind)) {
+    if (
+      rules &&
+      vehicleCategory &&
+      !rules.vehicleCategories.includes(vehicleCategory)
+    ) {
       throw unprocessable(
-        `This parking lot does not take reservations for '${vehicleKind}' vehicles.`,
+        `This parking lot does not take reservations for '${vehicleCategory}' vehicles.`,
         instance,
-        ErrorCodes.RESERVATION_VEHICLE_KIND_NOT_ACCEPTED,
+        ErrorCodes.RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED,
       );
     }
     // Horario propio: la estadía entera tiene que caer dentro de sus rangos.
@@ -345,7 +350,7 @@ export class DriverService {
         select: {
           enabled: true,
           reservableSpots: true,
-          reservationVehicleKinds: true,
+          reservationVehicleCategories: true,
           reservationHoursMode: true,
           acceptanceMode: true,
           approvalWindowMinutes: true,
@@ -398,7 +403,7 @@ export class DriverService {
       reservableSpots: spots,
       capacityTotal: readCapacity(tenant.settings).total,
       rateUsable,
-      vehicleKinds: reservationService?.reservationVehicleKinds ?? [],
+      vehicleCategories: reservationService?.reservationVehicleCategories ?? [],
       hoursMode: reservationService?.reservationHoursMode ?? 'opening',
       scheduleCount: schedules.length,
       reservationHourCount: reservationRanges.length,
@@ -423,7 +428,8 @@ export class DriverService {
       reservation:
         takesReservations && reservationService
           ? {
-              vehicleKinds: reservationService.reservationVehicleKinds,
+              vehicleCategories:
+                reservationService.reservationVehicleCategories,
               hoursMode: reservationService.reservationHoursMode,
               hours: effectiveReservationHours(
                 reservationService.reservationHoursMode,
@@ -489,7 +495,7 @@ function toParkingDto(
     acceptsReservations: lot.reservationRate !== null,
     reservationHourPriceArs: lot.reservationRate?.hourPriceArs ?? null,
     reservationFractionPriceArs: lot.reservationRate?.fractionPriceArs ?? null,
-    reservationVehicleKinds: lot.reservation?.vehicleKinds ?? null,
+    reservationVehicleCategories: lot.reservation?.vehicleCategories ?? null,
     reservationHours: lot.reservation
       ? sortSchedules(lot.reservation.hours)
       : null,

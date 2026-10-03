@@ -33,9 +33,10 @@ export class ServiceDto {
 
   @ApiProperty({
     type: [String],
-    description: 'ADVANCE_RESERVATION: tipos de vehículo que pueden reservar.',
+    description:
+      'ADVANCE_RESERVATION: categorías de vehículo que pueden reservar.',
   })
-  reservationVehicleKinds: string[];
+  reservationVehicleCategories: string[];
 
   @ApiProperty({ description: 'ADVANCE_RESERVATION: opening | custom.' })
   reservationHoursMode: string;

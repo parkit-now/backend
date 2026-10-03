@@ -16,6 +16,7 @@ type MetricsWhere = {
   status?: string;
   archivedAt?: null;
   vehicleType?: string;
+  vehicleCategory?: string;
   paymentMethodName?: string;
   // Transactions carry no timestamp, so their window rides on the relation.
   entry?: { leftAt?: DateRange; tenantId?: string };
@@ -187,6 +188,45 @@ describe('MetricsService', () => {
         { type: 'Auto', occupied: 10 },
       ]);
     });
+
+    it('groups the open entries by vehicle category, with "Sin dato" (null) last', async () => {
+      mockTenant.entry.groupBy.mockImplementation(({ by }: { by: string[] }) =>
+        Promise.resolve(
+          by[0] === 'vehicleCategory'
+            ? [
+                { vehicleCategory: null, _count: { _all: 40 } },
+                { vehicleCategory: 'motorcycle', _count: { _all: 13 } },
+                { vehicleCategory: 'car', _count: { _all: 20 } },
+              ]
+            : [],
+        ),
+      );
+
+      const result = await service.getOccupancy();
+
+      expect(result.byVehicleCategory).toEqual([
+        { category: 'car', occupied: 20 },
+        { category: 'motorcycle', occupied: 13 },
+        // The absence of an answer is not ranked, even when it is the biggest.
+        { category: null, occupied: 40 },
+      ]);
+    });
+
+    it('a category outside the closed list reads as null instead of leaking', async () => {
+      mockTenant.entry.groupBy.mockImplementation(({ by }: { by: string[] }) =>
+        Promise.resolve(
+          by[0] === 'vehicleCategory'
+            ? [{ vehicleCategory: 'monopatin', _count: { _all: 2 } }]
+            : [],
+        ),
+      );
+
+      const result = await service.getOccupancy();
+
+      expect(result.byVehicleCategory).toEqual([
+        { category: null, occupied: 2 },
+      ]);
+    });
   });
 
   describe('getRevenue', () => {
@@ -329,6 +369,33 @@ describe('MetricsService', () => {
       }
     });
 
+    it('passes the vehicle category filter through to both series', async () => {
+      await service.getRevenue({ ...range, vehicleCategory: 'suv' });
+
+      const wheres = wheresOf(mockTenant.entry.findMany);
+      expect(wheres).toHaveLength(2); // exits + arrivals
+      for (const where of wheres) {
+        expect(where.vehicleCategory).toBe('suv');
+        // The deprecated filter is not invented when it was not sent.
+        expect(where).not.toHaveProperty('vehicleType');
+      }
+    });
+
+    it('combines both filters when both are sent', async () => {
+      await service.getRevenue({
+        ...range,
+        vehicleCategory: 'suv',
+        vehicleType: 'SUV',
+      });
+
+      for (const where of wheresOf(mockTenant.entry.findMany)) {
+        expect(where).toMatchObject({
+          vehicleCategory: 'suv',
+          vehicleType: 'SUV',
+        });
+      }
+    });
+
     it('rejects an inverted range', async () => {
       const failure = await service
         .getRevenue({ from: range.to, to: range.from })
@@ -376,6 +443,81 @@ describe('MetricsService', () => {
         expect(args.where).not.toHaveProperty('tenantId');
       }
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+    });
+  });
+
+  describe('getVehicleCategoryBreakdown', () => {
+    const range = {
+      from: '2026-08-07T13:00:00-03:00',
+      to: '2026-08-10T13:00:00-03:00',
+    };
+
+    it('splits the stays that ended in the window by category, "Sin dato" last', async () => {
+      mockTenant.entry.groupBy.mockResolvedValue([
+        {
+          vehicleCategory: null,
+          _count: { _all: 6 },
+          _sum: { amountPaid: new Prisma.Decimal(900) },
+        },
+        {
+          vehicleCategory: 'car',
+          _count: { _all: 3 },
+          _sum: { amountPaid: new Prisma.Decimal(3000) },
+        },
+        {
+          vehicleCategory: 'motorcycle',
+          _count: { _all: 1 },
+          _sum: { amountPaid: new Prisma.Decimal(500) },
+        },
+      ]);
+
+      const result = await service.getVehicleCategoryBreakdown(range);
+
+      expect(result.totalStays).toBe(10);
+      expect(result.totalRevenue).toBe(4400);
+      expect(result.categories).toEqual([
+        { category: 'car', stays: 3, revenue: 3000, share: 0.3 },
+        { category: 'motorcycle', stays: 1, revenue: 500, share: 0.1 },
+        { category: null, stays: 6, revenue: 900, share: 0.6 },
+      ]);
+      // Shares of every slice add up to the whole.
+      const shares = result.categories.reduce((s, c) => s + (c.share ?? 0), 0);
+      expect(shares).toBeCloseTo(1);
+    });
+
+    it('groups by the frozen category over the ended-in-window stays', async () => {
+      await service.getVehicleCategoryBreakdown({
+        ...range,
+        vehicleCategory: 'car',
+      });
+
+      const [call] = mockTenant.entry.groupBy.mock.calls as [
+        [{ by: string[]; where: MetricsWhere }],
+      ];
+      expect(call[0].by).toEqual(['vehicleCategory']);
+      expect(call[0].where.leftAt).toEqual({
+        gte: new Date(range.from),
+        lt: new Date(range.to),
+      });
+      expect(call[0].where.vehicleCategory).toBe('car');
+    });
+
+    it('an empty window gives no slices and a null share, not a division by zero', async () => {
+      const result = await service.getVehicleCategoryBreakdown(range);
+
+      expect(result).toMatchObject({
+        totalStays: 0,
+        totalRevenue: 0,
+        categories: [],
+      });
+    });
+
+    it('rejects an inverted window', async () => {
+      const failure = await service
+        .getVehicleCategoryBreakdown({ from: range.to, to: range.from })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(FormattedException);
     });
   });
 

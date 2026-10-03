@@ -12,6 +12,11 @@ import {
   VehicleTypeChangesResponseDto,
 } from './dto/vehicle-type-changes.dto';
 import { VehicleTypeDto, VehicleTypeListItemDto } from './dto/vehicle-type.dto';
+import {
+  inferCategoryFromName,
+  isVehicleCategory,
+  type VehicleCategory,
+} from '../vehicle-categories/vehicle-categories';
 
 function toDto(t: VehicleType): VehicleTypeDto {
   return {
@@ -19,6 +24,11 @@ function toDto(t: VehicleType): VehicleTypeDto {
     tenantId: t.tenantId,
     name: t.name,
     accepted: t.accepted,
+    // La columna es varchar con FK a `vehicle_categories`: el valor siempre es
+    // uno de la lista, pero si una migración agrega una categoría y el código
+    // viejo la lee, cae a `other` en vez de romper el listado.
+    category: isVehicleCategory(t.category) ? t.category : 'other',
+    categoryInferred: t.categoryInferred,
     version: t.version,
     syncSeq: t.syncSeq,
     deletedAt: t.deletedAt ? t.deletedAt.toISOString() : null,
@@ -31,8 +41,9 @@ function toDto(t: VehicleType): VehicleTypeDto {
  * ABM de los tipos de vehículo de un estacionamiento.
  *
  * Antes esto era el enum `vehicle_type` de Postgres: la plataforma decidía las
- * categorías y el dueño las padecía. Ahora cada cuenta nace con siete propias y
- * editables, y agrega las que necesite.
+ * categorías y el dueño las padecía. Ahora cada cuenta nace con ocho propias y
+ * editables, y agrega las que necesite. Cada tipo cuelga de una categoría de la
+ * plataforma (`vehicle_categories`); el nombre es sólo la etiqueta.
  */
 @Injectable()
 export class VehicleTypesService {
@@ -95,12 +106,20 @@ export class VehicleTypesService {
     const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
+    // Una caja vieja crea tipos sin categoría (incluso sin conexión, desde sus
+    // operaciones pendientes). No se rechaza: se infiere por el nombre y, si no
+    // se reconoce, `other`, y se marca como inferida para que el dueño la revise.
+    const category: VehicleCategory =
+      data.category ?? inferCategoryFromName(data.name) ?? 'other';
+
     try {
       const created = await tenantPrisma.vehicleType.create({
         data: {
           id: data.id,
           name: data.name,
           accepted: data.accepted ?? true,
+          category,
+          categoryInferred: data.category === undefined,
           tenantId,
         },
       });
@@ -121,11 +140,16 @@ export class VehicleTypesService {
     // `version: { increment: 1 }` NO es redundante acá: el trigger
     // `set_vehicle_types_sync_fields` copia el de rates y sólo toca updated_at
     // y sync_seq. La app es lo único que bumpea la versión.
-    const updateData: Prisma.VehicleTypeUpdateManyMutationInput = {
+    const updateData: Prisma.VehicleTypeUncheckedUpdateManyInput = {
       version: { increment: 1 },
     };
     if (data.name !== undefined) updateData.name = data.name;
     if (data.accepted !== undefined) updateData.accepted = data.accepted;
+    // Guardar la categoría es la confirmación del dueño: apaga "Revisá".
+    if (data.category !== undefined) {
+      updateData.category = data.category;
+      updateData.categoryInferred = false;
+    }
 
     let result: { count: number };
     try {

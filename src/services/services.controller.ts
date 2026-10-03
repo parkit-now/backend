@@ -88,7 +88,7 @@ export class ServicesController {
       enabled: dto.enabled,
       reservationRateId: dto.reservationRateId,
       reservableSpots: dto.reservableSpots,
-      reservationVehicleKinds: dto.reservationVehicleKinds,
+      reservationVehicleCategories: dto.reservationVehicleCategories,
       acceptanceMode: dto.acceptanceMode,
       approvalWindowMinutes: dto.approvalWindowMinutes,
       freeCancelMinutes: dto.freeCancelMinutes,

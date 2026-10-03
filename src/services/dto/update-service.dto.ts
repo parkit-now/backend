@@ -11,7 +11,8 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { RESERVATION_VEHICLE_KINDS } from '../reservation-readiness';
+import { RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import { RESERVABLE_VEHICLE_CATEGORIES } from '../../vehicle-categories/vehicle-categories';
 
 export class UpdateServiceDto {
   @ApiPropertyOptional({
@@ -52,17 +53,17 @@ export class UpdateServiceDto {
 
   @ApiPropertyOptional({
     description:
-      'Sólo ADVANCE_RESERVATION: tipos de vehículo que pueden reservar, sin ' +
-      'duplicados.',
-    enum: RESERVATION_VEHICLE_KINDS,
-    enumName: 'ReservationVehicleKind',
+      'Sólo ADVANCE_RESERVATION: categorías de vehículo que pueden reservar ' +
+      'desde la app (auto, SUV, pickup, utilitario y moto), sin duplicados. ' +
+      'Es independiente de qué tipos se aceptan en la caja.',
+    ...RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY,
     isArray: true,
   })
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @IsIn(RESERVATION_VEHICLE_KINDS, { each: true })
-  reservationVehicleKinds?: string[];
+  @IsIn(RESERVABLE_VEHICLE_CATEGORIES, { each: true })
+  reservationVehicleCategories?: string[];
 
   @ApiPropertyOptional({
     description:

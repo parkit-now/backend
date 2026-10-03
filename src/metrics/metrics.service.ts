@@ -19,6 +19,11 @@ import {
   type TopPlatesOrder,
 } from './dto/top-plates-query.dto';
 import { TopPlatesResponseDto } from './dto/top-plates-response.dto';
+import { VehicleCategoryBreakdownDto } from './dto/vehicle-category-breakdown.dto';
+import {
+  isVehicleCategory,
+  type VehicleCategory,
+} from '../vehicle-categories/vehicle-categories';
 import {
   RevenueBucketDto,
   RevenueResponseDto,
@@ -47,6 +52,27 @@ import {
 /** Bucket label for open entries that never declared a vehicle type. */
 const UNKNOWN_VEHICLE_TYPE = 'unknown';
 
+/** A category that is not in the closed list reads as "Sin dato" (null). */
+function toVehicleCategory(value: string | null): VehicleCategory | null {
+  return isVehicleCategory(value) ? value : null;
+}
+
+/**
+ * Orders rows by their count, most first, with the `null` ("Sin dato") group
+ * always last: it is the absence of an answer, not a category to rank.
+ */
+function byCountWithUnknownLast<T extends Record<K, number>, K extends string>(
+  category: (row: T) => string | null,
+  count: K,
+): (a: T, b: T) => number {
+  return (a, b) => {
+    const aUnknown = category(a) === null;
+    const bUnknown = category(b) === null;
+    if (aUnknown !== bUnknown) return aUnknown ? 1 : -1;
+    return b[count] - a[count];
+  };
+}
+
 /** Every monetary figure in this module is in Argentine pesos. */
 const CURRENCY = 'ARS';
 
@@ -54,6 +80,8 @@ const REVENUE_INSTANCE = '/tenants/:tenantId/metrics/revenue';
 const BREAKDOWN_INSTANCE =
   '/tenants/:tenantId/metrics/revenue/by-payment-method';
 const TOP_PLATES_INSTANCE = '/tenants/:tenantId/metrics/top-plates';
+const VEHICLE_CATEGORY_INSTANCE =
+  '/tenants/:tenantId/metrics/by-vehicle-category';
 
 /** How many plates the ranking returns when the caller does not say. */
 const DEFAULT_TOP_PLATES = 10;
@@ -101,21 +129,36 @@ function confidenceFor(samples: number): ProjectionConfidence {
 }
 
 /**
- * The optional vehicle-type filter, as a `where` fragment.
+ * The optional vehicle filters, as a `where` fragment.
  *
- * `entries.vehicleType` is a **text snapshot** of the type name taken at
- * ingress, not a foreign key into `vehicle_types` (see
- * `20260901012009_entries_vehicle_type_snapshot.sql`): a stay from eight months
- * ago must not change meaning because the owner renamed or deleted the type.
- * So the match is a plain string equality against that snapshot, and the filter
- * is deliberately *not* validated against the tenant's live catalogue — doing
- * so would reject a perfectly legitimate query for a type that has since been
- * renamed away.
+ * `vehicleCategory` is the one to use: `entries.vehicleCategory` is the
+ * platform category frozen at ingress (`20261005120200`), filled on manual and
+ * LPR stays alike, and it groups "Autos", "Auto" and "Coche" together.
+ *
+ * `vehicleType` is deprecated for one version. `entries.vehicleType` is a
+ * **text snapshot** of the type name taken at ingress, not a foreign key into
+ * `vehicle_types` (see `20260901012009_entries_vehicle_type_snapshot.sql`): a
+ * stay from eight months ago must not change meaning because the owner renamed
+ * or deleted the type. So the match is a plain string equality against that
+ * snapshot, and the filter is deliberately *not* validated against the tenant's
+ * live catalogue — doing so would reject a perfectly legitimate query for a
+ * type that has since been renamed away.
+ *
+ * If both are sent, both must match.
  */
-function vehicleTypeWhere(vehicleType?: string): {
+function vehicleWhere(filter: {
   vehicleType?: string;
+  vehicleCategory?: string;
+}): {
+  vehicleType?: string;
+  vehicleCategory?: string;
 } {
-  return vehicleType ? { vehicleType } : {};
+  return {
+    ...(filter.vehicleType ? { vehicleType: filter.vehicleType } : {}),
+    ...(filter.vehicleCategory
+      ? { vehicleCategory: filter.vehicleCategory }
+      : {}),
+  };
 }
 
 /**
@@ -352,7 +395,7 @@ export class MetricsService {
         _sum: { amountPaid: true },
         where: {
           leftAt,
-          ...vehicleTypeWhere(query.vehicleType),
+          ...vehicleWhere(query),
           // With a session: the stays it collected. A close writes all of its
           // payments under one session, so their `amountPaid` equals the
           // transactions' sum, `unallocated` comes out 0, and the pie
@@ -372,7 +415,7 @@ export class MetricsService {
             // relation filter, and without it the range cannot use the index.
             tenantId: this.tenantContext.getTenantIdOrThrow(),
             leftAt,
-            ...vehicleTypeWhere(query.vehicleType),
+            ...vehicleWhere(query),
           },
         },
       }),
@@ -425,7 +468,7 @@ export class MetricsService {
     const stays = await tenantPrisma.entry.findMany({
       where: {
         leftAt: { gte: from, lt: to },
-        ...vehicleTypeWhere(query.vehicleType),
+        ...vehicleWhere(query),
         ...this.paymentsWhere({ cashSessionId: query.cashSessionId }),
       },
       select: { plate: true, enteredAt: true, leftAt: true, amountPaid: true },
@@ -620,7 +663,7 @@ export class MetricsService {
 
     if (!query.paymentMethod && !query.cashSessionId) {
       const entries = await tenantPrisma.entry.findMany({
-        where: { leftAt, ...vehicleTypeWhere(query.vehicleType) },
+        where: { leftAt, ...vehicleWhere(query) },
         select: { id: true, leftAt: true, amountPaid: true },
       });
       return entries.map((entry) => ({
@@ -646,7 +689,7 @@ export class MetricsService {
           // `entries`. Restating the tenant here keeps the index in play.
           tenantId: this.tenantContext.getTenantIdOrThrow(),
           leftAt,
-          ...vehicleTypeWhere(query.vehicleType),
+          ...vehicleWhere(query),
         },
       },
       select: {
@@ -672,7 +715,7 @@ export class MetricsService {
     const entries = await tenantPrisma.entry.findMany({
       where: {
         enteredAt: { gte: from, lt: to },
-        ...vehicleTypeWhere(query.vehicleType),
+        ...vehicleWhere(query),
         // With a method or session filter, "vehicles in" means the stays that
         // ended up paying that way — otherwise the two series would answer
         // different questions on the same chart.
@@ -697,10 +740,15 @@ export class MetricsService {
   async getOccupancy(): Promise<OccupancyResponseDto> {
     const tenantPrisma = this.prisma.getTenantClient();
 
-    const [occupancy, groups] = await Promise.all([
+    const [occupancy, groups, categoryGroups] = await Promise.all([
       this.computeOccupancy(),
       tenantPrisma.entry.groupBy({
         by: ['vehicleType'],
+        _count: { _all: true },
+        where: { leftAt: null },
+      }),
+      tenantPrisma.entry.groupBy({
+        by: ['vehicleCategory'],
         _count: { _all: true },
         where: { leftAt: null },
       }),
@@ -713,7 +761,64 @@ export class MetricsService {
       }))
       .sort((a, b) => b.occupied - a.occupied);
 
-    return { ...occupancy, byVehicleType };
+    const byVehicleCategory = categoryGroups
+      .map((group) => ({
+        category: toVehicleCategory(group.vehicleCategory),
+        occupied: group._count._all,
+      }))
+      .sort(byCountWithUnknownLast((row) => row.category, 'occupied'));
+
+    return { ...occupancy, byVehicleType, byVehicleCategory };
+  }
+
+  /**
+   * Stays that ended in the window, split by platform vehicle category (pie
+   * chart). Groups on `entries.vehicleCategory`, the category frozen at
+   * ingress, so changing a type's category later does not rewrite history.
+   * Stays without one (they predate the categories, or came from an old till)
+   * are the `null` slice: the slices always add up to the window's total.
+   */
+  async getVehicleCategoryBreakdown(
+    query: MetricsWindowQueryDto,
+  ): Promise<VehicleCategoryBreakdownDto> {
+    const tenantPrisma = this.prisma.getTenantClient();
+    const { from, to } = await this.resolveWindow(
+      query,
+      VEHICLE_CATEGORY_INSTANCE,
+    );
+
+    const groups = await tenantPrisma.entry.groupBy({
+      by: ['vehicleCategory'],
+      _count: { _all: true },
+      _sum: { amountPaid: true },
+      where: {
+        leftAt: { gte: from, lt: to },
+        ...vehicleWhere(query),
+        ...this.paymentsWhere({ cashSessionId: query.cashSessionId }),
+      },
+    });
+
+    const totalStays = groups.reduce((sum, g) => sum + g._count._all, 0);
+    const categories = groups
+      .map((group) => ({
+        category: toVehicleCategory(group.vehicleCategory),
+        stays: group._count._all,
+        revenue: roundMoney(Number(group._sum.amountPaid ?? 0)),
+        share:
+          totalStays > 0 ? roundRatio(group._count._all / totalStays) : null,
+      }))
+      .sort(byCountWithUnknownLast((row) => row.category, 'stays'));
+
+    return {
+      from,
+      to,
+      currency: CURRENCY,
+      totalStays,
+      totalRevenue: roundMoney(
+        categories.reduce((sum, row) => sum + row.revenue, 0),
+      ),
+      categories,
+    };
   }
 
   /**

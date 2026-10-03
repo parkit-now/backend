@@ -11,7 +11,7 @@ const row = (overrides: object = {}) => ({
   enabled: false,
   reservationRateId: null,
   reservableSpots: null,
-  reservationVehicleKinds: [],
+  reservationVehicleCategories: [],
   reservationHoursMode: 'opening',
   acceptanceMode: 'auto',
   approvalWindowMinutes: 15,
@@ -27,7 +27,7 @@ const readyRow = (overrides: object = {}) =>
   row({
     reservationRateId: RATE_ID,
     reservableSpots: 6,
-    reservationVehicleKinds: ['car'],
+    reservationVehicleCategories: ['car'],
     ...overrides,
   });
 
@@ -105,7 +105,7 @@ describe('ServicesService', () => {
           enabled: true,
           reservationRateId: RATE_ID,
           reservableSpots: 6,
-          reservationVehicleKinds: ['car'],
+          reservationVehicleCategories: ['car'],
           reservationHoursMode: 'opening',
           acceptanceMode: 'auto',
           approvalWindowMinutes: 15,
@@ -135,7 +135,7 @@ describe('ServicesService', () => {
         enabled: false,
         reservationRateId: null,
         reservableSpots: null,
-        reservationVehicleKinds: [],
+        reservationVehicleCategories: [],
         reservationHoursMode: 'opening',
         graceMinutes: 30,
         readiness: {
@@ -214,7 +214,7 @@ describe('ServicesService', () => {
       const result = await service.updateService(
         ServiceCode.ADVANCE_RESERVATION,
         {
-          reservationVehicleKinds: ['car', 'motorcycle'],
+          reservationVehicleCategories: ['car', 'motorcycle'],
           acceptanceMode: 'manual',
           graceMinutes: 45,
         },
@@ -224,7 +224,7 @@ describe('ServicesService', () => {
         where: { tenantId: 'tenant-1', code: ServiceCode.ADVANCE_RESERVATION },
         data: {
           version: { increment: 1 },
-          reservationVehicleKinds: ['car', 'motorcycle'],
+          reservationVehicleCategories: ['car', 'motorcycle'],
           acceptanceMode: 'manual',
           graceMinutes: 45,
         },
@@ -372,7 +372,7 @@ describe('ServicesService', () => {
           {
             enabled: true,
             reservationRateId: RATE_ID,
-            reservationVehicleKinds: ['car'],
+            reservationVehicleCategories: ['car'],
           },
         );
 
@@ -417,7 +417,10 @@ describe('ServicesService', () => {
     });
 
     it.each([
-      ['reservationVehicleKinds', { reservationVehicleKinds: ['car'] }],
+      [
+        'reservationVehicleCategories',
+        { reservationVehicleCategories: ['car'] },
+      ],
       ['acceptanceMode', { acceptanceMode: 'manual' }],
       ['approvalWindowMinutes', { approvalWindowMinutes: 30 }],
       ['freeCancelMinutes', { freeCancelMinutes: 30 }],

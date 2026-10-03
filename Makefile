@@ -214,10 +214,12 @@ catalog-import: ## Importar el catálogo de autos (RED, ~20 min). Uso: make cata
 catalog-sql: ## Emitir a stdout el SQL de la plantilla (puro: no toca red ni base)
 	@bun run scripts/gen-vehicle-catalog.ts
 
-catalog-migration: ## Escribir la migración del catálogo, lista para `make migration-apply`
-	@if [ -z "$$(ls supabase/migrations/*_backfill_vehicle_catalog.sql 2>/dev/null)" ]; then \
-		supabase migration new backfill_vehicle_catalog >/dev/null; fi
-	@f=$$(ls supabase/migrations/*_backfill_vehicle_catalog.sql | tail -1); \
+catalog-migration: ## Escribir una migración NUEVA con el catálogo, lista para `make migration-apply`
+	@# Siempre una migración nueva: las ya mergeadas son append-only. Antes pisaba
+	@# `*_backfill_vehicle_catalog.sql`, que desde las categorías ya no corre con
+	@# el SQL que emite el generador (usa `category`, esa columna no existía).
+	@f=$$(supabase migration new catalog_refresh 2>/dev/null | grep -o 'supabase/migrations/[^ ]*\.sql' | head -1); \
+	 if [ -z "$$f" ]; then echo "✗ No pude crear la migración"; exit 1; fi; \
 	 tmp=$$(mktemp); \
 	 bun run scripts/gen-vehicle-catalog.ts --with-backfill > "$$tmp"; \
 	 cat "$$tmp" > "$$f"; \

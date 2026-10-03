@@ -39,7 +39,7 @@ reservationRate?: RateEntity  | null;
   format: `int32`,
 })
 reservableSpots: number  | null;
-reservationVehicleKinds: string[] ;
+reservationVehicleCategories: string[] ;
 reservationHoursMode: string ;
 acceptanceMode: string ;
 @ApiProperty({

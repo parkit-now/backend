@@ -3,6 +3,7 @@ import {Prisma,ReservationStatus} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {TenantEntity} from './tenant.entity'
 import {UserEntity} from './user.entity'
+import {VehicleCategoryEntity} from './vehicle-category.entity'
 import {ReservationPaymentEntity} from './reservation-payment.entity'
 
 
@@ -95,6 +96,7 @@ refundRequestedArs: Prisma.Decimal  | null;
 })
 refundAttempts: number ;
 policySnapshot: Prisma.JsonValue  | null;
+vehicleCategory: string  | null;
 @ApiProperty({
   type: `string`,
   format: `date-time`,
@@ -110,5 +112,6 @@ tenant?: TenantEntity ;
 userId: string ;
 user?: UserEntity ;
 cancelledByUser?: UserEntity  | null;
+vehicleCategoryRef?: VehicleCategoryEntity  | null;
 payments?: ReservationPaymentEntity[] ;
 }

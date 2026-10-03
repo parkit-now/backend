@@ -137,7 +137,7 @@ async function main(): Promise<void> {
           original.reservationRateId ?? (fallbackRate?.id as string),
         acceptanceMode: 'auto',
         reservationHoursMode: 'opening',
-        reservationVehicleKinds: ['car', 'suv_pickup', 'motorcycle'],
+        reservationVehicleCategories: ['car', 'suv', 'pickup', 'van', 'motorcycle'],
       },
     });
     console.log(`Config: reservableSpots=1 en Once (run ${runId}).`);
@@ -166,7 +166,7 @@ async function main(): Promise<void> {
       const veh = await http(
         'POST',
         '/driver/vehicles',
-        { plate, kind: 'car' },
+        { plate, category: 'car' },
         token,
       );
       if (veh.status !== 201) {
@@ -256,7 +256,7 @@ async function main(): Promise<void> {
         reservationRateId: original.reservationRateId,
         acceptanceMode: original.acceptanceMode,
         reservationHoursMode: original.reservationHoursMode,
-        reservationVehicleKinds: original.reservationVehicleKinds,
+        reservationVehicleCategories: original.reservationVehicleCategories,
       },
     });
     console.log('Config de ADVANCE_RESERVATION restaurada.');
