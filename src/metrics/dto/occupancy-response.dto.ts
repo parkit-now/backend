@@ -21,10 +21,18 @@ export class OccupancyDto {
 
   @ApiProperty({
     type: 'integer',
+    description:
+      'Spots held right now by today’s reservations whose car has not entered yet (pending payment with a live hold, pending approval, confirmed and still within its grace). Once the car enters (`checked_in`) the reservation stops holding: its entry counts it in `occupied`, so a reserved arrival lowers `free` by 1, not 2. Same rule as the driver app.',
+    example: 2,
+  })
+  reservedHeld: number;
+
+  @ApiProperty({
+    type: 'integer',
     nullable: true,
     description:
-      'Free spots, or `null` when capacity is unknown. Floored at 0 — a lot can be overbooked past its configured capacity.',
-    example: 37,
+      'Free spots right now: `capacity − occupied − reservedHeld` ("Libres ahora", the same number the driver app shows), or `null` when capacity is unknown. Floored at 0 — a lot can be overbooked past its configured capacity.',
+    example: 35,
   })
   free: number | null;
 

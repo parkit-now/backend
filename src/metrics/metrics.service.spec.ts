@@ -53,6 +53,9 @@ describe('MetricsService', () => {
     cashSession: {
       findFirst: jest.fn(),
     },
+    reservation: {
+      findMany: jest.fn(),
+    },
   };
 
   const mockPrisma = {
@@ -118,6 +121,7 @@ describe('MetricsService', () => {
     mockTenant.paymentTransaction.findMany.mockResolvedValue([]);
     mockTenant.paymentTransaction.groupBy.mockResolvedValue([]);
     mockTenant.lprDetectionEvent.count.mockResolvedValue(0);
+    mockTenant.reservation.findMany.mockResolvedValue([]);
     mockPrisma.tenant.findUnique.mockResolvedValue({
       settings: { capacity: { total: 100 } },
     });
@@ -137,6 +141,57 @@ describe('MetricsService', () => {
       expect(result.free).toBe(37);
       expect(result.occupancyPct).toBe(0.63);
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+    });
+
+    it('reservedHeld: las reservas de hoy sin ingreso retienen lugar y bajan los libres', async () => {
+      const inOneHour = new Date(Date.now() + 60 * 60_000);
+      mockTenant.reservation.findMany.mockResolvedValue([
+        {
+          entryAt: inOneHour,
+          status: 'confirmed',
+          holdExpiresAt: null,
+          policySnapshot: null,
+        },
+        {
+          entryAt: inOneHour,
+          status: 'pending_approval',
+          holdExpiresAt: null,
+          policySnapshot: null,
+        },
+      ]);
+
+      const result = await service.getOccupancy();
+
+      // Si la hora +1 cae mañana (corrida cerca de medianoche) no es de hoy.
+      const sameDay =
+        dayKeyIn(inOneHour, DEFAULT_TIME_ZONE) ===
+        dayKeyIn(new Date(), DEFAULT_TIME_ZONE);
+      const held = sameDay ? 2 : 0;
+      expect(result.reservedHeld).toBe(held);
+      expect(result.free).toBe(100 - 63 - held);
+      // La ocupación sigue siendo la de los autos adentro.
+      expect(result.occupancyPct).toBe(0.63);
+    });
+
+    it('sin doble conteo: una reserva checked_in no retiene (la cuenta su ingreso)', async () => {
+      mockTenant.reservation.findMany.mockResolvedValue([
+        {
+          entryAt: new Date(),
+          status: 'checked_in',
+          holdExpiresAt: null,
+          policySnapshot: null,
+        },
+      ]);
+
+      const result = await service.getOccupancy();
+
+      expect(result.reservedHeld).toBe(0);
+      expect(result.free).toBe(37);
+      const where = JSON.stringify(
+        (mockTenant.reservation.findMany.mock.calls[0][0] as { where: unknown })
+          .where,
+      );
+      expect(where).toContain('"not":"checked_in"');
     });
 
     it('sums the legacy per-type capacity written before the migration', async () => {

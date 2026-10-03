@@ -215,7 +215,9 @@ describe('reservas: disponibilidad y cupo', () => {
       reservationHoldsSpotNow({ entryAt: entry, status, holdExpiresAt }, now);
 
     expect(holds('pending_approval', null)).toBe(true);
-    expect(holds('checked_in', null)).toBe(true);
+    // Con el auto adentro lo cuenta el ingreso: contarla también sería el
+    // doble conteo ("Libres ahora" bajaría en 2 por un auto).
+    expect(holds('checked_in', null)).toBe(false);
     // pending_payment: retención viva (+5 min de margen) o vencida.
     expect(holds('pending_payment', hold(5))).toBe(true);
     expect(holds('pending_payment', hold(-4))).toBe(true);
@@ -311,8 +313,9 @@ describe('reservas: disponibilidad y cupo', () => {
         reservationState(status as keyof typeof expected, future, now),
       ).toBe(state);
     }
-    // Sólo confirmed / checked_in se derivan de la hora de egreso.
-    expect(reservationState('checked_in', past, now)).toBe('completed');
+    // Sólo confirmed se deriva de la hora de egreso: checked_in sigue activa
+    // mientras el auto esté adentro, aunque se haya pasado.
+    expect(reservationState('checked_in', past, now)).toBe('active');
     expect(reservationState('pending_payment', past, now)).toBe('active');
     expect(reservationState('rejected', past, now)).toBe('cancelled');
     expect(reservationState('no_show', future, now)).toBe('completed');

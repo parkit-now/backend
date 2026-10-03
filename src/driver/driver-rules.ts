@@ -11,7 +11,10 @@ import {
   dayRangeIn,
   shiftDayKey,
 } from '../metrics/metrics-tz';
-import { countsAgainstQuota } from '../reservations/reservation-policy';
+import {
+  countsAgainstQuota,
+  readPolicySnapshot,
+} from '../reservations/reservation-policy';
 
 // ─── Distancia ────────────────────────────────────────────────────────────────
 
@@ -235,10 +238,15 @@ export function hasReservationQuotaFor(
 }
 
 /**
- * ¿La reserva ocupa un lugar "ahora" para el conteo de disponibilidad? Sí si
+ * ¿La reserva retiene un lugar "ahora" para el conteo de disponibilidad? Sí si
  * cuenta contra el cupo (`countsAgainstQuota`: `pending_payment` con la
- * retención viva, `pending_approval`, `confirmed`, `checked_in`), es de HOY
- * (día civil en la zona de la playa) y todavía no venció.
+ * retención viva, `pending_approval`, `confirmed`), es de HOY (día civil en la
+ * zona de la playa) y todavía no venció.
+ *
+ * `checked_in` NO retiene: la reserva aparta el lugar sólo hasta que el auto
+ * entra, y desde ahí lo cuenta su ingreso (`entries` sin `leftAt`). Contarla
+ * también sería el doble conteo: "Libres ahora" bajaría en 2 por un solo auto.
+ * (Para el CUPO de reservas sí sigue contando: ver `holdingWhere`.)
  */
 export function reservationHoldsSpotNow(
   reservation: {
@@ -250,12 +258,39 @@ export function reservationHoldsSpotNow(
   graceMinutes: number = DEFAULT_GRACE_MINUTES,
   tz = DEFAULT_TIME_ZONE,
 ): boolean {
+  if (reservation.status === ReservationStatus.checked_in) return false;
   if (!countsAgainstQuota(reservation, now)) return false;
   const expiresAt = reservation.entryAt.getTime() + graceMinutes * 60_000;
   return (
     dayKeyIn(reservation.entryAt, tz) === dayKeyIn(now, tz) &&
     now.getTime() < expiresAt
   );
+}
+
+/**
+ * Reservas que retienen un lugar ahora (`reservationHoldsSpotNow`), cada una
+ * con la tolerancia de su foto de reglas (la misma que usa el sweeper para el
+ * no-show). Lo comparten la app del conductor y la métrica de ocupación, para
+ * que "Libres ahora" diga lo mismo en todos lados.
+ */
+export function countReservedHeld(
+  reservations: readonly {
+    entryAt: Date;
+    status: ReservationStatus;
+    holdExpiresAt: Date | null;
+    policySnapshot: unknown;
+  }[],
+  now: Date,
+  tz = DEFAULT_TIME_ZONE,
+): number {
+  return reservations.filter((reservation) =>
+    reservationHoldsSpotNow(
+      reservation,
+      now,
+      readPolicySnapshot(reservation.policySnapshot).graceMinutes,
+      tz,
+    ),
+  ).length;
 }
 
 /**
@@ -278,8 +313,8 @@ export type DriverReservationState = 'active' | 'completed' | 'cancelled';
  * que entiende la app: `pending_payment`, `pending_approval`, `confirmed` y
  * `checked_in` son `active`; `completed` y `no_show` son `completed`;
  * `cancelled`, `rejected` y `expired` son `cancelled`. Una reserva `confirmed`
- * o `checked_in` cuyo egreso ya pasó se muestra `completed` (hasta que la
- * fase 6 la cierre por el ingreso y la salida).
+ * cuyo egreso ya pasó se muestra `completed`; una `checked_in` sigue `active`
+ * hasta que el auto sale (fase 6: la salida de la caja la completa).
  */
 export function reservationState(
   status: ReservationStatus,
@@ -294,8 +329,11 @@ export function reservationState(
     case ReservationStatus.completed:
     case ReservationStatus.no_show:
       return 'completed';
-    case ReservationStatus.confirmed:
+    // Con el auto adentro la reserva sigue activa aunque se haya pasado de
+    // `exitAt`: termina cuando sale (la caja la pasa a `completed`).
     case ReservationStatus.checked_in:
+      return 'active';
+    case ReservationStatus.confirmed:
       return exitAt.getTime() <= now.getTime() ? 'completed' : 'active';
     default:
       return 'active';

@@ -6,6 +6,11 @@ import { readCapacity } from '../entities/entity-settings';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { calcStayPrice } from '../entries/pricing';
+import { countReservedHeld } from '../driver/driver-rules';
+import {
+  RESERVED_HELD_SELECT,
+  reservedTodayWhere,
+} from '../reservations/reservation-capacity';
 import { MetricsTzQueryDto } from './dto/metrics-tz-query.dto';
 import { MetricsWindowQueryDto } from './dto/metrics-window-query.dto';
 import {
@@ -833,25 +838,35 @@ export class MetricsService {
    * accepts" moved to `vehicle_types.accepted`. With one source there is
    * nothing left to disambiguate, so `capacitySource` is gone.
    */
-  private async computeOccupancy(): Promise<OccupancyDto> {
+  private async computeOccupancy(now = new Date()): Promise<OccupancyDto> {
     const tenantPrisma = this.prisma.getTenantClient();
     const tenantId = this.tenantContext.getTenantIdOrThrow();
 
-    const [tenant, occupied] = await Promise.all([
+    const [tenant, occupied, todaysReservations] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
         select: { settings: true },
       }),
       tenantPrisma.entry.count({ where: { leftAt: null } }),
+      // Reservas de hoy que retienen un lugar hasta que el auto entra. Con el
+      // auto adentro (checked_in) lo cuenta su ingreso: así "Libres ahora"
+      // baja en 1 y no en 2. Misma regla que la app del conductor.
+      tenantPrisma.reservation.findMany({
+        where: reservedTodayWhere(now),
+        select: RESERVED_HELD_SELECT,
+      }),
     ]);
 
     const capacity = readCapacity(tenant?.settings ?? {}).total;
+    const reservedHeld = countReservedHeld(todaysReservations, now);
 
     return {
       capacity,
       occupied,
+      reservedHeld,
       // Floored at 0: a lot can hold more vehicles than its configured spots.
-      free: capacity > 0 ? Math.max(capacity - occupied, 0) : null,
+      free:
+        capacity > 0 ? Math.max(capacity - occupied - reservedHeld, 0) : null,
       occupancyPct: capacity > 0 ? roundRatio(occupied / capacity) : null,
     };
   }
