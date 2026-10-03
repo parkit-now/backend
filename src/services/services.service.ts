@@ -176,7 +176,17 @@ export class ServicesService {
         tenantPrisma.schedule.count(),
         tenantPrisma.reservationHour.count(),
         tenantPrisma.reservation.count({
-          where: { status: ReservationStatus.confirmed, entryAt: { gt: now } },
+          where: {
+            // Pagas y por venir: las que esperan la aceptación del dueño
+            // también tienen la plata cobrada.
+            status: {
+              in: [
+                ReservationStatus.pending_approval,
+                ReservationStatus.confirmed,
+              ],
+            },
+            entryAt: { gt: now },
+          },
         }),
       ]);
     return {

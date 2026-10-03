@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma, ReservationStatus, type User } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { holdingWhere } from '../reservations/reservation-capacity';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -95,7 +96,7 @@ export class DriverReservationsService {
         const overlapping = await tx.reservation.findMany({
           where: {
             tenantId: dto.parkingId,
-            status: ReservationStatus.confirmed,
+            ...holdingWhere(now),
             entryAt: { lt: exitAt },
             exitAt: { gt: entryAt },
           },

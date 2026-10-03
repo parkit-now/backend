@@ -119,7 +119,7 @@ describe('ServicesService', () => {
       ]);
       expect(mockTenant.reservation.count).toHaveBeenCalledWith({
         where: {
-          status: 'confirmed',
+          status: { in: ['pending_approval', 'confirmed'] },
           entryAt: { gt: expect.any(Date) as unknown as Date },
         },
       });

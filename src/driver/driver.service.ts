@@ -1,11 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import {
-  BranchStatus,
-  Prisma,
-  ReservationStatus,
-  ServiceCode,
-  type User,
-} from '@prisma/client';
+import { BranchStatus, Prisma, ServiceCode, type User } from '@prisma/client';
 import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import { readCapacity } from '../entities/entity-settings';
 import { calcStayPrice } from '../entries/pricing';
@@ -13,6 +7,7 @@ import { effectiveReservationHours } from '../services/reservation-hours';
 import { computeReservationReadiness } from '../services/reservation-readiness';
 import { PrismaService } from '../database/prisma.service';
 import { prismaForTenant } from '../database/prisma-tenant';
+import { holdingWhere } from '../reservations/reservation-capacity';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -363,14 +358,14 @@ export class DriverService {
         select: { status: true },
       }),
       tenantPrisma.entry.count({ where: { leftAt: null } }),
-      // Reservas confirmadas de hoy: las que todavía no vencieron ocupan
-      // lugar (SCRUM-261, ver reservationHoldsSpotNow).
+      // Reservas de hoy que retienen lugar (holdingWhere): las que todavía no
+      // vencieron lo ocupan (SCRUM-261, ver reservationHoldsSpotNow).
       tenantPrisma.reservation.findMany({
         where: {
-          status: ReservationStatus.confirmed,
+          ...holdingWhere(now),
           entryAt: { gte: today.gte, lt: today.lt },
         },
-        select: { entryAt: true },
+        select: { entryAt: true, status: true, holdExpiresAt: true },
       }),
     ]);
 
@@ -426,7 +421,7 @@ export class DriverService {
           : null,
       occupied,
       reservedToday: todays.filter((reservation) =>
-        reservationHoldsSpotNow(reservation.entryAt, now, graceMinutes),
+        reservationHoldsSpotNow(reservation, now, graceMinutes),
       ).length,
     };
   }

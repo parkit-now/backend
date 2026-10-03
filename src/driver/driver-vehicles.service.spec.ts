@@ -1,6 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import { Prisma, type User } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { holdingWhere } from '../reservations/reservation-capacity';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { DriverVehiclesService } from './driver-vehicles.service';
 import { DriverVehicleKind } from './dto/driver-vehicle.dto';
@@ -91,7 +92,11 @@ describe('DriverVehiclesService', () => {
       );
       expect(client.reservation.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: USER.id, status: 'confirmed', exitAt: { gt: NOW } },
+          where: {
+            userId: USER.id,
+            ...holdingWhere(NOW),
+            exitAt: { gt: NOW },
+          },
         }),
       );
       expect(result.map((v) => [v.plate, v.hasActiveReservation])).toEqual([
