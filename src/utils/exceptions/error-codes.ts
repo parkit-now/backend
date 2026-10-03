@@ -159,6 +159,10 @@ export const ErrorCodes = {
   RESERVATION_CHECKOUT_UNAVAILABLE: 'RESERVATION_CHECKOUT_UNAVAILABLE',
   // Cliente viejo sin `returnUrl` en producción (422).
   RESERVATION_CLIENT_OUTDATED: 'RESERVATION_CLIENT_OUTDATED',
+  // Pedir el checkout de una reserva que ya se pagó.
+  RESERVATION_ALREADY_PAID: 'RESERVATION_ALREADY_PAID',
+  // Pedir el checkout de una reserva cancelada, rechazada o terminada.
+  RESERVATION_NOT_PAYABLE: 'RESERVATION_NOT_PAYABLE',
   // Rechazar o cancelar como dueño exige un motivo.
   RESERVATION_REASON_REQUIRED: 'RESERVATION_REASON_REQUIRED',
   // Vehículos del conductor.

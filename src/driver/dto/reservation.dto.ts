@@ -1,6 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsDateString, IsString, IsUUID, Matches } from 'class-validator';
+import { ReservationStatus } from '@prisma/client';
+import {
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 import { normalizePlate } from '../driver-rules';
 
 export class CreateReservationDto {
@@ -35,6 +43,19 @@ export class CreateReservationDto {
   @ApiProperty({ format: 'date-time', example: '2026-09-30T13:00:00-03:00' })
   @IsDateString()
   exitAt: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'A dónde vuelve el conductor después de pagar. Con él la reserva nace ' +
+      'en pending_payment y la respuesta trae el checkout. Sin él: en ' +
+      'producción 422 RESERVATION_CLIENT_OUTDATED; fuera de producción se ' +
+      'mantiene el camino viejo (confirmada, sin pago, respuesta plana).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  returnUrl?: string;
 }
 
 export enum DriverReservationStateDto {
@@ -91,4 +112,127 @@ export class DriverReservationDto {
 
   @ApiProperty({ format: 'date-time' })
   createdAt: string;
+}
+
+export class ReservationPolicyDto {
+  @ApiProperty({
+    description: 'Minutos antes del ingreso con reembolso total.',
+  })
+  freeCancelMinutes: number;
+
+  @ApiProperty({ description: '% que se reembolsa pasado el corte gratis.' })
+  lateCancelRefundPct: number;
+
+  @ApiProperty()
+  earlyArrivalMinutes: number;
+
+  @ApiProperty({ description: 'Tolerancia después de la hora de ingreso.' })
+  graceMinutes: number;
+
+  @ApiProperty({ enum: ['auto', 'manual'] })
+  acceptanceMode: 'auto' | 'manual';
+
+  @ApiProperty({ description: 'Minutos que tiene el dueño para aceptar.' })
+  approvalWindowMinutes: number;
+}
+
+export class ReservationPaymentSummaryDto {
+  @ApiProperty({
+    enum: [
+      'created',
+      'approved',
+      'rejected',
+      'cancelled',
+      'refunded',
+      'partially_refunded',
+    ],
+  })
+  status: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Sólo mientras el pago está pendiente de hacerse.',
+  })
+  checkoutUrl: string | null;
+}
+
+/** Reserva del conductor con el ciclo de vida completo. */
+export class DriverReservationDetailDto extends DriverReservationDto {
+  @ApiProperty({ enum: ReservationStatus, enumName: 'ReservationStatus' })
+  status: ReservationStatus;
+
+  @ApiProperty({
+    enum: ['none', 'pending', 'refunded', 'partial', 'failed'],
+  })
+  refundStatus: string;
+
+  @ApiProperty({ type: Number, nullable: true })
+  refundedAmountArs: number | null;
+
+  @ApiProperty({ type: ReservationPolicyDto })
+  policy: ReservationPolicyDto;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'Hasta cuándo se puede pagar (pending_payment).',
+  })
+  holdExpiresAt: string | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'Hasta cuándo puede responder el dueño (pending_approval).',
+  })
+  approvalDeadlineAt: string | null;
+
+  @ApiProperty({ type: ReservationPaymentSummaryDto, nullable: true })
+  payment: ReservationPaymentSummaryDto | null;
+}
+
+export class ReservationCheckoutDto {
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Donde paga el conductor; null si ya no hay nada que pagar.',
+  })
+  checkoutUrl: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time', nullable: true })
+  holdExpiresAt: string | null;
+}
+
+export class CreateReservationResponseDto {
+  @ApiProperty({ type: DriverReservationDetailDto })
+  reservation: DriverReservationDetailDto;
+
+  @ApiProperty({ type: ReservationCheckoutDto })
+  payment: ReservationCheckoutDto;
+}
+
+export class CancelPreviewDto {
+  @ApiProperty()
+  allowed: boolean;
+
+  @ApiProperty({ description: 'Lo que se reembolsaría, en pesos.' })
+  refundArs: number;
+
+  @ApiProperty({ enum: ['full', 'partial', 'none'] })
+  kind: 'full' | 'partial' | 'none';
+
+  @ApiProperty({
+    enum: [
+      'free_window',
+      'late_window',
+      'pending_approval',
+      'not_paid',
+      'owner',
+      'already_started',
+      'not_cancellable',
+    ],
+  })
+  reasonCode: string;
 }

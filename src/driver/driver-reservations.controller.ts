@@ -21,8 +21,10 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DriverReservationsService } from './driver-reservations.service';
 import {
+  CancelPreviewDto,
   CreateReservationDto,
-  DriverReservationDto,
+  CreateReservationResponseDto,
+  DriverReservationDetailDto,
 } from './dto/reservation.dto';
 
 // Reservas del conductor logueado. Cada operación se acota a SUS reservas
@@ -40,23 +42,68 @@ export class DriverReservationsController {
     summary:
       'Create a reservation (idempotent by client id): re-quotes on the server and checks capacity',
   })
-  @ApiOkResponse({ type: DriverReservationDto })
+  @ApiOkResponse({
+    type: CreateReservationResponseDto,
+    description:
+      'Con returnUrl: { reservation, payment }. Sin returnUrl (sólo fuera de ' +
+      'producción, TODO fase 4): la reserva plana, como antes.',
+  })
   create(@CurrentUser() user: User, @Body() dto: CreateReservationDto) {
     return this.reservations.create(user, dto);
   }
 
   @Get()
   @ApiOperation({ summary: "The signed-in driver's reservations" })
-  @ApiOkResponse({ type: [DriverReservationDto] })
+  @ApiOkResponse({ type: [DriverReservationDetailDto] })
   list(@CurrentUser() user: User) {
     return this.reservations.list(user);
   }
 
+  @Get(':reservationId')
+  @ApiOperation({ summary: 'One of the signed-in driver reservations' })
+  @ApiParam({ name: 'reservationId', format: 'uuid' })
+  @ApiOkResponse({ type: DriverReservationDetailDto })
+  get(
+    @CurrentUser() user: User,
+    @Param('reservationId', ParseUUIDPipe) reservationId: string,
+  ) {
+    return this.reservations.get(user, reservationId);
+  }
+
+  @Post(':reservationId/payment')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Ask again for the checkout of a pending_payment reservation (same URL while alive, new one after a rejection)',
+  })
+  @ApiParam({ name: 'reservationId', format: 'uuid' })
+  @ApiOkResponse({ type: CreateReservationResponseDto })
+  payment(
+    @CurrentUser() user: User,
+    @Param('reservationId', ParseUUIDPipe) reservationId: string,
+  ) {
+    return this.reservations.paymentRetry(user, reservationId);
+  }
+
+  @Get(':reservationId/cancel-preview')
+  @ApiOperation({ summary: 'What cancelling now would refund' })
+  @ApiParam({ name: 'reservationId', format: 'uuid' })
+  @ApiOkResponse({ type: CancelPreviewDto })
+  cancelPreview(
+    @CurrentUser() user: User,
+    @Param('reservationId', ParseUUIDPipe) reservationId: string,
+  ) {
+    return this.reservations.cancelPreview(user, reservationId);
+  }
+
   @Post(':reservationId/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Cancel a reservation that has not started yet' })
+  @ApiOperation({
+    summary:
+      'Cancel a reservation that has not started yet (refund per policy)',
+  })
   @ApiParam({ name: 'reservationId', format: 'uuid' })
-  @ApiOkResponse({ type: DriverReservationDto })
+  @ApiOkResponse({ type: DriverReservationDetailDto })
   cancel(
     @CurrentUser() user: User,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,

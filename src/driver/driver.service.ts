@@ -8,6 +8,11 @@ import { computeReservationReadiness } from '../services/reservation-readiness';
 import { PrismaService } from '../database/prisma.service';
 import { prismaForTenant } from '../database/prisma-tenant';
 import { holdingWhere } from '../reservations/reservation-capacity';
+import {
+  buildPolicySnapshot,
+  DEFAULT_POLICY_SNAPSHOT,
+  type PolicySnapshot,
+} from '../reservations/reservation-policy';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -85,6 +90,7 @@ type LotData = {
     lateCancelRefundPct: number;
     earlyArrivalMinutes: number;
     graceMinutes: number;
+    approvalWindowMinutes: number;
   } | null;
   occupied: number;
   /** Reservas de hoy que todavía ocupan lugar (ver reservationHoldsSpotNow). */
@@ -201,7 +207,12 @@ export class DriverService {
     dto: CreateQuoteDto,
     now = new Date(),
     vehicleKind?: string,
-  ): Promise<{ quote: QuoteDto; reservableSpots: number }> {
+  ): Promise<{
+    quote: QuoteDto;
+    reservableSpots: number;
+    /** Reglas de la playa a copiar a la reserva (`policySnapshot`). */
+    policy: PolicySnapshot;
+  }> {
     const tenant = await this.findPublicTenant(parkingId);
     const lot = await this.loadLotData(tenant, now);
     const entryAt = new Date(dto.entryAt);
@@ -279,7 +290,13 @@ export class DriverService {
       },
     };
     // `rate` no nulo ⇒ la playa toma reservas ⇒ hay cupo (ver loadLotData).
-    return { quote, reservableSpots: lot.reservableSpots ?? 0 };
+    return {
+      quote,
+      reservableSpots: lot.reservableSpots ?? 0,
+      policy: rules
+        ? buildPolicySnapshot(rules)
+        : { ...DEFAULT_POLICY_SNAPSHOT },
+    };
   }
 
   /** Activa y con ubicación publicada; si no, para el conductor no existe. */
@@ -331,6 +348,7 @@ export class DriverService {
           reservationVehicleKinds: true,
           reservationHoursMode: true,
           acceptanceMode: true,
+          approvalWindowMinutes: true,
           freeCancelMinutes: true,
           lateCancelRefundPct: true,
           earlyArrivalMinutes: true,
@@ -417,6 +435,9 @@ export class DriverService {
               lateCancelRefundPct: reservationService.lateCancelRefundPct,
               earlyArrivalMinutes: reservationService.earlyArrivalMinutes,
               graceMinutes,
+              approvalWindowMinutes:
+                reservationService.approvalWindowMinutes ??
+                DEFAULT_POLICY_SNAPSHOT.approvalWindowMinutes,
             }
           : null,
       occupied,
