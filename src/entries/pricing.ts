@@ -173,3 +173,25 @@ export function calcStayPrice(
       periodPrice(rest, false, hour, fraction, halfCap, dayCap),
   );
 }
+
+/**
+ * EXCEDENTE DE UNA ESTADÍA CON RESERVA PREPAGA — lo que se cobra en la caja.
+ *
+ * El conductor que reservó ya pagó por Mercado Pago (`prepaid`). Al salir se
+ * cobra la estadía completa menos ese prepago, y nunca menos de 0: si salió
+ * antes de lo reservado no se le devuelve nada en la caja (la reserva no se
+ * reembolsa por uso parcial).
+ *
+ *   excedente = max(calcStayPrice(total) − prepagado, 0)
+ *
+ * Un prepago ausente, negativo o basura vale 0 (la estadía se cobra entera),
+ * igual que un precio basura en `calcStayPrice`. Redondeado a centavos.
+ */
+export function calcAmountDue(
+  stayTotal: number,
+  prepaid: number | null | undefined,
+): number {
+  const total = money(stayTotal);
+  const paid = prepaid == null ? 0 : money(prepaid);
+  return roundMoney(Math.max(total - paid, 0));
+}

@@ -1,4 +1,4 @@
-import { calcStayPrice, type StayPrices } from './pricing';
+import { calcAmountDue, calcStayPrice, type StayPrices } from './pricing';
 
 /**
  * ⚠️ ESTA TABLA ES GEMELA de `front-desktop/src/features/entries/pricing.test.ts`.
@@ -391,5 +391,87 @@ describe('calcStayPrice', () => {
         previous = price;
       }
     }
+  });
+});
+
+/**
+ * Excedente de una estadía con reserva prepaga: `max(estadía − prepago, 0)`.
+ * GEMELA de la tabla del mismo nombre en `pricing.test.ts` del desktop.
+ */
+interface DueCase {
+  stay: number;
+  prepaid: number | null | undefined;
+  expected: number;
+  why: string;
+}
+
+const DUE_CASES: DueCase[] = [
+  {
+    stay: 5500,
+    prepaid: 4500,
+    expected: 1000,
+    why: 'sale tarde: cobra sólo el excedente',
+  },
+  {
+    stay: 4500,
+    prepaid: 4500,
+    expected: 0,
+    why: 'justo lo reservado: no se cobra nada',
+  },
+  {
+    stay: 4000,
+    prepaid: 4500,
+    expected: 0,
+    why: 'sale antes: nunca negativo, no hay vuelto',
+  },
+  {
+    stay: 5500,
+    prepaid: null,
+    expected: 5500,
+    why: 'sin reserva: la estadía entera',
+  },
+  {
+    stay: 5500,
+    prepaid: undefined,
+    expected: 5500,
+    why: 'caja vieja sin el campo',
+  },
+  { stay: 5500, prepaid: 0, expected: 5500, why: 'prepago cero' },
+  {
+    stay: 5500,
+    prepaid: -100,
+    expected: 5500,
+    why: 'prepago negativo se trata como ausente',
+  },
+  {
+    stay: 5500,
+    prepaid: NaN,
+    expected: 5500,
+    why: 'prepago basura no propaga NaN',
+  },
+  { stay: NaN, prepaid: 4500, expected: 0, why: 'estadía basura: 0' },
+  { stay: 1000.1, prepaid: 999.99, expected: 0.11, why: 'redondea a centavos' },
+];
+
+describe('calcAmountDue', () => {
+  for (const testCase of DUE_CASES) {
+    it(`${testCase.stay} − ${String(testCase.prepaid)} → ${testCase.expected} — ${testCase.why}`, () => {
+      expect(calcAmountDue(testCase.stay, testCase.prepaid)).toBe(
+        testCase.expected,
+      );
+    });
+  }
+
+  it('con la estadía del motor: 3 h 48 min a $1.500/h y $125 la fracción, prepago $4.500', () => {
+    // Reservó de 18 a 21 ($4.500), entró 17:52 y salió 21:40.
+    const stay = calcStayPrice(228, {
+      hour: 1500,
+      fraction: 125,
+      mediaEstadia: 0,
+      stay: 0,
+    });
+    // 3 h completas ($4.500) + 48 min = 10 fracciones ($1.250).
+    expect(stay).toBe(5750);
+    expect(calcAmountDue(stay, 4500)).toBe(1250);
   });
 });
