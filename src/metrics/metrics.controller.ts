@@ -33,6 +33,7 @@ import { RevenueResponseDto } from './dto/revenue-response.dto';
 import { TopPlatesQueryDto } from './dto/top-plates-query.dto';
 import { TopPlatesResponseDto } from './dto/top-plates-response.dto';
 import { MetricsSummaryDto } from './dto/summary-response.dto';
+import { VehicleCategoryBreakdownDto } from './dto/vehicle-category-breakdown.dto';
 import { MetricsService } from './metrics.service';
 
 /** Shared by every endpoint that takes a window and so a `cashSessionId`. */
@@ -141,6 +142,29 @@ export class MetricsController {
     return this.metricsService.getPaymentMethodBreakdown(query);
   }
 
+  @Get('by-vehicle-category')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    operationId: 'metricsGetVehicleCategoryBreakdown',
+    summary: 'Stays split by vehicle category (pie chart)',
+    description: [
+      'One slice per platform vehicle category over the window, most stays first: stays that ended in it, their revenue and their share of the stays.',
+      '',
+      'The category is the one frozen on the stay at ingress. Stays without one (they predate the categories, or came from an old till) come back as the `category: null` slice — "Sin dato" — so the slices always add up to the total. With `cashSessionId`, only the stays that shift collected.',
+    ].join('\n'),
+  })
+  @ApiOkResponse({ type: VehicleCategoryBreakdownDto })
+  @ApiBadRequestResponse({
+    description: WINDOW_BAD_REQUEST,
+    type: ValidationProblemDetailsDto,
+  })
+  @ApiNotFoundResponse(CASH_SESSION_NOT_FOUND_RESPONSE)
+  async getVehicleCategoryBreakdown(
+    @Query() query: MetricsWindowQueryDto,
+  ): Promise<VehicleCategoryBreakdownDto> {
+    return this.metricsService.getVehicleCategoryBreakdown(query);
+  }
+
   @Get('top-plates')
   @EntityRole(MembershipRole.owner)
   @ApiOperation({
@@ -170,9 +194,9 @@ export class MetricsController {
     operationId: 'metricsGetOccupancy',
     summary: 'Current occupancy of the lot',
     description: [
-      'Occupied spots over total capacity right now, plus a breakdown of open entries by vehicle type.',
+      'Occupied spots over total capacity right now, plus a breakdown of open entries by vehicle category.',
       '',
-      'Capacity is the lot-wide total declared on the entity profile (`settings.capacity.total`). The breakdown is best effort — see `byVehicleType`.',
+      'Capacity is the lot-wide total declared on the entity profile (`settings.capacity.total`). The breakdown is counts only — see `byVehicleCategory` (`byVehicleType` is deprecated).',
     ].join('\n'),
   })
   @ApiOkResponse({ type: OccupancyResponseDto })

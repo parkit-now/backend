@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -7,6 +8,11 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { IsOffsetDateTime } from '../../utils/validators/is-offset-date-time';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import {
+  VEHICLE_CATEGORIES,
+  type VehicleCategory,
+} from '../../vehicle-categories/vehicle-categories';
 import { MetricsTzQueryDto } from './metrics-tz-query.dto';
 
 /** `from`/`to` are required, unless a cash session supplies the window. */
@@ -54,13 +60,27 @@ export class MetricsWindowQueryDto extends MetricsTzQueryDto {
   to?: string;
 
   @ApiPropertyOptional({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    description: [
+      'Restrict to a platform vehicle category, matched against `entries.vehicleCategory`.',
+      '',
+      '`entries.vehicleCategory` is frozen at ingress, so changing the category of a vehicle type does not rewrite history. It is filled on manual and LPR stays alike; stays that predate the categories (or came from an old till) have none and are excluded by this filter.',
+      '',
+      'Can be combined with the deprecated `vehicleType`: both must match.',
+    ].join('\n'),
+    example: 'suv',
+  })
+  @IsOptional()
+  @IsIn(VEHICLE_CATEGORIES)
+  vehicleCategory?: VehicleCategory;
+
+  @ApiPropertyOptional({
+    deprecated: true,
     maxLength: 60,
     description: [
-      'Restrict to a vehicle type, matched **exactly** against `entries.vehicleType`.',
+      '**Deprecated: use `vehicleCategory`.** It will be removed in the next version.',
       '',
-      'Free text rather than a closed enum: vehicle types are a per-tenant catalogue (`GET /tenants/:tenantId/vehicle-types`), which is where the client should populate this filter from. `entries.vehicleType` stores a *snapshot* of the type name taken at ingress, so renaming a type does not rewrite history — stays registered under the old name keep answering to the old name.',
-      '',
-      '**Partial data:** `entries.vehicleType` is only populated on LPR ingress (`source = "auto"`); manually registered stays leave it null and are excluded by this filter.',
+      'Restrict to a vehicle type, matched **exactly** against `entries.vehicleType`, the text snapshot of the type name taken at ingress. Renaming a type does not rewrite history — stays registered under the old name keep answering to the old name, and two types with different names never group together, which is why the category replaces this.',
     ].join('\n'),
     example: 'Auto',
   })
