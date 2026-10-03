@@ -173,6 +173,12 @@ describe('reservas: disponibilidad y cupo', () => {
     expect(reservationHoldsSpotNow(ar('2026-09-28T09:15:00'), now)).toBe(false);
   });
 
+  it('usa la tolerancia configurada de la playa', () => {
+    const entry = ar('2026-09-28T09:45:00');
+    expect(reservationHoldsSpotNow(entry, now, 10)).toBe(false);
+    expect(reservationHoldsSpotNow(entry, now, 60)).toBe(true);
+  });
+
   it('una reserva de otro día no descuenta hoy', () => {
     expect(reservationHoldsSpotNow(ar('2026-09-29T10:00:00'), now)).toBe(false);
     // 22:00 del 27 en Argentina es 01:00Z del 28: no debe contarse como hoy.

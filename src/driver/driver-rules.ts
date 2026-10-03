@@ -174,11 +174,12 @@ export function reservationWindowProblem(
 // ─── Reservas: cupo y disponibilidad (SCRUM-261, SCRUM-214) ──────────────────
 
 /**
- * Una reserva deja de ocupar lugar este tiempo después de su hora de ingreso:
- * o el auto ya entró (y cuenta como vehículo adentro) o no vino (no-show).
- * Regla provisoria acordada el 2026-09-27; ajustar acá.
+ * Una reserva deja de ocupar lugar `graceMinutes` después de su hora de
+ * ingreso: o el auto ya entró (y cuenta como vehículo adentro) o no vino
+ * (no-show). Cada playa lo configura (`services.grace_minutes`); este es el
+ * default de la columna.
  */
-export const NO_SHOW_TOLERANCE_MINUTES = 30;
+export const DEFAULT_GRACE_MINUTES = 30;
 
 export type ReservationWindow = { entryAt: Date; exitAt: Date };
 
@@ -239,9 +240,10 @@ export function hasReservationQuotaFor(
 export function reservationHoldsSpotNow(
   entryAt: Date,
   now: Date,
+  graceMinutes: number = DEFAULT_GRACE_MINUTES,
   tz = DEFAULT_TIME_ZONE,
 ): boolean {
-  const expiresAt = entryAt.getTime() + NO_SHOW_TOLERANCE_MINUTES * 60_000;
+  const expiresAt = entryAt.getTime() + graceMinutes * 60_000;
   return (
     dayKeyIn(entryAt, tz) === dayKeyIn(now, tz) && now.getTime() < expiresAt
   );
