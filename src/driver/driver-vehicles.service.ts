@@ -137,13 +137,17 @@ export class DriverVehiclesService {
     });
   }
 
-  /** ¿La patente es de un vehículo del conductor? (reservas, SCRUM-285). */
-  async ownsPlate(user: User, plate: string): Promise<boolean> {
+  /**
+   * Tipo (`kind`) del vehículo del conductor con esa patente, o `null` si la
+   * patente no es de ninguno de sus vehículos (reservas, SCRUM-285). El tipo
+   * decide si la playa deja reservar.
+   */
+  async findOwnedKind(user: User, plate: string): Promise<string | null> {
     const vehicle = await this.prisma.driverVehicle.findUnique({
       where: { userId_plate: { userId: user.id, plate } },
-      select: { id: true },
+      select: { kind: true },
     });
-    return vehicle !== null;
+    return vehicle?.kind ?? null;
   }
 
   private async findOwned(

@@ -45,6 +45,7 @@ const TENANT_MODELS: readonly string[] = [
   'lprdetectionevent',
   'invoice',
   'reservation',
+  'reservationhour',
 ];
 
 const READ_OPS = new Set([

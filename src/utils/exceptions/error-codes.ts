@@ -139,6 +139,13 @@ export const ErrorCodes = {
   RESERVATION_ID_CONFLICT: 'RESERVATION_ID_CONFLICT',
   // La patente de la reserva no es de ningún vehículo del conductor.
   RESERVATION_VEHICLE_NOT_FOUND: 'RESERVATION_VEHICLE_NOT_FOUND',
+  // El tipo del vehículo (auto, SUV/pickup, moto) no está entre los que la
+  // playa deja reservar.
+  RESERVATION_VEHICLE_KIND_NOT_ACCEPTED:
+    'RESERVATION_VEHICLE_KIND_NOT_ACCEPTED',
+  // La estadía no cae entera dentro del horario de reservas (modo custom).
+  RESERVATION_OUTSIDE_RESERVATION_HOURS:
+    'RESERVATION_OUTSIDE_RESERVATION_HOURS',
   // Vehículos del conductor.
   DRIVER_VEHICLE_NOT_FOUND: 'DRIVER_VEHICLE_NOT_FOUND',
   // El conductor ya tiene otro vehículo con esa patente.
@@ -160,6 +167,12 @@ export const ErrorCodes = {
   // El cupo de reservas supera la capacidad declarada de la playa.
   SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY:
     'SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY',
+  // Activar las reservas sin cumplir los requisitos (el body trae `missing`).
+  SERVICE_RESERVATION_NOT_READY: 'SERVICE_RESERVATION_NOT_READY',
+  // PUT de horarios de reservas con rangos inválidos o superpuestos.
+  RESERVATION_HOURS_INVALID: 'RESERVATION_HOURS_INVALID',
+  // PUT de horarios de reservas con rangos fuera del horario de apertura.
+  RESERVATION_HOURS_OUTSIDE_OPENING: 'RESERVATION_HOURS_OUTSIDE_OPENING',
 
   // Mercado Pago (integracion de cobros)
   // El webhook llego pero MP_WEBHOOK_SECRET no esta cargada: no podemos

@@ -28,6 +28,21 @@ rateSnapshotName: string ;
 })
 rateSnapshotHourPriceArs: Prisma.Decimal ;
 @ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotFractionPriceArs: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotMediaEstadiaPriceArs: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+rateSnapshotStayPriceArs: Prisma.Decimal  | null;
+@ApiProperty({
   enum: ReservationStatus,
 })
 status: ReservationStatus ;

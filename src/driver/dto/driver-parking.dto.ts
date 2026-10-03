@@ -24,6 +24,36 @@ export class DriverScheduleDto {
   closeMinute: number;
 }
 
+export class DriverReservationRulesDto {
+  @ApiProperty({
+    enum: ['auto', 'manual'],
+    enumName: 'ReservationAcceptanceMode',
+    description: 'auto = se confirma sola; manual = la acepta el dueño.',
+  })
+  acceptanceMode: string;
+
+  @ApiProperty({
+    description: 'Cancelación gratis hasta estos minutos antes del ingreso.',
+  })
+  freeCancelMinutes: number;
+
+  @ApiProperty({
+    description: '% que se reembolsa si se cancela fuera de la ventana gratis.',
+  })
+  lateCancelRefundPct: number;
+
+  @ApiProperty({
+    description: 'Minutos antes del ingreso desde los que se puede llegar.',
+  })
+  earlyArrivalMinutes: number;
+
+  @ApiProperty({
+    description:
+      'Tolerancia tras la hora de ingreso; pasada, la reserva se da por perdida.',
+  })
+  graceMinutes: number;
+}
+
 export class DriverParkingDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
@@ -66,6 +96,41 @@ export class DriverParkingDto {
       'vehículo. null si la playa no toma reservas.',
   })
   reservationHourPriceArs: number | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Precio de la fracción de 5 minutos de la tarifa de reservas en ARS. ' +
+      'null si la playa no toma reservas.',
+  })
+  reservationFractionPriceArs: number | null;
+
+  @ApiProperty({
+    enum: ['car', 'suv_pickup', 'motorcycle'],
+    enumName: 'ReservationVehicleKind',
+    isArray: true,
+    nullable: true,
+    description:
+      'Tipos de vehículo que pueden reservar. null si la playa no toma reservas.',
+  })
+  reservationVehicleKinds: string[] | null;
+
+  @ApiProperty({
+    type: [DriverScheduleDto],
+    nullable: true,
+    description:
+      'Horario efectivo de reservas por día: el de apertura si el dueño no ' +
+      'cargó uno propio. null si la playa no toma reservas.',
+  })
+  reservationHours: DriverScheduleDto[] | null;
+
+  @ApiProperty({
+    type: DriverReservationRulesDto,
+    nullable: true,
+    description: 'Reglas de la reserva. null si la playa no toma reservas.',
+  })
+  reservationRules: DriverReservationRulesDto | null;
 
   @ApiProperty({
     type: Boolean,

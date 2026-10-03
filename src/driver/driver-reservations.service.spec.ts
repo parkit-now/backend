@@ -28,7 +28,7 @@ const prisma = {
 };
 
 const driverService = { quoteForReservation: jest.fn() };
-const driverVehicles = { ownsPlate: jest.fn() };
+const driverVehicles = { findOwnedKind: jest.fn() };
 
 const service = new DriverReservationsService(
   prisma as unknown as PrismaService,
@@ -91,7 +91,13 @@ describe('DriverReservationsService', () => {
       entryAt,
       exitAt,
       totalArs: 9000,
-      rate: { name: 'RESERVAS', hourPriceArs: 4500 },
+      rate: {
+        name: 'RESERVAS',
+        hourPriceArs: 4500,
+        fractionPriceArs: 375,
+        mediaEstadiaPriceArs: 27000,
+        stayPriceArs: 45000,
+      },
     },
     reservableSpots,
   });
@@ -103,7 +109,7 @@ describe('DriverReservationsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.reservation.findUnique.mockResolvedValue(null);
-    driverVehicles.ownsPlate.mockResolvedValue(true);
+    driverVehicles.findOwnedKind.mockResolvedValue('car');
     driverService.quoteForReservation.mockResolvedValue(
       quoted(input.entryAt, input.exitAt),
     );
@@ -119,6 +125,7 @@ describe('DriverReservationsService', () => {
         PARKING,
         { entryAt: input.entryAt, exitAt: input.exitAt },
         NOW,
+        'car',
       );
       const [args] = tx.reservation.create.mock.calls[0] as [
         { data: Record<string, unknown> },
@@ -130,6 +137,10 @@ describe('DriverReservationsService', () => {
         vehiclePlate: 'AB123CD',
         totalArs: 9000,
         rateSnapshotName: 'RESERVAS',
+        rateSnapshotHourPriceArs: 4500,
+        rateSnapshotFractionPriceArs: 375,
+        rateSnapshotMediaEstadiaPriceArs: 27000,
+        rateSnapshotStayPriceArs: 45000,
       });
       expect(args.data).not.toHaveProperty('vehicleKind');
       expect(result).toMatchObject({
@@ -176,13 +187,16 @@ describe('DriverReservationsService', () => {
     });
 
     it('rechaza una patente que no es de un vehículo del conductor', async () => {
-      driverVehicles.ownsPlate.mockResolvedValue(false);
+      driverVehicles.findOwnedKind.mockResolvedValue(null);
       await expectFailure(
         service.create(USER, input, NOW),
         HttpStatus.UNPROCESSABLE_ENTITY,
         'RESERVATION_VEHICLE_NOT_FOUND',
       );
-      expect(driverVehicles.ownsPlate).toHaveBeenCalledWith(USER, 'AB123CD');
+      expect(driverVehicles.findOwnedKind).toHaveBeenCalledWith(
+        USER,
+        'AB123CD',
+      );
       expect(driverService.quoteForReservation).not.toHaveBeenCalled();
     });
 

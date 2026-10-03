@@ -39,6 +39,34 @@ reservationRate?: RateEntity  | null;
   format: `int32`,
 })
 reservableSpots: number  | null;
+reservationVehicleKinds: string[] ;
+reservationHoursMode: string ;
+acceptanceMode: string ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+approvalWindowMinutes: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+freeCancelMinutes: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+lateCancelRefundPct: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+earlyArrivalMinutes: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+graceMinutes: number ;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

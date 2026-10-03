@@ -16,7 +16,11 @@ import {
   ApiOperation,
   ApiParam,
   ApiTags,
+  ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
+import { ProblemDetailsDto } from '../utils/exceptions/dto/problem-details.dto';
+import { type User } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DriverService } from './driver.service';
 import {
@@ -60,10 +64,18 @@ export class DriverController {
   })
   @ApiParam({ name: 'parkingId', format: 'uuid' })
   @ApiOkResponse({ type: QuoteDto })
+  @ApiUnprocessableEntityResponse({
+    type: ProblemDetailsDto,
+    description:
+      'RESERVATION_VEHICLE_KIND_NOT_ACCEPTED, RESERVATION_OUTSIDE_RESERVATION_HOURS, ' +
+      'RESERVATION_OUTSIDE_OPENING_HOURS, DRIVER_RESERVATIONS_DISABLED o ' +
+      'RESERVATION_VEHICLE_NOT_FOUND.',
+  })
   quote(
     @Param('parkingId', ParseUUIDPipe) parkingId: string,
+    @CurrentUser() user: User,
     @Body() dto: CreateQuoteDto,
   ) {
-    return this.driverService.quote(parkingId, dto);
+    return this.driverService.quote(parkingId, dto, user);
   }
 }

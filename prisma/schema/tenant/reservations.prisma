@@ -13,17 +13,22 @@ enum ReservationStatus {
 }
 
 model Reservation {
-  id                       String            @id @db.Uuid
-  vehiclePlate             String            @map("vehicle_plate") @db.VarChar(10)
-  entryAt                  DateTime          @map("entry_at") @db.Timestamptz(6)
-  exitAt                   DateTime          @map("exit_at") @db.Timestamptz(6)
-  totalArs                 Decimal           @map("total_ars") @db.Decimal(12, 2)
-  rateSnapshotName         String            @map("rate_snapshot_name") @db.VarChar(120)
-  rateSnapshotHourPriceArs Decimal           @map("rate_snapshot_hour_price_ars") @db.Decimal(12, 2)
-  status                   ReservationStatus @default(confirmed)
-  cancelledAt              DateTime?         @map("cancelled_at") @db.Timestamptz(6)
-  createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+  id                               String            @id @db.Uuid
+  vehiclePlate                     String            @map("vehicle_plate") @db.VarChar(10)
+  entryAt                          DateTime          @map("entry_at") @db.Timestamptz(6)
+  exitAt                           DateTime          @map("exit_at") @db.Timestamptz(6)
+  totalArs                         Decimal           @map("total_ars") @db.Decimal(12, 2)
+  rateSnapshotName                 String            @map("rate_snapshot_name") @db.VarChar(120)
+  rateSnapshotHourPriceArs         Decimal           @map("rate_snapshot_hour_price_ars") @db.Decimal(12, 2)
+  // Foto completa de la tarifa (migración 20261003120000), para el excedente.
+  // NULL en las reservas anteriores.
+  rateSnapshotFractionPriceArs     Decimal?          @map("rate_snapshot_fraction_price_ars") @db.Decimal(12, 2)
+  rateSnapshotMediaEstadiaPriceArs Decimal?          @map("rate_snapshot_media_estadia_price_ars") @db.Decimal(12, 2)
+  rateSnapshotStayPriceArs         Decimal?          @map("rate_snapshot_stay_price_ars") @db.Decimal(12, 2)
+  status                           ReservationStatus @default(confirmed)
+  cancelledAt                      DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  createdAt                        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                        DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

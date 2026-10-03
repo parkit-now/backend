@@ -26,6 +26,20 @@ model Service {
   reservationRate   Rate?   @relation(fields: [tenantId, reservationRateId], references: [tenantId, id], map: "services_tenant_reservation_rate_fkey")
   reservableSpots   Int?    @map("reservable_spots")
 
+  // Reglas de ADVANCE_RESERVATION (migración 20261003120000). Los defaults son
+  // los del producto; la API sólo los deja tocar en ese código.
+  // `reservationVehicleKinds` ⊆ car | suv_pickup | motorcycle (CHECK en SQL).
+  reservationVehicleKinds String[] @default([]) @map("reservation_vehicle_kinds")
+  // opening = horario de apertura; custom = filas de `reservation_hours`.
+  reservationHoursMode    String   @default("opening") @map("reservation_hours_mode")
+  // auto | manual.
+  acceptanceMode          String   @default("auto") @map("acceptance_mode")
+  approvalWindowMinutes   Int      @default(15) @map("approval_window_minutes")
+  freeCancelMinutes       Int      @default(60) @map("free_cancel_minutes")
+  lateCancelRefundPct     Int      @default(0) @map("late_cancel_refund_pct")
+  earlyArrivalMinutes     Int      @default(15) @map("early_arrival_minutes")
+  graceMinutes            Int      @default(30) @map("grace_minutes")
+
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 
