@@ -1,4 +1,6 @@
 import { Test } from '@nestjs/testing';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { PrismaService } from '../database/prisma.service';
 import { DevCheckoutGateway } from './payment-gateway/dev-checkout.gateway';
 import { RESERVATION_PAYMENT_GATEWAY } from './payment-gateway/reservation-payment-gateway';
@@ -16,6 +18,10 @@ describe('ReservationsModule', () => {
       })
         .overrideProvider(PrismaService)
         .useValue({})
+        .overrideGuard(JwtAuthGuard)
+        .useValue({ canActivate: () => true })
+        .overrideGuard(TenantMembershipGuard)
+        .useValue({ canActivate: () => true })
         .compile();
 
       expect(module.get(ReservationLifecycleService)).toBeInstanceOf(

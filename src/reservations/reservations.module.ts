@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../database/prisma.module';
+import { OwnerReservationsController } from './owner-reservations.controller';
+import { OwnerReservationsService } from './owner-reservations.service';
 import { ReservationPaymentGatewayProvider } from './payment-gateway/reservation-payment.provider';
 import { RESERVATION_PAYMENT_GATEWAY } from './payment-gateway/reservation-payment-gateway';
 import { ReservationLifecycleService } from './reservation-lifecycle.service';
@@ -12,7 +14,9 @@ import { ReservationSweeperService } from './reservation-sweeper.service';
  */
 @Module({
   imports: [PrismaModule],
+  controllers: [OwnerReservationsController],
   providers: [
+    OwnerReservationsService,
     ReservationPaymentGatewayProvider,
     ReservationLifecycleService,
     ReservationSweeperService,
