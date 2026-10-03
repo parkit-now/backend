@@ -146,6 +146,21 @@ export const ErrorCodes = {
   // La estadía no cae entera dentro del horario de reservas (modo custom).
   RESERVATION_OUTSIDE_RESERVATION_HOURS:
     'RESERVATION_OUTSIDE_RESERVATION_HOURS',
+  // Ciclo de vida de la reserva con pago.
+  // Aceptar/rechazar una reserva que no está esperando la aceptación del dueño.
+  RESERVATION_NOT_PENDING_APPROVAL: 'RESERVATION_NOT_PENDING_APPROVAL',
+  // El dueño tardó más que la ventana de aceptación: la reserva ya se rechazó.
+  RESERVATION_APPROVAL_EXPIRED: 'RESERVATION_APPROVAL_EXPIRED',
+  // Sólo se reintenta un reembolso en estado `failed`.
+  RESERVATION_REFUND_NOT_RETRYABLE: 'RESERVATION_REFUND_NOT_RETRYABLE',
+  // La retención de 10 min para pagar ya venció.
+  RESERVATION_HOLD_EXPIRED: 'RESERVATION_HOLD_EXPIRED',
+  // El proveedor de pago no pudo crear el checkout (503).
+  RESERVATION_CHECKOUT_UNAVAILABLE: 'RESERVATION_CHECKOUT_UNAVAILABLE',
+  // Cliente viejo sin `returnUrl` en producción (422).
+  RESERVATION_CLIENT_OUTDATED: 'RESERVATION_CLIENT_OUTDATED',
+  // Rechazar o cancelar como dueño exige un motivo.
+  RESERVATION_REASON_REQUIRED: 'RESERVATION_REASON_REQUIRED',
   // Vehículos del conductor.
   DRIVER_VEHICLE_NOT_FOUND: 'DRIVER_VEHICLE_NOT_FOUND',
   // El conductor ya tiene otro vehículo con esa patente.
