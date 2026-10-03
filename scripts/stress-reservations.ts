@@ -37,7 +37,7 @@ const DATABASE_URL = process.env.DATABASE_URL ?? '';
 const ONCE = '11111111-1111-4111-8111-111111111111';
 const PASSWORD = 'StressTest-12345';
 const EMAIL_DOMAIN = '@stress.parkit.test';
-const RETURN_URL = 'http://localhost:5173/reserva/listo';
+const RETURN_URL = 'exp://192.168.0.1:8081/--/reservas/stress';
 
 // La base tiene que ser local (no se imprime la URL).
 function assertLocal(): void {
