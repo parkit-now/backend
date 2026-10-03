@@ -57,7 +57,11 @@ export class DriverReservationsService {
 
     // La patente tiene que ser de un vehículo del conductor (SCRUM-285): es
     // la que la playa va a usar para reconocer la reserva en el ingreso.
-    if (!(await this.driverVehicles.ownsPlate(user, dto.vehiclePlate))) {
+    const vehicleKind = await this.driverVehicles.findOwnedKind(
+      user,
+      dto.vehiclePlate,
+    );
+    if (!vehicleKind) {
       throw new FormattedException(
         'Unprocessable Entity',
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -67,13 +71,15 @@ export class DriverReservationsService {
       );
     }
 
-    // Recotiza en el servidor: valida ventana, horario, reservas habilitadas
-    // y tarifa de reservas. Nunca se confía en el total que calculó el cliente.
+    // Recotiza en el servidor: valida ventana, horario, tipo de vehículo,
+    // reservas habilitadas y tarifa de reservas. Nunca se confía en el total
+    // que calculó el cliente.
     const { quote, reservableSpots } =
       await this.driverService.quoteForReservation(
         dto.parkingId,
         { entryAt: dto.entryAt, exitAt: dto.exitAt },
         now,
+        vehicleKind,
       );
     const entryAt = new Date(quote.entryAt);
     const exitAt = new Date(quote.exitAt);
@@ -119,6 +125,10 @@ export class DriverReservationsService {
             totalArs: quote.totalArs,
             rateSnapshotName: quote.rate.name,
             rateSnapshotHourPriceArs: quote.rate.hourPriceArs,
+            // Foto completa de la tarifa: el excedente se cobra con ella.
+            rateSnapshotFractionPriceArs: quote.rate.fractionPriceArs,
+            rateSnapshotMediaEstadiaPriceArs: quote.rate.mediaEstadiaPriceArs,
+            rateSnapshotStayPriceArs: quote.rate.stayPriceArs,
           },
           include: WITH_PARKING,
         });

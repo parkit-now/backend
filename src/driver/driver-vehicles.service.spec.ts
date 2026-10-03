@@ -262,14 +262,22 @@ describe('DriverVehiclesService', () => {
     });
   });
 
-  it('ownsPlate busca por conductor y patente', async () => {
-    client.driverVehicle.findUnique.mockResolvedValue({ id: VEHICLE_ID });
+  it('findOwnedKind busca por conductor y patente y devuelve el tipo', async () => {
+    client.driverVehicle.findUnique.mockResolvedValue({ kind: 'motorcycle' });
     // eslint-disable-next-line @typescript-eslint/await-thenable
-    await expect(service.ownsPlate(USER, 'AB123CD')).resolves.toBe(true);
+    await expect(service.findOwnedKind(USER, 'AB123CD')).resolves.toBe(
+      'motorcycle',
+    );
     expect(client.driverVehicle.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId_plate: { userId: USER.id, plate: 'AB123CD' } },
       }),
     );
+  });
+
+  it('findOwnedKind devuelve null si la patente no es del conductor', async () => {
+    client.driverVehicle.findUnique.mockResolvedValue(null);
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(service.findOwnedKind(USER, 'ZZ999ZZ')).resolves.toBeNull();
   });
 });

@@ -1,5 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { IsDateString, IsOptional, IsString, Matches } from 'class-validator';
+import { normalizePlate } from '../driver-rules';
 
 export class CreateQuoteDto {
   @ApiProperty({ format: 'date-time', example: '2026-09-30T10:00:00-03:00' })
@@ -9,6 +11,20 @@ export class CreateQuoteDto {
   @ApiProperty({ format: 'date-time', example: '2026-09-30T13:00:00-03:00' })
   @IsDateString()
   exitAt: string;
+
+  @ApiPropertyOptional({
+    example: 'AB123CD',
+    description:
+      'Patente de uno de tus vehículos. Si se manda, la cotización valida que ' +
+      'la playa acepte ese tipo de vehículo (RESERVATION_VEHICLE_KIND_NOT_ACCEPTED).',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? normalizePlate(value) : value,
+  )
+  @IsString()
+  @Matches(/^[A-Z0-9]{3,10}$/)
+  vehiclePlate?: string;
 }
 
 export class QuoteRateDto {

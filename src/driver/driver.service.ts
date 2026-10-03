@@ -4,15 +4,19 @@ import {
   Prisma,
   ReservationStatus,
   ServiceCode,
+  type User,
 } from '@prisma/client';
 import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import { readCapacity } from '../entities/entity-settings';
 import { calcStayPrice } from '../entries/pricing';
+import { effectiveReservationHours } from '../services/reservation-hours';
+import { computeReservationReadiness } from '../services/reservation-readiness';
 import { PrismaService } from '../database/prisma.service';
 import { prismaForTenant } from '../database/prisma-tenant';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
+  DEFAULT_GRACE_MINUTES,
   RESERVATION_MAX_DAYS_AHEAD,
   availableSpots,
   boundingBox,
@@ -34,6 +38,7 @@ import {
   NearbyParkingsQueryDto,
 } from './dto/nearby-parkings-query.dto';
 import { CreateQuoteDto, QuoteDto } from './dto/quote.dto';
+import { DriverVehiclesService } from './driver-vehicles.service';
 
 const MAX_RESULTS = 50;
 
@@ -71,6 +76,21 @@ type LotData = {
   reservationRate: ReservationRate | null;
   /** Plazas reservables a la vez; `null` si no toma reservas. */
   reservableSpots: number | null;
+  /**
+   * Reglas del servicio de reservas; `null` si la playa no toma reservas. Las
+   * ve el conductor (parking DTO) y las aplica la cotización.
+   */
+  reservation: {
+    vehicleKinds: string[];
+    hoursMode: string;
+    /** Horario efectivo: el propio en `custom`, el de apertura en `opening`. */
+    hours: ScheduleRange[];
+    acceptanceMode: string;
+    freeCancelMinutes: number;
+    lateCancelRefundPct: number;
+    earlyArrivalMinutes: number;
+    graceMinutes: number;
+  } | null;
   occupied: number;
   /** Reservas de hoy que todavía ocupan lugar (ver reservationHoldsSpotNow). */
   reservedToday: number;
@@ -97,7 +117,10 @@ const PUBLIC_TENANT_SELECT = {
  */
 @Injectable()
 export class DriverService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly driverVehicles: DriverVehiclesService,
+  ) {}
 
   async findNearby(
     query: NearbyParkingsQueryDto,
@@ -127,7 +150,7 @@ export class DriverService {
 
     return Promise.all(
       inRadius.map(async ({ tenant, distance }) => ({
-        ...toParkingDto(tenant, await this.loadLotData(tenant.id, now), now),
+        ...toParkingDto(tenant, await this.loadLotData(tenant, now), now),
         distanceMeters: Math.round(distance),
       })),
     );
@@ -138,14 +161,10 @@ export class DriverService {
     now = new Date(),
   ): Promise<DriverParkingDetailDto> {
     const tenant = await this.findPublicTenant(parkingId);
-    const lot = await this.loadLotData(tenant.id, now);
+    const lot = await this.loadLotData(tenant, now);
     return {
       ...toParkingDto(tenant, lot, now),
-      schedules: [...lot.schedules].sort(
-        (left, right) =>
-          DAY_ORDER.indexOf(left.day) - DAY_ORDER.indexOf(right.day) ||
-          left.openMinute - right.openMinute,
-      ),
+      schedules: sortSchedules(lot.schedules),
       reservationMaxDaysAhead: RESERVATION_MAX_DAYS_AHEAD,
     };
   }
@@ -153,9 +172,28 @@ export class DriverService {
   async quote(
     parkingId: string,
     dto: CreateQuoteDto,
+    user: User,
     now = new Date(),
   ): Promise<QuoteDto> {
-    return (await this.quoteForReservation(parkingId, dto, now)).quote;
+    // Con `vehiclePlate`, la cotización conoce el tipo de vehículo y valida
+    // que la playa lo acepte, igual que la reserva.
+    let vehicleKind: string | undefined;
+    if (dto.vehiclePlate) {
+      const kind = await this.driverVehicles.findOwnedKind(
+        user,
+        dto.vehiclePlate,
+      );
+      if (!kind) {
+        throw unprocessable(
+          'The plate is not one of your vehicles.',
+          `/driver/parkings/${parkingId}/quote`,
+          ErrorCodes.RESERVATION_VEHICLE_NOT_FOUND,
+        );
+      }
+      vehicleKind = kind;
+    }
+    return (await this.quoteForReservation(parkingId, dto, now, vehicleKind))
+      .quote;
   }
 
   /**
@@ -167,9 +205,10 @@ export class DriverService {
     parkingId: string,
     dto: CreateQuoteDto,
     now = new Date(),
+    vehicleKind?: string,
   ): Promise<{ quote: QuoteDto; reservableSpots: number }> {
     const tenant = await this.findPublicTenant(parkingId);
-    const lot = await this.loadLotData(tenant.id, now);
+    const lot = await this.loadLotData(tenant, now);
     const entryAt = new Date(dto.entryAt);
     const exitAt = new Date(dto.exitAt);
     const instance = `/driver/parkings/${parkingId}/quote`;
@@ -198,6 +237,27 @@ export class DriverService {
         'The parking lot closes during the requested stay.',
         instance,
         ErrorCodes.RESERVATION_OUTSIDE_OPENING_HOURS,
+      );
+    }
+    // `rate` no nulo ⇒ `lot.reservation` no nulo (ver loadLotData).
+    const rules = lot.reservation;
+    if (rules && vehicleKind && !rules.vehicleKinds.includes(vehicleKind)) {
+      throw unprocessable(
+        `This parking lot does not take reservations for '${vehicleKind}' vehicles.`,
+        instance,
+        ErrorCodes.RESERVATION_VEHICLE_KIND_NOT_ACCEPTED,
+      );
+    }
+    // Horario propio: la estadía entera tiene que caer dentro de sus rangos.
+    // Sin rangos (`null`) tampoco se puede reservar.
+    if (
+      rules?.hoursMode === 'custom' &&
+      isOpenThroughout(rules.hours, entryAt, exitAt) !== true
+    ) {
+      throw unprocessable(
+        'The stay is outside the hours in which this parking lot takes reservations.',
+        instance,
+        ErrorCodes.RESERVATION_OUTSIDE_RESERVATION_HOURS,
       );
     }
 
@@ -250,56 +310,90 @@ export class DriverService {
     return tenant;
   }
 
-  private async loadLotData(tenantId: string, now: Date): Promise<LotData> {
+  private async loadLotData(tenant: PublicTenant, now: Date): Promise<LotData> {
+    const tenantId = tenant.id;
     const tenantPrisma = prismaForTenant(this.prisma, tenantId);
     const today = dayRangeIn(
       dayKeyIn(now, DEFAULT_TIME_ZONE),
       DEFAULT_TIME_ZONE,
     );
-    const [schedules, reservationService, occupied, todays] = await Promise.all(
-      [
-        tenantPrisma.schedule.findMany({
-          select: { day: true, openMinute: true, closeMinute: true },
-        }),
-        tenantPrisma.service.findFirst({
-          where: { code: ServiceCode.ADVANCE_RESERVATION },
-          select: {
-            enabled: true,
-            reservableSpots: true,
-            reservationRate: {
-              select: {
-                name: true,
-                hourPriceArs: true,
-                fractionPriceArs: true,
-                mediaEstadiaPriceArs: true,
-                stayPriceArs: true,
-                isActive: true,
-                deletedAt: true,
-              },
+    const [
+      schedules,
+      reservationService,
+      reservationRanges,
+      mpAccount,
+      occupied,
+      todays,
+    ] = await Promise.all([
+      tenantPrisma.schedule.findMany({
+        select: { day: true, openMinute: true, closeMinute: true },
+      }),
+      tenantPrisma.service.findFirst({
+        where: { code: ServiceCode.ADVANCE_RESERVATION },
+        select: {
+          enabled: true,
+          reservableSpots: true,
+          reservationVehicleKinds: true,
+          reservationHoursMode: true,
+          acceptanceMode: true,
+          freeCancelMinutes: true,
+          lateCancelRefundPct: true,
+          earlyArrivalMinutes: true,
+          graceMinutes: true,
+          reservationRate: {
+            select: {
+              name: true,
+              hourPriceArs: true,
+              fractionPriceArs: true,
+              mediaEstadiaPriceArs: true,
+              stayPriceArs: true,
+              isActive: true,
+              deletedAt: true,
             },
           },
-        }),
-        tenantPrisma.entry.count({ where: { leftAt: null } }),
-        // Reservas confirmadas de hoy: las que todavía no vencieron ocupan
-        // lugar (SCRUM-261, ver reservationHoldsSpotNow).
-        tenantPrisma.reservation.findMany({
-          where: {
-            status: ReservationStatus.confirmed,
-            entryAt: { gte: today.gte, lt: today.lt },
-          },
-          select: { entryAt: true },
-        }),
-      ],
-    );
+        },
+      }),
+      tenantPrisma.reservationHour.findMany({
+        select: { day: true, openMinute: true, closeMinute: true },
+      }),
+      // `MpAccount` es global: cliente base, filtrado a mano por playa. Sólo
+      // el estado; los tokens no se leen acá.
+      this.prisma.mpAccount.findUnique({
+        where: { tenantId },
+        select: { status: true },
+      }),
+      tenantPrisma.entry.count({ where: { leftAt: null } }),
+      // Reservas confirmadas de hoy: las que todavía no vencieron ocupan
+      // lugar (SCRUM-261, ver reservationHoldsSpotNow).
+      tenantPrisma.reservation.findMany({
+        where: {
+          status: ReservationStatus.confirmed,
+          entryAt: { gte: today.gte, lt: today.lt },
+        },
+        select: { entryAt: true },
+      }),
+    ]);
 
     const rate = reservationService?.reservationRate;
     const spots = reservationService?.reservableSpots ?? 0;
+    const rateUsable = !!rate && rate.isActive && !rate.deletedAt;
+    // Mismo criterio que la activación del dueño (ver ServicesService): el
+    // servicio activo no alcanza si después se desvinculó Mercado Pago o se
+    // rompió algún requisito.
+    const readiness = computeReservationReadiness({
+      mpStatus: mpAccount?.status ?? null,
+      reservableSpots: spots,
+      capacityTotal: readCapacity(tenant.settings).total,
+      rateUsable,
+      vehicleKinds: reservationService?.reservationVehicleKinds ?? [],
+      hoursMode: reservationService?.reservationHoursMode ?? 'opening',
+      scheduleCount: schedules.length,
+      reservationHourCount: reservationRanges.length,
+    });
     const takesReservations =
-      reservationService?.enabled === true &&
-      !!rate &&
-      rate.isActive &&
-      !rate.deletedAt &&
-      spots > 0;
+      reservationService?.enabled === true && readiness.ready && rateUsable;
+    const graceMinutes =
+      reservationService?.graceMinutes ?? DEFAULT_GRACE_MINUTES;
 
     return {
       schedules,
@@ -313,9 +407,26 @@ export class DriverService {
           }
         : null,
       reservableSpots: takesReservations ? spots : null,
+      reservation:
+        takesReservations && reservationService
+          ? {
+              vehicleKinds: reservationService.reservationVehicleKinds,
+              hoursMode: reservationService.reservationHoursMode,
+              hours: effectiveReservationHours(
+                reservationService.reservationHoursMode,
+                schedules,
+                reservationRanges,
+              ),
+              acceptanceMode: reservationService.acceptanceMode,
+              freeCancelMinutes: reservationService.freeCancelMinutes,
+              lateCancelRefundPct: reservationService.lateCancelRefundPct,
+              earlyArrivalMinutes: reservationService.earlyArrivalMinutes,
+              graceMinutes,
+            }
+          : null,
       occupied,
       reservedToday: todays.filter((reservation) =>
-        reservationHoldsSpotNow(reservation.entryAt, now),
+        reservationHoldsSpotNow(reservation.entryAt, now, graceMinutes),
       ).length,
     };
   }
@@ -330,6 +441,14 @@ const DAY_ORDER = [
   'saturday',
   'sunday',
 ];
+
+function sortSchedules(ranges: ScheduleRange[]): ScheduleRange[] {
+  return [...ranges].sort(
+    (left, right) =>
+      DAY_ORDER.indexOf(left.day) - DAY_ORDER.indexOf(right.day) ||
+      left.openMinute - right.openMinute,
+  );
+}
 
 function coordinatesOf(tenant: PublicTenant) {
   return {
@@ -353,6 +472,20 @@ function toParkingDto(
     totalSpots: total > 0 ? total : null,
     acceptsReservations: lot.reservationRate !== null,
     reservationHourPriceArs: lot.reservationRate?.hourPriceArs ?? null,
+    reservationFractionPriceArs: lot.reservationRate?.fractionPriceArs ?? null,
+    reservationVehicleKinds: lot.reservation?.vehicleKinds ?? null,
+    reservationHours: lot.reservation
+      ? sortSchedules(lot.reservation.hours)
+      : null,
+    reservationRules: lot.reservation
+      ? {
+          acceptanceMode: lot.reservation.acceptanceMode,
+          freeCancelMinutes: lot.reservation.freeCancelMinutes,
+          lateCancelRefundPct: lot.reservation.lateCancelRefundPct,
+          earlyArrivalMinutes: lot.reservation.earlyArrivalMinutes,
+          graceMinutes: lot.reservation.graceMinutes,
+        }
+      : null,
     openNow: isOpenAt(lot.schedules, now),
   };
 }
