@@ -2,12 +2,21 @@
 //
 // El `id` lo manda el cliente: es la clave de idempotencia del POST. Patente,
 // tarifa y total son SNAPSHOTS (registro histórico).
-// "Completada" y "no-show" se derivan de la hora; sólo se guardan confirmed /
-// cancelled. Backend-only: RLS sin policies.
+// Ciclo de vida completo desde la migración 20261004120000: nace en
+// pending_payment (retención de 10 min), pasa a pending_approval o confirmed
+// según el modo de aceptación, y termina en completed / cancelled / rejected /
+// expired / no_show. Backend-only: RLS sin policies.
 
 enum ReservationStatus {
+  pending_payment
+  pending_approval
   confirmed
+  checked_in
+  completed
   cancelled
+  rejected
+  expired
+  no_show
 
   @@map("reservation_status")
 }
@@ -27,6 +36,24 @@ model Reservation {
   rateSnapshotStayPriceArs         Decimal?          @map("rate_snapshot_stay_price_ars") @db.Decimal(12, 2)
   status                           ReservationStatus @default(confirmed)
   cancelledAt                      DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  // Retención y pago.
+  holdExpiresAt                    DateTime?         @map("hold_expires_at") @db.Timestamptz(6)
+  paidAt                           DateTime?         @map("paid_at") @db.Timestamptz(6)
+  // Modo manual: hasta cuándo puede responder el dueño.
+  approvalDeadlineAt               DateTime?         @map("approval_deadline_at") @db.Timestamptz(6)
+  // Quién canceló o rechazó (driver | owner | system) y por qué.
+  cancelledBy                      String?           @map("cancelled_by")
+  reason                           String?
+  // Reembolso: none | pending | refunded | partial | failed.
+  refundStatus                     String            @default("none") @map("refund_status")
+  refundedAmountArs                Decimal?          @map("refunded_amount_ars") @db.Decimal(12, 2)
+  refundError                      String?           @map("refund_error")
+  refundRequestedAt                DateTime?         @map("refund_requested_at") @db.Timestamptz(6)
+  // Monto del último reembolso pedido (el reintento de un `failed` lo reusa).
+  refundRequestedArs               Decimal?          @map("refund_requested_ars") @db.Decimal(12, 2)
+  refundAttempts                   Int               @default(0) @map("refund_attempts")
+  // Reglas de la playa al reservar (ver reservation-policy.ts).
+  policySnapshot                   Json?             @map("policy_snapshot")
   createdAt                        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                        DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -35,6 +62,12 @@ model Reservation {
   userId   String @map("user_id") @db.Uuid
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  payments ReservationPayment[]
+
+  // Índices parciales sólo en SQL: `reservations_tenant_window_idx`
+  // (cupo, WHERE status retiene lugar).
   @@index([userId, entryAt(sort: Desc)], map: "reservations_user_entry_idx")
+  @@index([tenantId, status, entryAt], map: "reservations_tenant_status_entry_idx")
+  @@index([status, holdExpiresAt], map: "reservations_status_hold_idx")
   @@map("reservations")
 }

@@ -94,6 +94,8 @@ model Tenant {
   paymentIntents       PaymentIntent[]
   // Reservas de conductores (tenant/reservations.prisma).
   reservations         Reservation[]
+  // Pagos de reservas (global/reservation-payments.prisma).
+  reservationPayments  ReservationPayment[]
 
   // `@unique` sobre `ArcaAccount.tenantId`: una playa vincula a lo sumo una.
   arcaAccount          ArcaAccount?

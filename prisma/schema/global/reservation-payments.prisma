@@ -1,0 +1,56 @@
+// Pagos de reservas (migración 20261004120000_reservation_lifecycle.sql).
+//
+// Una fila por intento de cobro de una reserva con Checkout Pro. Va en
+// `global/` y NO en `tenant/`, pese a tener `tenantId`, por la misma razón que
+// `PaymentIntent`: el webhook del proveedor es público, llega sin sesión ni
+// `:tenantId`, y la playa se deduce de esta misma fila. Por eso
+// `ReservationPayment` NO va en `TENANT_MODELS` (`src/database/prisma-tenant.ts`):
+// el service filtra a mano por tenant.
+//
+// Un solo pago VIVO por reserva (índice único parcial
+// `reservation_payments_reservation_live_idx`, `created | approved`) y un
+// `provider_payment_id` único (`reservation_payments_provider_payment_id_key`).
+// Los dos son parciales y Prisma no sabe expresarlos: viven sólo en SQL.
+//
+// Backend-only: RLS prendida y CERO policies.
+
+enum ReservationPaymentStatus {
+  created
+  approved
+  rejected
+  cancelled
+  refunded
+  partially_refunded
+
+  @@map("reservation_payment_status")
+}
+
+model ReservationPayment {
+  id String @id @default(uuid()) @db.Uuid
+
+  reservationId String      @map("reservation_id") @db.Uuid
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  amountArs Decimal                  @map("amount_ars") @db.Decimal(12, 2)
+  status    ReservationPaymentStatus @default(created)
+  provider  String                   @default("mercado_pago")
+
+  providerPreferenceId String? @map("provider_preference_id")
+  checkoutUrl          String? @map("checkout_url")
+  providerPaymentId    String? @map("provider_payment_id")
+  /// Estado CRUDO del proveedor. String y no enum: puede sumar valores.
+  providerStatus       String? @map("provider_status")
+  providerStatusDetail String? @map("provider_status_detail")
+
+  returnUrl  String?   @map("return_url")
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId], map: "reservation_payments_tenant_idx")
+  @@map("reservation_payments")
+}

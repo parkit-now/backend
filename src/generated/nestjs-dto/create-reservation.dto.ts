@@ -78,4 +78,59 @@ rateSnapshotStayPriceArs?: Prisma.Decimal;
 @IsOptional()
 @IsRFC3339()
 cancelledAt?: Date;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+holdExpiresAt?: Date;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+paidAt?: Date;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+approvalDeadlineAt?: Date;
+@IsOptional()
+@IsString()
+cancelledBy?: string;
+@IsOptional()
+@IsString()
+reason?: string;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+refundedAmountArs?: Prisma.Decimal;
+@IsOptional()
+@IsString()
+refundError?: string;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+refundRequestedAt?: Date;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+refundRequestedArs?: Prisma.Decimal;
+@IsOptional()
+policySnapshot?: Prisma.InputJsonValue;
 }
