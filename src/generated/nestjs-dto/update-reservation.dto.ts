@@ -45,6 +45,30 @@ rateSnapshotName?: string;
 @Type(()=>String)
 rateSnapshotHourPriceArs?: Prisma.Decimal;
 @ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotFractionPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotMediaEstadiaPriceArs?: Prisma.Decimal;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+rateSnapshotStayPriceArs?: Prisma.Decimal;
+@ApiProperty({
   type: `string`,
   format: `date-time`,
 })

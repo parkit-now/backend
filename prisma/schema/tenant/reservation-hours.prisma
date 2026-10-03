@@ -1,0 +1,19 @@
+// ReservationHour — rango del horario de reservas cuando
+// `services.reservation_hours_mode = 'custom'` (migración 20261003120000).
+// Misma forma que Schedule pero backend-only: sin version ni sync_seq (desktop
+// no sincroniza servicios). El PUT de la API reemplaza el set completo. RLS sin
+// policies.
+
+model ReservationHour {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day         ScheduleDay
+  openMinute  Int         @map("open_minute")
+  closeMinute Int         @map("close_minute")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, day], map: "reservation_hours_tenant_day_idx")
+  @@map("reservation_hours")
+}

@@ -75,6 +75,7 @@ model Tenant {
   entries              Entry[]
   rates                Rate[]
   schedules            Schedule[]
+  reservationHours     ReservationHour[]
   services             Service[]
   paymentMethods       PaymentMethod[]
   vehicles             Vehicle[]

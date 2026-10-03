@@ -5,6 +5,7 @@ import {UserMembershipEntity} from './user-membership.entity'
 import {EntryEntity} from './entry.entity'
 import {RateEntity} from './rate.entity'
 import {ScheduleEntity} from './schedule.entity'
+import {ReservationHourEntity} from './reservation-hour.entity'
 import {ServiceEntity} from './service.entity'
 import {PaymentMethodEntity} from './payment-method.entity'
 import {VehicleEntity} from './vehicle.entity'
@@ -99,6 +100,7 @@ memberships?: UserMembershipEntity[] ;
 entries?: EntryEntity[] ;
 rates?: RateEntity[] ;
 schedules?: ScheduleEntity[] ;
+reservationHours?: ReservationHourEntity[] ;
 services?: ServiceEntity[] ;
 paymentMethods?: PaymentMethodEntity[] ;
 vehicles?: VehicleEntity[] ;
