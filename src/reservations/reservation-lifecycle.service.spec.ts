@@ -380,6 +380,62 @@ describe('ReservationLifecycleService', () => {
       expect(gateway.refunds).toHaveLength(1);
     });
 
+    it('un pago aprobado sobre una cancelada que nunca cobró: registra el pago y reembolsa todo sin cambiar el estado', async () => {
+      seed(
+        {
+          status: 'cancelled',
+          cancelledAt: NOW,
+          cancelledBy: 'driver',
+        },
+        payment({ status: 'cancelled' }),
+      );
+
+      const result = await service.markPaid(
+        RES_ID,
+        { providerPaymentId: 'dev_1' },
+        NOW,
+      );
+
+      expect(result).toMatchObject({
+        changed: true,
+        outcome: 'refunded_after_cancel',
+      });
+      expect(db.reservationById()).toMatchObject({
+        status: 'cancelled',
+        cancelledBy: 'driver',
+        paidAt: NOW,
+        refundStatus: 'refunded',
+        refundedAmountArs: 9000,
+      });
+      expect(db.paymentOf().status).toBe('refunded');
+      expect(gateway.refunds).toHaveLength(1);
+
+      const again = await service.markPaid(
+        RES_ID,
+        { providerPaymentId: 'dev_1' },
+        NOW,
+      );
+      expect(again).toMatchObject({ changed: false, outcome: 'ignored' });
+      expect(gateway.refunds).toHaveLength(1);
+    });
+
+    it.each(['rejected', 'no_show', 'completed'])(
+      'un pago sobre una %s sin cobro previo también se reembolsa',
+      async (status) => {
+        seed({ status });
+
+        const result = await service.markPaid(
+          RES_ID,
+          { providerPaymentId: 'dev_1' },
+          NOW,
+        );
+
+        expect(result.outcome).toBe('refunded_after_cancel');
+        expect(db.reservationById().status).toBe(status);
+        expect(gateway.refunds).toHaveLength(1);
+      },
+    );
+
     it('sobre una reserva que no espera el pago no hace nada', async () => {
       seed({ status: 'confirmed', paidAt: NOW });
 

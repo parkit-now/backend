@@ -24,6 +24,14 @@ import {
 } from './reservation-policy';
 
 const INSTANCE = '/reservations';
+
+/** Estados terminales sin cobro previo: un pago que llega ahí se reembolsa. */
+const UNPAID_TERMINAL_STATUSES: ReservationStatus[] = [
+  ReservationStatus.cancelled,
+  ReservationStatus.rejected,
+  ReservationStatus.completed,
+  ReservationStatus.no_show,
+];
 const MAX_REFUND_ERROR_LENGTH = 500;
 
 /** Datos del pago que reporta el proveedor (o el checkout de dev). */
@@ -44,6 +52,12 @@ export type MarkPaidOutcome =
   | 'pending_approval'
   /** Pago tardío sin cupo: se reembolsó todo y la reserva quedó `expired`. */
   | 'refunded_no_capacity'
+  /**
+   * El pago llegó cuando la reserva ya estaba cancelada, rechazada, completada
+   * o en no-show sin haber cobrado nunca: se registra y se reembolsa todo, sin
+   * tocar el estado de la reserva.
+   */
+  | 'refunded_after_cancel'
   /** La reserva ya no estaba esperando el pago: no se tocó. */
   | 'ignored';
 
@@ -116,6 +130,12 @@ export class ReservationLifecycleService {
     now = new Date(),
   ): Promise<MarkPaidResult> {
     const reservation = await this.load({ id: reservationId }, INSTANCE);
+    if (
+      reservation.paidAt === null &&
+      UNPAID_TERMINAL_STATUSES.includes(reservation.status)
+    ) {
+      return this.refundLatePayment(reservation, payment, now);
+    }
     const waiting =
       reservation.status === ReservationStatus.pending_payment ||
       reservation.status === ReservationStatus.expired;
@@ -194,6 +214,38 @@ export class ReservationLifecycleService {
     return {
       changed: true,
       outcome: hadRoom ? outcome : 'refunded_no_capacity',
+      reservation: await this.reload(reservation.id),
+    };
+  }
+
+  /**
+   * Pago aprobado sobre una reserva terminal que nunca cobró (el conductor
+   * canceló en `pending_payment` y el pago igual se aprobó): se registra el
+   * pago (`paidAt` es el guard de idempotencia), se reembolsa el total y el
+   * estado de la reserva no cambia.
+   */
+  private async refundLatePayment(
+    reservation: Reservation,
+    payment: ProviderPaymentRef,
+    now: Date,
+  ): Promise<MarkPaidResult> {
+    const claimed = await this.prisma.reservation.updateMany({
+      where: {
+        id: reservation.id,
+        tenantId: reservation.tenantId,
+        status: reservation.status,
+        paidAt: null,
+      },
+      data: { paidAt: now },
+    });
+    if (claimed.count === 0) {
+      return { changed: false, outcome: 'ignored', reservation };
+    }
+    await this.approvePayment(reservation, payment, now);
+    await this.startRefund(reservation, Number(reservation.totalArs), now);
+    return {
+      changed: true,
+      outcome: 'refunded_after_cancel',
       reservation: await this.reload(reservation.id),
     };
   }
