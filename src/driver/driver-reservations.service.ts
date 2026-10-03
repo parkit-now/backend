@@ -495,6 +495,8 @@ export class DriverReservationsService {
                 : null,
           }
         : null,
+      cancelledBy: row.cancelledBy,
+      reason: row.reason,
     };
   }
 }

@@ -191,6 +191,24 @@ export class DriverReservationDetailDto extends DriverReservationDto {
 
   @ApiProperty({ type: ReservationPaymentSummaryDto, nullable: true })
   payment: ReservationPaymentSummaryDto | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    enum: ['driver', 'owner', 'system'],
+    description: 'Quién canceló o rechazó la reserva.',
+  })
+  cancelledBy: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Motivo de la cancelación o el rechazo: texto libre del dueño, o un ' +
+      'código del sistema (approval_timeout, late_payment_no_capacity, ' +
+      'checkout_unavailable).',
+  })
+  reason: string | null;
 }
 
 export class ReservationCheckoutDto {

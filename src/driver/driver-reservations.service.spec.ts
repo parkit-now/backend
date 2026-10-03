@@ -70,6 +70,8 @@ const baseRow = () => ({
   rateSnapshotHourPriceArs: new Prisma.Decimal(4500),
   status: ReservationStatus.confirmed as ReservationStatus,
   cancelledAt: null as Date | null,
+  cancelledBy: null as string | null,
+  reason: null as string | null,
   holdExpiresAt: null as Date | null,
   paidAt: null as Date | null,
   approvalDeadlineAt: null as Date | null,
@@ -319,6 +321,23 @@ describe('DriverReservationsService', () => {
       });
       expect(JSON.stringify(result)).not.toContain('secret');
       expect(JSON.stringify(result)).not.toContain('pref');
+    });
+
+    it('expone quién canceló y el motivo (lo que escribió el dueño)', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(
+        row({
+          status: ReservationStatus.rejected,
+          cancelledAt: NOW,
+          cancelledBy: 'owner',
+          reason: 'Playa llena por evento',
+        }),
+      );
+      expect(await service.get(USER, RES_ID, NOW)).toMatchObject({
+        status: 'rejected',
+        state: DriverReservationStateDto.cancelled,
+        cancelledBy: 'owner',
+        reason: 'Playa llena por evento',
+      });
     });
 
     it('la reserva de otro conductor responde 404', async () => {
