@@ -91,6 +91,19 @@ export class CreateEntryDto {
   vehicleCategory?: VehicleCategory;
 
   @ApiPropertyOptional({
+    description:
+      'Reserva que mostró el banner de la caja (`GET /reservations/match`). ' +
+      'Opcional: sin ella el backend busca igual por patente (ingresos sin ' +
+      'conexión, LPR). Si ya no es válida (otra patente, fuera de la ventana, ' +
+      'ya usada) se ignora y se busca por patente: el ingreso NUNCA se rechaza ' +
+      'por esto.',
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsUUID()
+  reservationId?: string;
+
+  @ApiPropertyOptional({
     description: 'ID of the selected rate.',
     format: 'uuid',
   })
