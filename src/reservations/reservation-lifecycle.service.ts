@@ -643,7 +643,8 @@ export class ReservationLifecycleService {
   /**
    * Pide el reembolso: registra `pending` (y cuenta el intento) ANTES de llamar
    * al proveedor, para que un corte a mitad de camino no deje la reserva sin
-   * rastro. Con 0 $ no llama a nadie y el `refundStatus` queda `none`.
+   * rastro. Con 0 $ (o si nunca hubo un cobro) no llama a nadie y el
+   * `refundStatus` queda `none`.
    *
    * - El proveedor lo confirma (`refunded`): `refunded` (o `partial` si no es el
    *   total) con `refundedAmountArs`.
@@ -663,6 +664,9 @@ export class ReservationLifecycleService {
       where: { reservationId: id, tenantId, providerPaymentId: { not: null } },
       orderBy: { createdAt: 'desc' },
     });
+    // Camino viejo (fuera de producción): la reserva nació `confirmed` sin pasar
+    // por el checkout, así que no se cobró nada y no hay nada que devolver.
+    if (!payment && !reservation.paidAt) return;
     const { refundAttempts } = await this.prisma.reservation.update({
       where: { id },
       data: {

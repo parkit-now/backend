@@ -750,6 +750,17 @@ describe('ReservationLifecycleService', () => {
       expect(gateway.refunds).toHaveLength(0);
     });
 
+    it('una reserva del camino viejo (nunca se cobró) se cancela sin reembolso ni alerta', async () => {
+      seed({ status: 'confirmed', paidAt: null }, null);
+
+      const result = await service.driverCancel(USER, RES_ID, NOW);
+
+      expect(result.reservation.status).toBe('cancelled');
+      expect(result.reservation.refundStatus).toBe('none');
+      expect(result.reservation.refundAttempts).toBe(0);
+      expect(gateway.refunds).toHaveLength(0);
+    });
+
     it('sin un pago aprobado que reembolsar queda failed', async () => {
       seed({ status: 'confirmed', paidAt: NOW }, null);
 
