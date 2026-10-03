@@ -26,6 +26,12 @@ const USER = { id: 'user-1' } as User;
 
 const ar = (iso: string) => new Date(`${iso}-03:00`);
 const NOW = ar('2026-09-27T16:00:00');
+// Fila de reserva que retiene lugar (lo que devuelve `holdingWhere`).
+const held = (entryAt: Date) => ({
+  entryAt,
+  status: 'confirmed',
+  holdExpiresAt: null,
+});
 
 const tenant = {
   id: 'tenant-once',
@@ -230,7 +236,7 @@ describe('DriverService', () => {
       reservationService({ graceMinutes: 120 }),
     );
     mockTenantClient.reservation.findMany.mockResolvedValue([
-      { entryAt: ar('2026-09-27T14:30:00') }, // vence 16:30 con 120 min: ocupa
+      held(ar('2026-09-27T14:30:00')), // vence 16:30 con 120 min: ocupa
     ]);
     const [parking] = await service.findNearby(
       { latitude: -34.6037, longitude: -58.3816, radiusMeters: 5000 },
@@ -241,9 +247,9 @@ describe('DriverService', () => {
 
   it('descuenta las reservas de hoy que todavía ocupan lugar', async () => {
     mockTenantClient.reservation.findMany.mockResolvedValue([
-      { entryAt: ar('2026-09-27T18:00:00') }, // más tarde hoy: ocupa
-      { entryAt: ar('2026-09-27T15:40:00') }, // vigente (vence 16:10)
-      { entryAt: ar('2026-09-27T11:00:00') }, // vencida: no ocupa
+      held(ar('2026-09-27T18:00:00')), // más tarde hoy: ocupa
+      held(ar('2026-09-27T15:40:00')), // vigente (vence 16:10)
+      held(ar('2026-09-27T11:00:00')), // vencida: no ocupa
     ]);
     const [parking] = await service.findNearby(
       { latitude: -34.6037, longitude: -58.3816, radiusMeters: 5000 },

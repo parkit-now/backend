@@ -4,13 +4,14 @@
  * de una reserva. Las reservas se cotizan con la tarifa de reservas que elige
  * el dueño, la misma para cualquier vehículo.
  */
-import { ScheduleDay } from '@prisma/client';
+import { ReservationStatus, ScheduleDay } from '@prisma/client';
 import {
   DEFAULT_TIME_ZONE,
   dayKeyIn,
   dayRangeIn,
   shiftDayKey,
 } from '../metrics/metrics-tz';
+import { countsAgainstQuota } from '../reservations/reservation-policy';
 
 // ─── Distancia ────────────────────────────────────────────────────────────────
 
@@ -235,17 +236,25 @@ export function hasReservationQuotaFor(
 
 /**
  * ¿La reserva ocupa un lugar "ahora" para el conteo de disponibilidad? Sí si
- * es de HOY (día civil en la zona de la playa) y todavía no venció.
+ * cuenta contra el cupo (`countsAgainstQuota`: `pending_payment` con la
+ * retención viva, `pending_approval`, `confirmed`, `checked_in`), es de HOY
+ * (día civil en la zona de la playa) y todavía no venció.
  */
 export function reservationHoldsSpotNow(
-  entryAt: Date,
+  reservation: {
+    entryAt: Date;
+    status: ReservationStatus;
+    holdExpiresAt: Date | null;
+  },
   now: Date,
   graceMinutes: number = DEFAULT_GRACE_MINUTES,
   tz = DEFAULT_TIME_ZONE,
 ): boolean {
-  const expiresAt = entryAt.getTime() + graceMinutes * 60_000;
+  if (!countsAgainstQuota(reservation, now)) return false;
+  const expiresAt = reservation.entryAt.getTime() + graceMinutes * 60_000;
   return (
-    dayKeyIn(entryAt, tz) === dayKeyIn(now, tz) && now.getTime() < expiresAt
+    dayKeyIn(reservation.entryAt, tz) === dayKeyIn(now, tz) &&
+    now.getTime() < expiresAt
   );
 }
 
@@ -264,14 +273,33 @@ export function availableSpots(
 
 export type DriverReservationState = 'active' | 'completed' | 'cancelled';
 
-/** Estado que ve el conductor, derivado de la hora (sin cron). */
+/**
+ * Estado que ve el conductor. Mapea los estados del ciclo de vida a los tres
+ * que entiende la app: `pending_payment`, `pending_approval`, `confirmed` y
+ * `checked_in` son `active`; `completed` y `no_show` son `completed`;
+ * `cancelled`, `rejected` y `expired` son `cancelled`. Una reserva `confirmed`
+ * o `checked_in` cuyo egreso ya pasó se muestra `completed` (hasta que la
+ * fase 6 la cierre por el ingreso y la salida).
+ */
 export function reservationState(
-  status: 'confirmed' | 'cancelled',
+  status: ReservationStatus,
   exitAt: Date,
   now: Date,
 ): DriverReservationState {
-  if (status === 'cancelled') return 'cancelled';
-  return exitAt.getTime() <= now.getTime() ? 'completed' : 'active';
+  switch (status) {
+    case ReservationStatus.cancelled:
+    case ReservationStatus.rejected:
+    case ReservationStatus.expired:
+      return 'cancelled';
+    case ReservationStatus.completed:
+    case ReservationStatus.no_show:
+      return 'completed';
+    case ReservationStatus.confirmed:
+    case ReservationStatus.checked_in:
+      return exitAt.getTime() <= now.getTime() ? 'completed' : 'active';
+    default:
+      return 'active';
+  }
 }
 
 /** Patente normalizada: mayúsculas, sin espacios ni guiones. */

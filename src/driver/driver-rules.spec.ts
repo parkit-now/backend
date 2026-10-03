@@ -167,27 +167,69 @@ describe('reservas: disponibilidad y cupo', () => {
     exitAt: ar(`2026-09-28T${to}:00`),
   });
 
+  const held = (entry: Date) => ({
+    entryAt: entry,
+    status: 'confirmed' as const,
+    holdExpiresAt: null,
+  });
+
   it('una reserva de hoy ocupa lugar hasta 30 min después del ingreso', () => {
-    expect(reservationHoldsSpotNow(ar('2026-09-28T18:00:00'), now)).toBe(true);
-    expect(reservationHoldsSpotNow(ar('2026-09-28T09:45:00'), now)).toBe(true);
-    expect(reservationHoldsSpotNow(ar('2026-09-28T09:15:00'), now)).toBe(false);
+    expect(reservationHoldsSpotNow(held(ar('2026-09-28T18:00:00')), now)).toBe(
+      true,
+    );
+    expect(reservationHoldsSpotNow(held(ar('2026-09-28T09:45:00')), now)).toBe(
+      true,
+    );
+    expect(reservationHoldsSpotNow(held(ar('2026-09-28T09:15:00')), now)).toBe(
+      false,
+    );
   });
 
   it('usa la tolerancia configurada de la playa', () => {
-    const entry = ar('2026-09-28T09:45:00');
+    const entry = held(ar('2026-09-28T09:45:00'));
     expect(reservationHoldsSpotNow(entry, now, 10)).toBe(false);
     expect(reservationHoldsSpotNow(entry, now, 60)).toBe(true);
   });
 
   it('una reserva de otro día no descuenta hoy', () => {
-    expect(reservationHoldsSpotNow(ar('2026-09-29T10:00:00'), now)).toBe(false);
+    expect(reservationHoldsSpotNow(held(ar('2026-09-29T10:00:00')), now)).toBe(
+      false,
+    );
     // 22:00 del 27 en Argentina es 01:00Z del 28: no debe contarse como hoy.
     expect(
       reservationHoldsSpotNow(
-        ar('2026-09-27T22:00:00'),
+        held(ar('2026-09-27T22:00:00')),
         ar('2026-09-27T21:00:00'),
       ),
     ).toBe(true);
+  });
+
+  it('sólo ocupa lugar si cuenta contra el cupo', () => {
+    const entry = ar('2026-09-28T18:00:00');
+    const hold = (minutes: number) =>
+      new Date(now.getTime() + minutes * 60_000);
+    const holds = (
+      status: Parameters<typeof reservationState>[0],
+      holdExpiresAt: Date | null,
+    ) =>
+      reservationHoldsSpotNow({ entryAt: entry, status, holdExpiresAt }, now);
+
+    expect(holds('pending_approval', null)).toBe(true);
+    expect(holds('checked_in', null)).toBe(true);
+    // pending_payment: retención viva (+5 min de margen) o vencida.
+    expect(holds('pending_payment', hold(5))).toBe(true);
+    expect(holds('pending_payment', hold(-4))).toBe(true);
+    expect(holds('pending_payment', hold(-6))).toBe(false);
+    expect(holds('pending_payment', null)).toBe(false);
+    for (const status of [
+      'completed',
+      'cancelled',
+      'rejected',
+      'expired',
+      'no_show',
+    ] as const) {
+      expect(holds(status, null)).toBe(false);
+    }
   });
 
   it('calcula los libres y no baja de cero', () => {
@@ -248,5 +290,31 @@ describe('reservas: disponibilidad y cupo', () => {
       'cancelled',
     );
     expect(normalizePlate(' ab-123 cd ')).toBe('AB123CD');
+  });
+
+  it('mapea todos los estados del ciclo de vida a los tres que ve la app', () => {
+    const future = ar('2026-09-28T12:00:00');
+    const past = ar('2026-09-28T09:00:00');
+    const expected = {
+      pending_payment: 'active',
+      pending_approval: 'active',
+      confirmed: 'active',
+      checked_in: 'active',
+      completed: 'completed',
+      no_show: 'completed',
+      cancelled: 'cancelled',
+      rejected: 'cancelled',
+      expired: 'cancelled',
+    } as const;
+    for (const [status, state] of Object.entries(expected)) {
+      expect(
+        reservationState(status as keyof typeof expected, future, now),
+      ).toBe(state);
+    }
+    // Sólo confirmed / checked_in se derivan de la hora de egreso.
+    expect(reservationState('checked_in', past, now)).toBe('completed');
+    expect(reservationState('pending_payment', past, now)).toBe('active');
+    expect(reservationState('rejected', past, now)).toBe('cancelled');
+    expect(reservationState('no_show', future, now)).toBe('completed');
   });
 });

@@ -1,11 +1,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import {
-  Prisma,
-  ReservationStatus,
-  type DriverVehicle,
-  type User,
-} from '@prisma/client';
+import { Prisma, type DriverVehicle, type User } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { holdingWhere } from '../reservations/reservation-capacity';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -187,7 +183,7 @@ export class DriverVehiclesService {
     }
   }
 
-  /** Patentes con una reserva confirmada que todavía no terminó. */
+  /** Patentes con una reserva que retiene lugar y todavía no terminó. */
   private async activePlates(
     client: Tx | PrismaService,
     userId: string,
@@ -196,7 +192,7 @@ export class DriverVehiclesService {
     const rows = await client.reservation.findMany({
       where: {
         userId,
-        status: ReservationStatus.confirmed,
+        ...holdingWhere(now),
         exitAt: { gt: now },
       },
       select: { vehiclePlate: true },

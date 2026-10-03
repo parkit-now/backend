@@ -1,11 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import {
-  BranchStatus,
-  Prisma,
-  ReservationStatus,
-  ServiceCode,
-  type User,
-} from '@prisma/client';
+import { BranchStatus, Prisma, ServiceCode, type User } from '@prisma/client';
 import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import { readCapacity } from '../entities/entity-settings';
 import { calcStayPrice } from '../entries/pricing';
@@ -13,6 +7,12 @@ import { effectiveReservationHours } from '../services/reservation-hours';
 import { computeReservationReadiness } from '../services/reservation-readiness';
 import { PrismaService } from '../database/prisma.service';
 import { prismaForTenant } from '../database/prisma-tenant';
+import { holdingWhere } from '../reservations/reservation-capacity';
+import {
+  buildPolicySnapshot,
+  DEFAULT_POLICY_SNAPSHOT,
+  type PolicySnapshot,
+} from '../reservations/reservation-policy';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import {
@@ -90,6 +90,7 @@ type LotData = {
     lateCancelRefundPct: number;
     earlyArrivalMinutes: number;
     graceMinutes: number;
+    approvalWindowMinutes: number;
   } | null;
   occupied: number;
   /** Reservas de hoy que todavía ocupan lugar (ver reservationHoldsSpotNow). */
@@ -206,7 +207,12 @@ export class DriverService {
     dto: CreateQuoteDto,
     now = new Date(),
     vehicleKind?: string,
-  ): Promise<{ quote: QuoteDto; reservableSpots: number }> {
+  ): Promise<{
+    quote: QuoteDto;
+    reservableSpots: number;
+    /** Reglas de la playa a copiar a la reserva (`policySnapshot`). */
+    policy: PolicySnapshot;
+  }> {
     const tenant = await this.findPublicTenant(parkingId);
     const lot = await this.loadLotData(tenant, now);
     const entryAt = new Date(dto.entryAt);
@@ -284,7 +290,13 @@ export class DriverService {
       },
     };
     // `rate` no nulo ⇒ la playa toma reservas ⇒ hay cupo (ver loadLotData).
-    return { quote, reservableSpots: lot.reservableSpots ?? 0 };
+    return {
+      quote,
+      reservableSpots: lot.reservableSpots ?? 0,
+      policy: rules
+        ? buildPolicySnapshot(rules)
+        : { ...DEFAULT_POLICY_SNAPSHOT },
+    };
   }
 
   /** Activa y con ubicación publicada; si no, para el conductor no existe. */
@@ -336,6 +348,7 @@ export class DriverService {
           reservationVehicleKinds: true,
           reservationHoursMode: true,
           acceptanceMode: true,
+          approvalWindowMinutes: true,
           freeCancelMinutes: true,
           lateCancelRefundPct: true,
           earlyArrivalMinutes: true,
@@ -363,14 +376,14 @@ export class DriverService {
         select: { status: true },
       }),
       tenantPrisma.entry.count({ where: { leftAt: null } }),
-      // Reservas confirmadas de hoy: las que todavía no vencieron ocupan
-      // lugar (SCRUM-261, ver reservationHoldsSpotNow).
+      // Reservas de hoy que retienen lugar (holdingWhere): las que todavía no
+      // vencieron lo ocupan (SCRUM-261, ver reservationHoldsSpotNow).
       tenantPrisma.reservation.findMany({
         where: {
-          status: ReservationStatus.confirmed,
+          ...holdingWhere(now),
           entryAt: { gte: today.gte, lt: today.lt },
         },
-        select: { entryAt: true },
+        select: { entryAt: true, status: true, holdExpiresAt: true },
       }),
     ]);
 
@@ -422,11 +435,14 @@ export class DriverService {
               lateCancelRefundPct: reservationService.lateCancelRefundPct,
               earlyArrivalMinutes: reservationService.earlyArrivalMinutes,
               graceMinutes,
+              approvalWindowMinutes:
+                reservationService.approvalWindowMinutes ??
+                DEFAULT_POLICY_SNAPSHOT.approvalWindowMinutes,
             }
           : null,
       occupied,
       reservedToday: todays.filter((reservation) =>
-        reservationHoldsSpotNow(reservation.entryAt, now, graceMinutes),
+        reservationHoldsSpotNow(reservation, now, graceMinutes),
       ).length,
     };
   }

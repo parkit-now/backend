@@ -3,6 +3,7 @@ import {Prisma,ReservationStatus} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {TenantEntity} from './tenant.entity'
 import {UserEntity} from './user.entity'
+import {ReservationPaymentEntity} from './reservation-payment.entity'
 
 
 export class ReservationEntity {
@@ -57,6 +58,47 @@ cancelledAt: Date  | null;
   type: `string`,
   format: `date-time`,
 })
+holdExpiresAt: Date  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+paidAt: Date  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+approvalDeadlineAt: Date  | null;
+cancelledBy: string  | null;
+cancelledByUserId: string  | null;
+reason: string  | null;
+refundStatus: string ;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+refundedAmountArs: Prisma.Decimal  | null;
+refundError: string  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+refundRequestedAt: Date  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+refundRequestedArs: Prisma.Decimal  | null;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+refundAttempts: number ;
+policySnapshot: Prisma.JsonValue  | null;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
 createdAt: Date ;
 @ApiProperty({
   type: `string`,
@@ -67,4 +109,6 @@ tenantId: string ;
 tenant?: TenantEntity ;
 userId: string ;
 user?: UserEntity ;
+cancelledByUser?: UserEntity  | null;
+payments?: ReservationPaymentEntity[] ;
 }

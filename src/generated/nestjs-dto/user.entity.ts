@@ -33,5 +33,6 @@ archivedLprDetectionEvents?: LprDetectionEventEntity[] ;
 mpOauthStates?: MpOauthStateEntity[] ;
 createdPaymentIntents?: PaymentIntentEntity[] ;
 reservations?: ReservationEntity[] ;
+cancelledReservations?: ReservationEntity[] ;
 driverVehicles?: DriverVehicleEntity[] ;
 }

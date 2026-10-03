@@ -2,7 +2,6 @@
 
 > API HTTP del proyecto Parkit.
 
-
 ## 1) Requisitos
 
 - Docker corriendo
@@ -124,6 +123,18 @@ make seed-tenant
 make seed-all
 ```
 
+### Estrés de concurrencia de reservas
+
+Con Supabase local y el backend corriendo (proveedor de pago `dev`), verifica
+que el lock por playa serializa las altas: 20 conductores piden la misma franja
+con `reservable_spots = 1` y tiene que haber **1** reserva creada y **19**
+`RESERVATION_NO_CAPACITY`. Usa el tenant Once, limpia lo que crea y restaura la
+config del servicio. Se niega a correr contra una base que no sea local.
+
+```bash
+bun run scripts/stress-reservations.ts   # API_URL y CONCURRENCY opcionales
+```
+
 ## 5) Cambios de schema / migraciones
 
 ### Nuevo cambio
@@ -195,7 +206,9 @@ bun test
 El equipo utiliza una versión simplificada de GitFlow para mantener la velocidad y la calidad.
 
 ### 1. Crear rama de Feature
+
 Siempre partir de la última versión de `main`.
+
 ```bash
 git switch main
 git pull origin main
@@ -203,7 +216,9 @@ git switch -c feat/descripcion-corta
 ```
 
 ### 2. Commits & Push
+
 Usar Conventional Commits (`feat:`, `fix:`, `docs:`, etc.).
+
 ```bash
 git add .
 git commit -m "feat: implementar aislamiento de tenant"
@@ -211,6 +226,7 @@ git push -u origin feat/descripcion-corta
 ```
 
 ### 3. Pull Request (PR)
+
 - El flujo de promoción es: `Feature` -> PR contra `develop` (Staging) -> PR contra `main` (Producción).
 - El PR requiere al menos 1 aprobación y CI en verde.
 - Usar **Squash & Merge** para mantener un historial limpio.
@@ -232,7 +248,6 @@ Si rompés migraciones o generación de cliente/DTOs, el PR no pasa.
 - Guía de contribución: [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Pipeline de GitHub: [.github/workflows/README.md](./.github/workflows/README.md)
 - Comandos disponibles: `make help`
-
 
 ## URLs locales
 
