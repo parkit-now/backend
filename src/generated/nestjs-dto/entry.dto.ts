@@ -78,4 +78,9 @@ vehicleModel: string  | null;
   format: `int32`,
 })
 ticketNumber: number  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+prepaidAmountArs: Prisma.Decimal  | null;
 }

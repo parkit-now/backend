@@ -1,5 +1,6 @@
 
   export class ConnectEntryDto {
-    id: string;
+    id?: string;
+reservationId?: string;
   }
   

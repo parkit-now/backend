@@ -57,6 +57,15 @@ model Entry {
   cashSessionId String? @map("cash_session_id") @db.Uuid
   ticketNumber  Int?    @map("ticket_number")
 
+  // Reserva con la que entró el auto (migración 20261006120000). La escribe el
+  // backend al crear el ingreso: por `reservationId` o por patente. A lo sumo
+  // un ingreso por reserva (UNIQUE; los NULL no chocan).
+  reservationId    String?      @unique(map: "entries_reservation_id_key") @map("reservation_id") @db.Uuid
+  reservation      Reservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull, map: "entries_reservation_id_fkey")
+  // Lo que el conductor pagó por adelantado (snapshot al vincular). La caja
+  // cobra `max(calcStayPrice(total) − prepaidAmountArs, 0)`.
+  prepaidAmountArs Decimal?     @map("prepaid_amount_ars") @db.Decimal(12, 2)
+
   whitelistId String?    @map("whitelist_id") @db.Uuid
   whitelist   Whitelist? @relation(fields: [whitelistId], references: [id], onDelete: SetNull, map: "entries_whitelist_id_fkey")
 
