@@ -1,4 +1,10 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { PaymentIntentStatus } from '@prisma/client';
 import type { PaymentIntent } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
@@ -307,9 +313,13 @@ export class MpWebhookService {
    * `external_reference` entre las de esa playa, (4) despachar al ciclo de vida
    * (idempotente: un aviso repetido o fuera de orden es inofensivo).
    *
-   * Errores: Mercado Pago caído -> 503 (que reintente); token vencido, cuenta
-   * desvinculada o cualquier otra cosa -> 200 con un warn: el barrido de
-   * reservas recupera el pago aprobado que se haya perdido.
+   * Errores: Mercado Pago caído -> 503 (que reintente). Una vez identificado
+   * como pago de una reserva, cualquier fallo INESPERADO del despacho (p. ej.
+   * la base caída en `markPaid`) también -> 503, para que Mercado Pago
+   * reintente: el ciclo de vida es idempotente. Token vencido / cuenta
+   * desvinculada, o un 4xx esperado del ciclo de vida (409 de estado, 404), y
+   * cualquier fallo ANTES de identificar la reserva -> 200 con un warn: el
+   * barrido de reservas recupera el pago aprobado que se haya perdido.
    */
   private async handlePayment(
     paymentId: string | null,
@@ -332,6 +342,7 @@ export class MpWebhookService {
     }
 
     let reservationId: string | null = null;
+    let identified = false;
     try {
       const payment = await this.gateway.getPayment({
         tenantId: tenantIds[0],
@@ -353,6 +364,7 @@ export class MpWebhookService {
         return;
       }
 
+      identified = true;
       await this.applyPayment(
         match.reservationId,
         payment,
@@ -371,6 +383,18 @@ export class MpWebhookService {
           `Could not verify Mercado Pago payment ${paymentId}. Retry later.`,
           INSTANCE,
           ErrorCodes.MP_UNAVAILABLE,
+        );
+      }
+      if (identified && isUnexpectedFailure(error, code)) {
+        this.logger.error(
+          `Unexpected failure applying Mercado Pago payment ${paymentId} (reservation ${reservationId ?? 'unknown'}, topic ${topic}): ${describeFailure(error)}. Answering 503 so Mercado Pago retries`,
+        );
+        throw new FormattedException(
+          'Service Unavailable',
+          HttpStatus.SERVICE_UNAVAILABLE,
+          `Could not apply Mercado Pago payment ${paymentId}. Retry later.`,
+          INSTANCE,
+          ErrorCodes.MP_WEBHOOK_PAYMENT_UNVERIFIED,
         );
       }
       this.logger.warn(
@@ -751,6 +775,23 @@ function describeFailure(error: unknown): string {
     return `HTTP ${error.getStatus()}`;
   }
   return error instanceof Error ? error.name : 'unknown error';
+}
+
+/**
+ * ¿Es un fallo que justifica pedir reintento? Los errores de token de la cuenta
+ * y los 4xx esperados del ciclo de vida (409 de estado, 404) NO: reintentar
+ * daría lo mismo. Todo lo demás (base caída, bug, 5xx) sí.
+ */
+function isUnexpectedFailure(error: unknown, code: string | null): boolean {
+  if (
+    code === ErrorCodes.MP_ACCOUNT_TOKEN_EXPIRED ||
+    code === ErrorCodes.MP_ACCOUNT_REVOKED ||
+    code === ErrorCodes.MP_NOT_LINKED
+  ) {
+    return false;
+  }
+  if (error instanceof HttpException) return error.getStatus() >= 500;
+  return true;
 }
 
 /** El `code` estable de un `FormattedException`, o `null`. */

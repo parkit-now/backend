@@ -321,6 +321,9 @@ export const ErrorCodes = {
   // 401 de firma invalida", y porque un 200 sin haber leido el estado real
   // seria dar por procesado un pago que nadie verifico.
   MP_WEBHOOK_ORDER_UNVERIFIED: 'MP_WEBHOOK_ORDER_UNVERIFIED',
+  // Idem para un pago de reserva identificado cuyo despacho al ciclo de vida
+  // fallo de forma inesperada (503): Mercado Pago tiene que reintentar.
+  MP_WEBHOOK_PAYMENT_UNVERIFIED: 'MP_WEBHOOK_PAYMENT_UNVERIFIED',
 
   // Facturacion electronica (ARCA)
   // La playa no tiene ARCA vinculada (o la integracion esta apagada en este

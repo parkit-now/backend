@@ -516,6 +516,58 @@ describe('MpWebhookService: pagos de reservas', () => {
     expect(lifecycle.markPaid).not.toHaveBeenCalled();
   });
 
+  it('fallo inesperado del ciclo de vida (p. ej. la base): 503 para que reintente', async () => {
+    lifecycle.markPaid.mockRejectedValue(new Error('db down'));
+    expect(await statusOf(service.handle(paymentNotification()))).toBe(
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+
+    gateway.getPayment.mockResolvedValue(
+      payment({ status: 'rejected', statusDetail: 'cc_rejected_other' }),
+    );
+    lifecycle.markPaymentRejected.mockRejectedValue(new Error('db down'));
+    expect(await statusOf(service.handle(paymentNotification()))).toBe(
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+
+    gateway.getPayment.mockResolvedValue(payment({ status: 'refunded' }));
+    lifecycle.confirmRefund.mockRejectedValue(new Error('db down'));
+    expect(await statusOf(service.handle(paymentNotification()))).toBe(
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  });
+
+  it('un 5xx del ciclo de vida también pide reintento', async () => {
+    lifecycle.markPaid.mockRejectedValue(failWith('X', 500));
+    expect(await statusOf(service.handle(paymentNotification()))).toBe(
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  });
+
+  it('4xx esperado del ciclo de vida (409 de estado, 404): 200 sin reintento', async () => {
+    lifecycle.markPaid.mockRejectedValue(failWith('RESERVATION_CONFLICT', 409));
+    await service.handle(paymentNotification());
+
+    lifecycle.markPaid.mockRejectedValue(
+      failWith(ErrorCodes.RESERVATION_NOT_FOUND, 404),
+    );
+    await service.handle(paymentNotification());
+    expect(lifecycle.markPaid).toHaveBeenCalledTimes(2);
+  });
+
+  it('error de token al aplicar (cuenta desvinculada): 200', async () => {
+    lifecycle.markPaid.mockRejectedValue(
+      failWith(ErrorCodes.MP_ACCOUNT_REVOKED, 409),
+    );
+    await service.handle(paymentNotification());
+  });
+
+  it('fallo inesperado ANTES de identificar la reserva: 200', async () => {
+    gateway.getPayment.mockRejectedValue(new Error('boom'));
+    await service.handle(paymentNotification());
+    expect(lifecycle.markPaid).not.toHaveBeenCalled();
+  });
+
   describe('con la firma REAL', () => {
     const SECRET = 'secreto-de-prueba-del-webhook';
     const sign = (dataId: string, requestId: string, ts: string) =>
