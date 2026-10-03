@@ -115,9 +115,40 @@ export const ErrorCodes = {
   SCHEDULE_INVALID_RANGE: 'SCHEDULE_INVALID_RANGE',
   SCHEDULE_OVERLAP: 'SCHEDULE_OVERLAP',
 
+  // Driver API (app del conductor)
+  // La playa no existe, no está activa o no tiene ubicación publicada: para el
+  // conductor es lo mismo, no se distingue.
+  DRIVER_PARKING_NOT_FOUND: 'DRIVER_PARKING_NOT_FOUND',
+  // La playa no toma reservas: el servicio está apagado o le falta la tarifa
+  // o el cupo de reservas (ver services.reservation_rate_id/reservable_spots).
+  DRIVER_RESERVATIONS_DISABLED: 'DRIVER_RESERVATIONS_DISABLED',
+  // Ventana de la reserva (ingreso/egreso).
+  RESERVATION_EXIT_NOT_AFTER_ENTRY: 'RESERVATION_EXIT_NOT_AFTER_ENTRY',
+  RESERVATION_ENTRY_IN_PAST: 'RESERVATION_ENTRY_IN_PAST',
+  RESERVATION_ENTRY_TOO_FAR: 'RESERVATION_ENTRY_TOO_FAR',
+  RESERVATION_STAY_TOO_LONG: 'RESERVATION_STAY_TOO_LONG',
+  // La playa cierra en algún momento entre el ingreso y el egreso.
+  RESERVATION_OUTSIDE_OPENING_HOURS: 'RESERVATION_OUTSIDE_OPENING_HOURS',
+  // No queda cupo en la ventana pedida (SCRUM-261).
+  RESERVATION_NO_CAPACITY: 'RESERVATION_NO_CAPACITY',
+  // La reserva no existe o es de otro conductor (mismo code para ambos).
+  RESERVATION_NOT_FOUND: 'RESERVATION_NOT_FOUND',
+  // Ya empezó o ya estaba cancelada.
+  RESERVATION_NOT_CANCELLABLE: 'RESERVATION_NOT_CANCELLABLE',
+  // El id (clave de idempotencia) ya lo usó otra reserva distinta.
+  RESERVATION_ID_CONFLICT: 'RESERVATION_ID_CONFLICT',
+
   // Services (amenities)
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',
   SERVICE_INVALID_CODE: 'SERVICE_INVALID_CODE',
+  // Tarifa y cupo de reservas sólo se configuran en ADVANCE_RESERVATION.
+  SERVICE_CONFIG_NOT_SUPPORTED: 'SERVICE_CONFIG_NOT_SUPPORTED',
+  // La tarifa elegida para las reservas no existe en la playa, está borrada o
+  // inactiva.
+  SERVICE_RESERVATION_RATE_NOT_FOUND: 'SERVICE_RESERVATION_RATE_NOT_FOUND',
+  // El cupo de reservas supera la capacidad declarada de la playa.
+  SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY:
+    'SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY',
 
   // Mercado Pago (integracion de cobros)
   // El webhook llego pero MP_WEBHOOK_SECRET no esta cargada: no podemos

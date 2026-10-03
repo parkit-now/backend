@@ -30,4 +30,9 @@ createdAt: Date ;
   format: `date-time`,
 })
 updatedAt: Date ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+reservableSpots: number  | null;
 }

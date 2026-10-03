@@ -17,6 +17,15 @@ model Service {
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  // Configuración de ADVANCE_RESERVATION (migración 20261002230000, SCRUM-214):
+  // la tarifa con la que se cobran las reservas, sin distinción de vehículo, y
+  // cuántas plazas se pueden reservar a la vez. NULL = sin configurar; un CHECK
+  // las prohíbe en otros códigos. FK COMPUESTA como en Vehicle; el ON DELETE
+  // SET NULL (reservation_rate_id) vive sólo en el SQL.
+  reservationRateId String? @map("reservation_rate_id") @db.Uuid
+  reservationRate   Rate?   @relation(fields: [tenantId, reservationRateId], references: [tenantId, id], map: "services_tenant_reservation_rate_fkey")
+  reservableSpots   Int?    @map("reservable_spots")
+
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])
 

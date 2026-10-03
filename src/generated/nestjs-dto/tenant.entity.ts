@@ -18,6 +18,7 @@ import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {MpAccountEntity} from './mp-account.entity'
 import {MpOauthStateEntity} from './mp-oauth-state.entity'
 import {PaymentIntentEntity} from './payment-intent.entity'
+import {ReservationEntity} from './reservation.entity'
 import {ArcaAccountEntity} from './arca-account.entity'
 import {ArcaRequestEntity} from './arca-request.entity'
 import {InvoiceReceiverEntity} from './invoice-receiver.entity'
@@ -111,6 +112,7 @@ lprDetectionEvents?: LprDetectionEventEntity[] ;
 mpAccount?: MpAccountEntity  | null;
 mpOauthStates?: MpOauthStateEntity[] ;
 paymentIntents?: PaymentIntentEntity[] ;
+reservations?: ReservationEntity[] ;
 arcaAccount?: ArcaAccountEntity  | null;
 arcaRequests?: ArcaRequestEntity[] ;
 invoiceReceivers?: InvoiceReceiverEntity[] ;

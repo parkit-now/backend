@@ -94,7 +94,91 @@ describe('OnboardingService', () => {
     service = module.get<OnboardingService>(OnboardingService);
   });
 
+  const mon = (openMinute: number, closeMinute: number) => ({
+    day: 'monday' as const,
+    openMinute,
+    closeMinute,
+  });
+
   describe('create', () => {
+    it('acepta una solicitud SIN razón social ni CUIT', async () => {
+      const { legalName: _l, cuit: _c, ...sinFiscales } = validEntity;
+      void _l;
+      void _c;
+      mockPrisma.onboardingApplication.create.mockResolvedValue({
+        id: 'app-1',
+        status: 'draft',
+        declaredEntity: sinFiscales,
+        tenantId: null,
+        submittedAt: null,
+        reviewedAt: null,
+        rejectionReason: null,
+        createdAt: new Date('2026-05-01T00:00:00.000Z'),
+      });
+
+      const dto = await service.create(driver, sinFiscales);
+
+      expect(dto.status).toBe('draft');
+      const createArg = mockPrisma.onboardingApplication.create.mock
+        .calls[0][0] as { data: { declaredEntity: Record<string, unknown> } };
+      expect('legalName' in createArg.data.declaredEntity).toBe(false);
+      expect('cuit' in createArg.data.declaredEntity).toBe(false);
+    });
+
+    it('guarda los horarios declarados válidos (franjas contiguas OK)', async () => {
+      const schedules = [mon(480, 720), mon(720, 1200)];
+      mockPrisma.onboardingApplication.create.mockResolvedValue({
+        id: 'app-1',
+        status: 'draft',
+        declaredEntity: { ...validEntity, schedules },
+        tenantId: null,
+        submittedAt: null,
+        reviewedAt: null,
+        rejectionReason: null,
+        createdAt: new Date('2026-05-01T00:00:00.000Z'),
+      });
+
+      await service.create(driver, { ...validEntity, schedules });
+
+      const createArg = mockPrisma.onboardingApplication.create.mock
+        .calls[0][0] as { data: { declaredEntity: Record<string, unknown> } };
+      expect(createArg.data.declaredEntity.schedules).toEqual(schedules);
+    });
+
+    it('responde 422 si un horario tiene open >= close', async () => {
+      const error = await service
+        .create(driver, { ...validEntity, schedules: [mon(600, 600)] })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(FormattedExceptionWithValidation);
+      expect(problem(error).status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_NOT_SUBMITTABLE);
+      expect(problem(error).validationsErrors).toEqual([
+        expect.objectContaining({
+          field: 'declaredEntity.schedules.0',
+          code: 'SCHEDULE_INVALID_RANGE',
+        }),
+      ]);
+      expect(mockPrisma.onboardingApplication.create).not.toHaveBeenCalled();
+    });
+
+    it('responde 422 si dos horarios se solapan el mismo día', async () => {
+      const error = await service
+        .create(driver, {
+          ...validEntity,
+          schedules: [mon(480, 720), mon(600, 900)],
+        })
+        .catch((e: unknown) => e);
+
+      expect(problem(error).status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(problem(error).validationsErrors).toEqual([
+        expect.objectContaining({
+          field: 'declaredEntity.schedules.1',
+          code: 'SCHEDULE_OVERLAP',
+        }),
+      ]);
+    });
+
     it('creates a draft application for the current user + audit', async () => {
       mockPrisma.onboardingApplication.create.mockResolvedValue({
         id: 'app-1',
@@ -149,6 +233,32 @@ describe('OnboardingService', () => {
       expect(updateArg.data.declaredEntity.name).toBe('New Name');
       // Untouched fields are preserved.
       expect(updateArg.data.declaredEntity.cuit).toBe('30123456789');
+    });
+
+    it('un PATCH con horarios solapados responde 422 y no guarda', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(ownedApp());
+
+      const error = await service
+        .update(driver, 'app-1', { schedules: [mon(480, 720), mon(700, 900)] })
+        .catch((e: unknown) => e);
+
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_NOT_SUBMITTABLE);
+      expect(mockPrisma.onboardingApplication.update).not.toHaveBeenCalled();
+    });
+
+    it('un PATCH con `schedules` REEMPLAZA la lista entera', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: { ...validEntity, schedules: [mon(480, 720)] },
+        }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(ownedApp());
+
+      await service.update(driver, 'app-1', { schedules: [mon(600, 900)] });
+
+      const updateArg = mockPrisma.onboardingApplication.update.mock
+        .calls[0][0] as { data: { declaredEntity: Record<string, unknown> } };
+      expect(updateArg.data.declaredEntity.schedules).toEqual([mon(600, 900)]);
     });
 
     it('un PATCH sin `totalSpots` NO borra el que ya tenía el borrador', async () => {
@@ -225,6 +335,48 @@ describe('OnboardingService', () => {
       expect(updateArg.data.status).toBe('pending_review');
       expect(updateArg.data.submittedAt).toBeInstanceOf(Date);
       expect(mockAudit.record).toHaveBeenCalled();
+    });
+
+    it('envía a revisión con horarios válidos y sin datos fiscales', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: {
+            name: 'Centro',
+            location: georefLocation,
+            schedules: [mon(480, 720), mon(720, 1200)],
+          },
+        }),
+      );
+      mockPrisma.onboardingApplication.update.mockResolvedValue(
+        ownedApp({ status: 'pending_review', submittedAt: new Date() }),
+      );
+
+      await service.submit(driver, 'app-1');
+
+      expect(mockPrisma.onboardingApplication.update).toHaveBeenCalled();
+    });
+
+    it('rechaza enviar un borrador con horarios solapados (422)', async () => {
+      mockPrisma.onboardingApplication.findUnique.mockResolvedValue(
+        ownedApp({
+          declaredEntity: {
+            name: 'Centro',
+            location: georefLocation,
+            schedules: [mon(480, 720), mon(600, 900)],
+          },
+        }),
+      );
+
+      const error = await service
+        .submit(driver, 'app-1')
+        .catch((e: unknown) => e);
+
+      expect(problem(error).status).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(problem(error).code).toBe(ErrorCodes.ONBOARDING_NOT_SUBMITTABLE);
+      expect(problem(error).validationsErrors?.[0].field).toBe(
+        'declaredEntity.schedules.1',
+      );
+      expect(mockPrisma.onboardingApplication.update).not.toHaveBeenCalled();
     });
 
     it('rejects submitting an already approved application', async () => {

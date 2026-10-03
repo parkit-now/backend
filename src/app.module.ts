@@ -16,6 +16,7 @@ import { ParkingsModule } from './admin/parkings/parkings.module';
 import { AdminUsersModule } from './admin/users/admin-users.module';
 import { EntitiesModule } from './entities/entities.module';
 import { RatesModule } from './rates/rates.module';
+import { DriverModule } from './driver/driver.module';
 import { SchedulesModule } from './schedules/schedules.module';
 import { ServicesModule } from './services/services.module';
 import { CashSessionsModule } from './cash-sessions/cash-sessions.module';
@@ -46,6 +47,7 @@ import { StaffModule } from './staff/staff.module';
     EntitiesModule,
     RatesModule,
     SchedulesModule,
+    DriverModule,
     ServicesModule,
     CashSessionsModule,
     PaymentTransactionsModule,

@@ -1,0 +1,35 @@
+// Reserva de un conductor en una playa (migración 20261002231000).
+//
+// El `id` lo manda el cliente: es la clave de idempotencia del POST. Patente,
+// tarifa y total son SNAPSHOTS (registro histórico).
+// "Completada" y "no-show" se derivan de la hora; sólo se guardan confirmed /
+// cancelled. Backend-only: RLS sin policies.
+
+enum ReservationStatus {
+  confirmed
+  cancelled
+
+  @@map("reservation_status")
+}
+
+model Reservation {
+  id                       String            @id @db.Uuid
+  vehiclePlate             String            @map("vehicle_plate") @db.VarChar(10)
+  entryAt                  DateTime          @map("entry_at") @db.Timestamptz(6)
+  exitAt                   DateTime          @map("exit_at") @db.Timestamptz(6)
+  totalArs                 Decimal           @map("total_ars") @db.Decimal(12, 2)
+  rateSnapshotName         String            @map("rate_snapshot_name") @db.VarChar(120)
+  rateSnapshotHourPriceArs Decimal           @map("rate_snapshot_hour_price_ars") @db.Decimal(12, 2)
+  status                   ReservationStatus @default(confirmed)
+  cancelledAt              DateTime?         @map("cancelled_at") @db.Timestamptz(6)
+  createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String @map("user_id") @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, entryAt(sort: Desc)], map: "reservations_user_entry_idx")
+  @@map("reservations")
+}
