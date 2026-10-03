@@ -1,0 +1,275 @@
+import { HttpStatus } from '@nestjs/common';
+import { Prisma, type User } from '@prisma/client';
+import { PrismaService } from '../database/prisma.service';
+import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import { DriverVehiclesService } from './driver-vehicles.service';
+import { DriverVehicleKind } from './dto/driver-vehicle.dto';
+
+const NOW = new Date('2026-10-03T12:00:00-03:00');
+const USER = { id: 'user-1' } as User;
+const VEHICLE_ID = '0192f0a0-0000-4000-8000-0000000000a1';
+
+const client = {
+  driverVehicle: {
+    findMany: jest.fn(),
+    findFirst: jest.fn(),
+    findUnique: jest.fn(),
+    count: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
+    delete: jest.fn(),
+  },
+  reservation: { findMany: jest.fn() },
+};
+
+// La transacción corre el callback con el mismo doble: lo que importa es QUÉ
+// se escribe, no que Prisma sepa abrir una transacción.
+const prisma = {
+  ...client,
+  $transaction: jest.fn((fn: (tx: typeof client) => unknown) => fn(client)),
+};
+
+const service = new DriverVehiclesService(prisma as unknown as PrismaService);
+
+const vehicle = (overrides: object = {}) => ({
+  id: VEHICLE_ID,
+  userId: USER.id,
+  plate: 'AB123CD',
+  kind: 'car',
+  brand: 'Toyota',
+  model: 'Etios',
+  isPrimary: true,
+  createdAt: new Date('2026-10-01T10:00:00Z'),
+  updatedAt: new Date('2026-10-01T10:00:00Z'),
+  ...overrides,
+});
+
+async function expectFailure(
+  promise: Promise<unknown>,
+  status: HttpStatus,
+  code: string,
+) {
+  // eslint-disable-next-line @typescript-eslint/await-thenable
+  await expect(promise).rejects.toBeInstanceOf(FormattedException);
+  // eslint-disable-next-line @typescript-eslint/await-thenable
+  await expect(promise).rejects.toMatchObject({
+    status,
+    response: expect.objectContaining({ code }) as unknown,
+  });
+}
+
+describe('DriverVehiclesService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    client.reservation.findMany.mockResolvedValue([]);
+    client.driverVehicle.findFirst.mockResolvedValue(vehicle());
+  });
+
+  describe('list', () => {
+    it('lista los del conductor, el principal primero, y marca los que tienen reserva activa', async () => {
+      client.driverVehicle.findMany.mockResolvedValue([
+        vehicle(),
+        vehicle({
+          id: 'v-2',
+          plate: 'A123BCD',
+          kind: 'motorcycle',
+          isPrimary: false,
+        }),
+      ]);
+      client.reservation.findMany.mockResolvedValue([
+        { vehiclePlate: 'A123BCD' },
+      ]);
+
+      const result = await service.list(USER, NOW);
+
+      expect(client.driverVehicle.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: USER.id },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+        }),
+      );
+      expect(client.reservation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: USER.id, status: 'confirmed', exitAt: { gt: NOW } },
+        }),
+      );
+      expect(result.map((v) => [v.plate, v.hasActiveReservation])).toEqual([
+        ['AB123CD', false],
+        ['A123BCD', true],
+      ]);
+    });
+  });
+
+  describe('create', () => {
+    const dto = { plate: 'AB123CD', kind: DriverVehicleKind.car };
+
+    it('el primer vehículo es principal aunque no se pida', async () => {
+      client.driverVehicle.count.mockResolvedValue(0);
+      client.driverVehicle.create.mockResolvedValue(vehicle());
+
+      await service.create(USER, dto, NOW);
+
+      expect(client.driverVehicle.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER.id, isPrimary: true },
+        data: { isPrimary: false },
+      });
+      expect(client.driverVehicle.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: USER.id,
+          plate: 'AB123CD',
+          isPrimary: true,
+          brand: null,
+          model: null,
+        }) as unknown,
+      });
+    });
+
+    it('uno más no cambia el principal salvo que se pida', async () => {
+      client.driverVehicle.count.mockResolvedValue(1);
+      client.driverVehicle.create.mockResolvedValue(
+        vehicle({ isPrimary: false }),
+      );
+
+      await service.create(USER, dto, NOW);
+
+      expect(client.driverVehicle.updateMany).not.toHaveBeenCalled();
+      expect(client.driverVehicle.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ isPrimary: false }) as unknown,
+      });
+    });
+
+    it('rechaza una patente repetida del mismo conductor', async () => {
+      client.driverVehicle.count.mockResolvedValue(1);
+      client.driverVehicle.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+      await expectFailure(
+        service.create(USER, dto, NOW),
+        HttpStatus.CONFLICT,
+        'DRIVER_VEHICLE_PLATE_TAKEN',
+      );
+    });
+  });
+
+  describe('update', () => {
+    it('edita marca y modelo aunque tenga una reserva activa', async () => {
+      client.reservation.findMany.mockResolvedValue([
+        { vehiclePlate: 'AB123CD' },
+      ]);
+      client.driverVehicle.update.mockResolvedValue(
+        vehicle({ model: 'Yaris' }),
+      );
+
+      const result = await service.update(
+        USER,
+        VEHICLE_ID,
+        { model: 'Yaris' },
+        NOW,
+      );
+
+      expect(result.model).toBe('Yaris');
+      expect(client.driverVehicle.update).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+        data: { model: 'Yaris' },
+      });
+    });
+
+    it('no cambia patente ni categoría con una reserva activa', async () => {
+      client.reservation.findMany.mockResolvedValue([
+        { vehiclePlate: 'AB123CD' },
+      ]);
+      await expectFailure(
+        service.update(USER, VEHICLE_ID, { plate: 'AC456DE' }, NOW),
+        HttpStatus.CONFLICT,
+        'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
+      );
+      await expectFailure(
+        service.update(
+          USER,
+          VEHICLE_ID,
+          { kind: DriverVehicleKind.suvPickup },
+          NOW,
+        ),
+        HttpStatus.CONFLICT,
+        'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
+      );
+      expect(client.driverVehicle.update).not.toHaveBeenCalled();
+    });
+
+    it('marcar como principal desmarca al anterior; desmarcar no se acepta', async () => {
+      client.driverVehicle.findFirst.mockResolvedValue(
+        vehicle({ isPrimary: false }),
+      );
+      client.driverVehicle.update.mockResolvedValue(vehicle());
+
+      await service.update(USER, VEHICLE_ID, { isPrimary: true }, NOW);
+      expect(client.driverVehicle.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER.id, isPrimary: true },
+        data: { isPrimary: false },
+      });
+
+      await expectFailure(
+        service.update(USER, VEHICLE_ID, { isPrimary: false }, NOW),
+        HttpStatus.BAD_REQUEST,
+        'DRIVER_VEHICLE_PRIMARY_REQUIRED',
+      );
+    });
+
+    it('404 si el vehículo no es del conductor', async () => {
+      client.driverVehicle.findFirst.mockResolvedValue(null);
+      await expectFailure(
+        service.update(USER, VEHICLE_ID, { model: 'X' }, NOW),
+        HttpStatus.NOT_FOUND,
+        'DRIVER_VEHICLE_NOT_FOUND',
+      );
+      expect(client.driverVehicle.findFirst).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID, userId: USER.id },
+      });
+    });
+  });
+
+  describe('remove', () => {
+    it('al borrar el principal promueve al más antiguo', async () => {
+      client.driverVehicle.findFirst
+        .mockResolvedValueOnce(vehicle())
+        .mockResolvedValueOnce(vehicle({ id: 'v-2', isPrimary: false }));
+
+      await service.remove(USER, VEHICLE_ID, NOW);
+
+      expect(client.driverVehicle.delete).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+      });
+      expect(client.driverVehicle.update).toHaveBeenCalledWith({
+        where: { id: 'v-2' },
+        data: { isPrimary: true },
+      });
+    });
+
+    it('no borra un vehículo con reserva activa', async () => {
+      client.reservation.findMany.mockResolvedValue([
+        { vehiclePlate: 'AB123CD' },
+      ]);
+      await expectFailure(
+        service.remove(USER, VEHICLE_ID, NOW),
+        HttpStatus.CONFLICT,
+        'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
+      );
+      expect(client.driverVehicle.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  it('ownsPlate busca por conductor y patente', async () => {
+    client.driverVehicle.findUnique.mockResolvedValue({ id: VEHICLE_ID });
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(service.ownsPlate(USER, 'AB123CD')).resolves.toBe(true);
+    expect(client.driverVehicle.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_plate: { userId: USER.id, plate: 'AB123CD' } },
+      }),
+    );
+  });
+});

@@ -8,6 +8,7 @@ import {
   peakConcurrentReservations,
   reservationState,
 } from './driver-rules';
+import { DriverVehiclesService } from './driver-vehicles.service';
 import { DriverService } from './driver.service';
 import {
   CreateReservationDto,
@@ -42,6 +43,7 @@ export class DriverReservationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly driverService: DriverService,
+    private readonly driverVehicles: DriverVehiclesService,
   ) {}
 
   async create(
@@ -52,6 +54,18 @@ export class DriverReservationsService {
     // Idempotencia: el mismo id devuelve la misma reserva.
     const existing = await this.findWithParking(dto.id);
     if (existing) return this.replay(existing, user, dto, now);
+
+    // La patente tiene que ser de un vehículo del conductor (SCRUM-285): es
+    // la que la playa va a usar para reconocer la reserva en el ingreso.
+    if (!(await this.driverVehicles.ownsPlate(user, dto.vehiclePlate))) {
+      throw new FormattedException(
+        'Unprocessable Entity',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'The plate is not one of your vehicles.',
+        RESERVATIONS_PATH,
+        ErrorCodes.RESERVATION_VEHICLE_NOT_FOUND,
+      );
+    }
 
     // Recotiza en el servidor: valida ventana, horario, reservas habilitadas
     // y tarifa de reservas. Nunca se confía en el total que calculó el cliente.

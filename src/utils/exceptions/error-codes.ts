@@ -137,6 +137,17 @@ export const ErrorCodes = {
   RESERVATION_NOT_CANCELLABLE: 'RESERVATION_NOT_CANCELLABLE',
   // El id (clave de idempotencia) ya lo usó otra reserva distinta.
   RESERVATION_ID_CONFLICT: 'RESERVATION_ID_CONFLICT',
+  // La patente de la reserva no es de ningún vehículo del conductor.
+  RESERVATION_VEHICLE_NOT_FOUND: 'RESERVATION_VEHICLE_NOT_FOUND',
+  // Vehículos del conductor.
+  DRIVER_VEHICLE_NOT_FOUND: 'DRIVER_VEHICLE_NOT_FOUND',
+  // El conductor ya tiene otro vehículo con esa patente.
+  DRIVER_VEHICLE_PLATE_TAKEN: 'DRIVER_VEHICLE_PLATE_TAKEN',
+  // Con una reserva activa no se borra ni se cambia patente o categoría.
+  DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION:
+    'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
+  // El principal se cambia marcando otro; no se puede desmarcar.
+  DRIVER_VEHICLE_PRIMARY_REQUIRED: 'DRIVER_VEHICLE_PRIMARY_REQUIRED',
 
   // Services (amenities)
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',

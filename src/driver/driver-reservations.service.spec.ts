@@ -3,6 +3,7 @@ import { Prisma, ReservationStatus, type User } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { DriverReservationsService } from './driver-reservations.service';
+import { DriverVehiclesService } from './driver-vehicles.service';
 import { DriverService } from './driver.service';
 import { DriverReservationStateDto } from './dto/reservation.dto';
 
@@ -27,10 +28,12 @@ const prisma = {
 };
 
 const driverService = { quoteForReservation: jest.fn() };
+const driverVehicles = { ownsPlate: jest.fn() };
 
 const service = new DriverReservationsService(
   prisma as unknown as PrismaService,
   driverService as unknown as DriverService,
+  driverVehicles as unknown as DriverVehiclesService,
 );
 
 const input = {
@@ -100,6 +103,7 @@ describe('DriverReservationsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.reservation.findUnique.mockResolvedValue(null);
+    driverVehicles.ownsPlate.mockResolvedValue(true);
     driverService.quoteForReservation.mockResolvedValue(
       quoted(input.entryAt, input.exitAt),
     );
@@ -169,6 +173,17 @@ describe('DriverReservationsService', () => {
       );
       await service.create(USER, input, NOW);
       expect(tx.reservation.create).toHaveBeenCalled();
+    });
+
+    it('rechaza una patente que no es de un vehículo del conductor', async () => {
+      driverVehicles.ownsPlate.mockResolvedValue(false);
+      await expectFailure(
+        service.create(USER, input, NOW),
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'RESERVATION_VEHICLE_NOT_FOUND',
+      );
+      expect(driverVehicles.ownsPlate).toHaveBeenCalledWith(USER, 'AB123CD');
+      expect(driverService.quoteForReservation).not.toHaveBeenCalled();
     });
 
     it('es idempotente: el mismo id devuelve la reserva existente', async () => {

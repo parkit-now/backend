@@ -44,6 +44,8 @@ model User {
   createdPaymentIntents      PaymentIntent[]
   // Reservas que hizo como conductor (tenant/reservations.prisma).
   reservations               Reservation[]
+  // Vehículos que cargó como conductor (global/driver-vehicles.prisma).
+  driverVehicles             DriverVehicle[]
 
   @@map("users")
 }
