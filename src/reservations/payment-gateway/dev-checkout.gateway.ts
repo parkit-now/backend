@@ -26,7 +26,9 @@ export function devPaymentId(failRefund: boolean): string {
  * útil). El `checkoutUrl` apunta a una página de la propia API
  * (`GET /dev/checkout/:reservationId`) con los botones Aprobar / Rechazar. El
  * reembolso se confirma al instante, salvo que el id del pago empiece con
- * `devfail_`: ahí tira, para probar la alerta de reembolso fallido.
+ * `devfail_`: ahí el PRIMER intento tira (para probar la alerta de reembolso
+ * fallido) y el reintento (`refund/retry`) se confirma, para poder probar la
+ * recuperación.
  *
  * NUNCA se registra en producción (ver `reservation-payment.provider.ts`).
  */
@@ -41,7 +43,10 @@ export class DevCheckoutGateway implements ReservationPaymentGateway {
   }
 
   refund(input: RefundInput): Promise<RefundResult> {
-    if (input.providerPaymentId.startsWith(DEV_FAILING_PAYMENT_PREFIX)) {
+    if (
+      input.providerPaymentId.startsWith(DEV_FAILING_PAYMENT_PREFIX) &&
+      isFirstAttempt(input.idempotencyKey)
+    ) {
       return Promise.reject(
         new Error('Dev checkout: reembolso forzado a fallar (devfail_).'),
       );
@@ -66,6 +71,11 @@ export class DevCheckoutGateway implements ReservationPaymentGateway {
       amountArs: 0,
     });
   }
+}
+
+/** La `idempotencyKey` es `refund:<reservationId>:<n>`: el intento es `n`. */
+function isFirstAttempt(idempotencyKey: string): boolean {
+  return Number(idempotencyKey.split(':').pop()) <= 1;
 }
 
 function defaultBaseUrl(): string {

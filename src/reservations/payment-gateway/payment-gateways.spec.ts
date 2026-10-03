@@ -41,7 +41,7 @@ describe('DevCheckoutGateway', () => {
     ).toEqual({ status: 'refunded', amountArs: 4500 });
   });
 
-  it('el reembolso de un pago devfail_ tira', async () => {
+  it('el reembolso de un pago devfail_ tira solo en el primer intento', async () => {
     const paymentId = devPaymentId(true);
     expect(paymentId.startsWith('devfail_')).toBe(true);
     await expect(
@@ -52,6 +52,15 @@ describe('DevCheckoutGateway', () => {
         idempotencyKey: 'refund:x:1',
       }),
     ).rejects.toThrow('devfail_');
+    // El reintento (refund:<id>:2) se recupera.
+    expect(
+      await gateway.refund({
+        tenantId: TENANT,
+        providerPaymentId: paymentId,
+        amountArs: 4500,
+        idempotencyKey: 'refund:x:2',
+      }),
+    ).toEqual({ status: 'refunded', amountArs: 4500 });
   });
 
   it('los ids de pago de dev llevan el prefijo dev_', () => {
