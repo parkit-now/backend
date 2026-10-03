@@ -2,7 +2,8 @@ import { HttpStatus, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
-import { MpApiClient } from './mp-api.client';
+import * as fx from './__fixtures__/checkout-pro.fixtures';
+import { MpApiClient, type MpPreferenceBody } from './mp-api.client';
 import { MpConfigService } from './mp-config.service';
 
 /** Un access token con la pinta real de los de Mercado Pago. */
@@ -458,6 +459,250 @@ describe('MpApiClient', () => {
     expect(await problemOf(createOrder())).toMatchObject({
       status: HttpStatus.BAD_GATEWAY,
       code: ErrorCodes.MP_ORDER_CREATE_FAILED,
+    });
+  });
+
+  describe('Checkout Pro', () => {
+    const urlAndInit = () =>
+      fetchMock.mock.calls[0] as [
+        string,
+        { method: string; headers: Record<string, string> },
+      ];
+
+    const preferenceBody: MpPreferenceBody = {
+      items: [
+        {
+          title: 'Reserva Playa Centro · 10/10 09:00–11:00',
+          quantity: 1,
+          unit_price: 1500,
+          currency_id: 'ARS',
+        },
+      ],
+      external_reference: fx.RESERVATION_ID,
+      notification_url:
+        'https://api.parkit.test/integrations/mercadopago/webhook',
+      binary_mode: true,
+      payment_methods: { excluded_payment_types: [{ id: 'ticket' }] },
+      expires: true,
+      expiration_date_from: '2026-10-10T08:00:00.000-03:00',
+      expiration_date_to: '2026-10-10T08:15:00.000-03:00',
+      back_urls: {
+        success: 'https://api.parkit.test/payments/mp/return?result=success',
+        failure: 'https://api.parkit.test/payments/mp/return?result=failure',
+        pending: 'https://api.parkit.test/payments/mp/return?result=pending',
+      },
+      auto_return: 'approved',
+      marketplace_fee: 0,
+    };
+
+    it('createPreference: POST /checkout/preferences con Bearer, key y body tal cual', async () => {
+      fetchMock.mockResolvedValue(respond(201, fx.preferenceCreated));
+
+      const preference = await client.createPreference(
+        TOKEN,
+        preferenceBody,
+        'key-1',
+      );
+
+      const [url, init] = urlAndInit();
+      expect(url).toBe('https://api.mercadopago.com/checkout/preferences');
+      expect(init.method).toBe('POST');
+      expect(init.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+      expect(init.headers['X-Idempotency-Key']).toBe('key-1');
+      expect(bodyOf()).toEqual(
+        preferenceBody as unknown as Record<string, unknown>,
+      );
+      expect(preference).toEqual({
+        id: fx.preferenceCreated.id,
+        initPoint: fx.preferenceCreated.init_point,
+      });
+    });
+
+    it('createPreference: un 400 da 502 MP_PREFERENCE_CREATE_FAILED', async () => {
+      fetchMock.mockResolvedValue(respond(400, { message: 'invalid items' }));
+
+      expect(
+        await problemOf(client.createPreference(TOKEN, preferenceBody, 'k')),
+      ).toMatchObject({
+        status: HttpStatus.BAD_GATEWAY,
+        code: ErrorCodes.MP_PREFERENCE_CREATE_FAILED,
+      });
+    });
+
+    it('createPreference: 2xx sin init_point es MP_MALFORMED_RESPONSE', async () => {
+      fetchMock.mockResolvedValue(respond(201, { id: 'PREF' }));
+
+      expect(
+        await problemOf(client.createPreference(TOKEN, preferenceBody, 'k')),
+      ).toMatchObject({ code: ErrorCodes.MP_MALFORMED_RESPONSE });
+    });
+
+    it('createPreference: un 503 de MP da MP_UNAVAILABLE', async () => {
+      fetchMock.mockResolvedValue(respond(503, { message: 'down' }));
+
+      expect(
+        await problemOf(client.createPreference(TOKEN, preferenceBody, 'k')),
+      ).toMatchObject({
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        code: ErrorCodes.MP_UNAVAILABLE,
+      });
+    });
+
+    it('getPayment: GET /v1/payments/{id}, sin key, y parsea los campos', async () => {
+      fetchMock.mockResolvedValue(respond(200, fx.paymentPartiallyRefunded));
+
+      const payment = await client.getPayment(TOKEN, '1234567890');
+
+      const [url, init] = urlAndInit();
+      expect(url).toBe('https://api.mercadopago.com/v1/payments/1234567890');
+      expect(init.method).toBe('GET');
+      expect(init.headers.Authorization).toBe(`Bearer ${TOKEN}`);
+      expect(init.headers['X-Idempotency-Key']).toBeUndefined();
+      expect(payment).toEqual({
+        id: '1234567890',
+        status: 'approved',
+        statusDetail: 'partially_refunded',
+        externalReference: fx.RESERVATION_ID,
+        transactionAmount: 1500,
+        transactionAmountRefunded: 750,
+        collectorId: '446566691',
+      });
+    });
+
+    it('getPayment: un 404 da 502 MP_PAYMENT_READ_FAILED', async () => {
+      fetchMock.mockResolvedValue(respond(404, { message: 'not found' }));
+
+      expect(await problemOf(client.getPayment(TOKEN, '1'))).toMatchObject({
+        code: ErrorCodes.MP_PAYMENT_READ_FAILED,
+      });
+    });
+
+    it('getPayment: sin id es MP_MALFORMED_RESPONSE', async () => {
+      fetchMock.mockResolvedValue(respond(200, { status: 'approved' }));
+
+      expect(await problemOf(client.getPayment(TOKEN, '1'))).toMatchObject({
+        code: ErrorCodes.MP_MALFORMED_RESPONSE,
+      });
+    });
+
+    it('searchPayments: filtra por external_reference, más nuevo primero', async () => {
+      fetchMock.mockResolvedValue(respond(200, fx.paymentsSearch));
+
+      const payments = await client.searchPayments(TOKEN, {
+        externalReference: fx.RESERVATION_ID,
+      });
+
+      const [url, init] = urlAndInit();
+      expect(url).toBe(
+        `https://api.mercadopago.com/v1/payments/search?external_reference=${fx.RESERVATION_ID}&sort=date_created&criteria=desc`,
+      );
+      expect(init.method).toBe('GET');
+      expect(payments.map((p) => [p.id, p.status])).toEqual([
+        ['1234567890', 'approved'],
+        ['1234567001', 'rejected'],
+      ]);
+    });
+
+    it('searchPayments: sin resultados devuelve []', async () => {
+      fetchMock.mockResolvedValue(respond(200, { results: [] }));
+
+      expect(
+        await client.searchPayments(TOKEN, { externalReference: 'x' }),
+      ).toEqual([]);
+    });
+
+    it('searchPayments: sin `results` es MP_MALFORMED_RESPONSE', async () => {
+      fetchMock.mockResolvedValue(respond(200, {}));
+
+      expect(
+        await problemOf(
+          client.searchPayments(TOKEN, { externalReference: 'x' }),
+        ),
+      ).toMatchObject({ code: ErrorCodes.MP_MALFORMED_RESPONSE });
+    });
+
+    it('refundPayment total: POST /refunds con body vacío y la key recibida', async () => {
+      fetchMock.mockResolvedValue(respond(201, fx.refundTotal));
+
+      const refund = await client.refundPayment(
+        TOKEN,
+        '1234567890',
+        'refund-k',
+      );
+
+      const [url, init] = urlAndInit();
+      expect(url).toBe(
+        'https://api.mercadopago.com/v1/payments/1234567890/refunds',
+      );
+      expect(init.method).toBe('POST');
+      expect(init.headers['X-Idempotency-Key']).toBe('refund-k');
+      expect(bodyOf()).toEqual({});
+      expect(refund).toEqual({
+        id: '987654321',
+        status: 'approved',
+        amount: 1500,
+      });
+    });
+
+    it('refundPayment parcial: manda el amount', async () => {
+      fetchMock.mockResolvedValue(
+        respond(201, { ...fx.refundTotal, amount: 750 }),
+      );
+
+      const refund = await client.refundPayment(TOKEN, '1', 'k', 750);
+
+      expect(bodyOf()).toEqual({ amount: 750 });
+      expect(refund.amount).toBe(750);
+    });
+
+    it('refundPayment: un 400 (sin saldo) da 502 MP_REFUND_FAILED', async () => {
+      fetchMock.mockResolvedValue(
+        respond(400, { message: 'Not enough balance' }),
+      );
+
+      expect(
+        await problemOf(client.refundPayment(TOKEN, '1', 'k')),
+      ).toMatchObject({
+        status: HttpStatus.BAD_GATEWAY,
+        code: ErrorCodes.MP_REFUND_FAILED,
+      });
+    });
+
+    it('cancelPayment: PUT con {status: cancelled} y key', async () => {
+      fetchMock.mockResolvedValue(respond(200, fx.paymentCancelled));
+
+      const payment = await client.cancelPayment(
+        TOKEN,
+        '1234567890',
+        'cancel-k',
+      );
+
+      const [url, init] = urlAndInit();
+      expect(url).toBe('https://api.mercadopago.com/v1/payments/1234567890');
+      expect(init.method).toBe('PUT');
+      expect(init.headers['X-Idempotency-Key']).toBe('cancel-k');
+      expect(bodyOf()).toEqual({ status: 'cancelled' });
+      expect(payment.status).toBe('cancelled');
+      expect(payment.statusDetail).toBe('by_collector');
+    });
+
+    it('cancelPayment: un 400 da 502 MP_PAYMENT_CANCEL_FAILED', async () => {
+      fetchMock.mockResolvedValue(respond(400, { message: 'cannot cancel' }));
+
+      expect(
+        await problemOf(client.cancelPayment(TOKEN, '1', 'k')),
+      ).toMatchObject({
+        code: ErrorCodes.MP_PAYMENT_CANCEL_FAILED,
+      });
+    });
+
+    it('sin respuesta (timeout) da MP_UNREACHABLE y no filtra el token', async () => {
+      fetchMock.mockRejectedValue(new Error(`socket hang up ${TOKEN}`));
+
+      expect(await problemOf(client.getPayment(TOKEN, '1'))).toMatchObject({
+        code: ErrorCodes.MP_UNREACHABLE,
+      });
+      expect(logged.join('\n')).not.toContain(TOKEN);
     });
   });
 });

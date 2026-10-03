@@ -1,5 +1,9 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
-import { MpAccountStatus, PaymentMethodType } from '@prisma/client';
+import {
+  MpAccountStatus,
+  PaymentMethodType,
+  ReservationStatus,
+} from '@prisma/client';
 import type { MpAccount, Prisma, Tenant, User } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { AuditActions, AuditService } from '../audit/audit.service';
@@ -344,8 +348,11 @@ export class MpAccountsService {
     // chequeo de intents abiertos de esta playa — desvincular con un cobro en
     // vuelo deja al cliente pagando contra un QR que ya no concilia con nadie.
     // Si los hay, el fallo es 409 `MP_UNLINK_BLOCKED_OPEN_INTENTS`.
-    // No se escribe todavía: la tabla no existe y el code tampoco. Inventar
-    // cualquiera de los dos acá sería código muerto que después nadie revisa.
+    // (El chequeo de reservas de abajo sí existe; el de intents sigue sin
+    // escribirse: inventar el code antes de que haya algo que lo dispare
+    // sería código muerto.)
+
+    await this.assertNoActiveReservations(tenantId);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.mpAccount.update({
@@ -375,6 +382,49 @@ export class MpAccountsService {
       tenantId,
       metadata: { mpUserId: account.mpUserId },
     });
+  }
+
+  /**
+   * Desvincular con reservas vivas deja a conductores que ya pagaron (o están
+   * por pagar) contra una cuenta que ya no puede cobrar ni reembolsar. Bloquea
+   * si hay: reservas `confirmed`/`pending_approval` con ingreso futuro, una
+   * retención `pending_payment` vigente, o un reembolso `pending`.
+   *
+   * `reservation` está en `TENANT_MODELS`; el `tenantId` se pasa igual de forma
+   * explícita para no depender de que haya contexto de tenant en la request.
+   */
+  private async assertNoActiveReservations(tenantId: string): Promise<void> {
+    const now = new Date();
+    const active = await this.prisma.reservation.count({
+      where: {
+        tenantId,
+        OR: [
+          {
+            status: {
+              in: [
+                ReservationStatus.confirmed,
+                ReservationStatus.pending_approval,
+              ],
+            },
+            entryAt: { gt: now },
+          },
+          {
+            status: ReservationStatus.pending_payment,
+            holdExpiresAt: { gt: now },
+          },
+          { refundStatus: 'pending' },
+        ],
+      },
+    });
+    if (active === 0) return;
+
+    throw new FormattedException(
+      'Conflict',
+      HttpStatus.CONFLICT,
+      `No se puede desvincular Mercado Pago: hay ${active} reserva${active === 1 ? '' : 's'} activa${active === 1 ? '' : 's'} (confirmadas o por aprobar con ingreso futuro, pagos en curso o reembolsos pendientes). Esperá a que se resuelvan o cancelalas antes de desvincular.`,
+      TENANT_INSTANCE,
+      ErrorCodes.MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS,
+    );
   }
 
   /**

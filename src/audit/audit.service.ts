@@ -88,6 +88,8 @@ export const AuditActions = {
   RESERVATION_REFUND_RETRIED: 'reservation.refund_retried',
   // El proveedor no pudo devolver la plata: `warn`, alguien tiene que
   // reintentarlo a mano.
+  // El proveedor confirmó un reembolso que estaba pendiente o fallido (sistema).
+  RESERVATION_REFUND_CONFIRMED: 'reservation.refund_confirmed',
   RESERVATION_REFUND_FAILED: 'reservation.refund_failed',
   // Llegó un pago que ya no correspondía (sin cupo tras vencer la retención, o
   // sobre una reserva cancelada) y el sistema lo devolvió entero.

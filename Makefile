@@ -96,6 +96,15 @@ env-check: ## Validar que `.env` tenga variables críticas completas (sin placeh
 			echo "✗ $$v parece placeholder ($$val). Completala con valores reales."; exit 1; \
 		fi; \
 	done; \
+	if [ "$${RESERVATION_PAYMENT_PROVIDER:-}" = "mercado_pago" ]; then \
+		val="$${PUBLIC_API_URL:-}"; \
+		if [ -z "$$val" ]; then \
+			echo "✗ PUBLIC_API_URL está vacía en .env (obligatoria con RESERVATION_PAYMENT_PROVIDER=mercado_pago)"; exit 1; \
+		fi; \
+		if [[ "$$val" == *"<"* ]] || [[ "$$val" == *"[REF]"* ]] || [[ "$$val" == *"[PWD]"* ]]; then \
+			echo "✗ PUBLIC_API_URL parece placeholder ($$val). Completala con la URL pública del backend."; exit 1; \
+		fi; \
+	fi; \
 	oauth_missing=0; \
 	for v in SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET; do \
 		val="$${!v:-}"; \

@@ -388,6 +388,19 @@ describe('DriverReservationsService', () => {
       tx.reservation.create.mockResolvedValue(pending());
     });
 
+    it('un returnUrl fuera de la allowlist responde 400 sin crear nada', async () => {
+      await expectFailure(
+        service.create(
+          USER,
+          { ...withReturn, returnUrl: 'https://evil.com/x' },
+          NOW,
+        ),
+        HttpStatus.BAD_REQUEST,
+        'RESERVATION_RETURN_URL_NOT_ALLOWED',
+      );
+      expect(tx.reservation.create).not.toHaveBeenCalled();
+    });
+
     it('nace pending_payment con retención de 10 min, snapshot de la política y checkout', async () => {
       const result = (await service.create(
         USER,

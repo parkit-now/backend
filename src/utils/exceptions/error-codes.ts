@@ -159,6 +159,8 @@ export const ErrorCodes = {
   RESERVATION_CHECKOUT_UNAVAILABLE: 'RESERVATION_CHECKOUT_UNAVAILABLE',
   // Cliente viejo sin `returnUrl` en producción (422).
   RESERVATION_CLIENT_OUTDATED: 'RESERVATION_CLIENT_OUTDATED',
+  // El `returnUrl` no está en la allowlist de destinos (400).
+  RESERVATION_RETURN_URL_NOT_ALLOWED: 'RESERVATION_RETURN_URL_NOT_ALLOWED',
   // Pedir el checkout de una reserva que ya se pagó.
   RESERVATION_ALREADY_PAID: 'RESERVATION_ALREADY_PAID',
   // Pedir el checkout de una reserva cancelada, rechazada o terminada.
@@ -214,6 +216,10 @@ export const ErrorCodes = {
   MP_ACCOUNT_TOKEN_EXPIRED: 'MP_ACCOUNT_TOKEN_EXPIRED',
   // La cuenta se desvinculo (desde nuestro panel o desde Mercado Pago) (409).
   MP_ACCOUNT_REVOKED: 'MP_ACCOUNT_REVOKED',
+  // No se puede desvincular la cuenta: hay reservas futuras confirmadas o a
+  // aprobar, retenciones vigentes o reembolsos pendientes que dependen de ella
+  // (409).
+  MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS: 'MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS',
   // La playa no tiene la direccion estructurada completa y Mercado Pago la
   // exige para `Store.location` (422).
   MP_ENTITY_ADDRESS_INCOMPLETE: 'MP_ENTITY_ADDRESS_INCOMPLETE',
@@ -233,6 +239,17 @@ export const ErrorCodes = {
   // pudo generar el cobro con QR") y el detalle de cual fallo ya esta en el
   // `detail` y en el log.
   MP_ORDER_CREATE_FAILED: 'MP_ORDER_CREATE_FAILED',
+  // Mercado Pago rechazo la creacion de la preferencia de Checkout Pro de una
+  // reserva (502): el conductor no puede pagar ahora mismo.
+  MP_PREFERENCE_CREATE_FAILED: 'MP_PREFERENCE_CREATE_FAILED',
+  // Fallo la lectura o la busqueda de pagos en Mercado Pago (502). Cubre
+  // `GET /v1/payments/{id}` y `GET /v1/payments/search`.
+  MP_PAYMENT_READ_FAILED: 'MP_PAYMENT_READ_FAILED',
+  // Mercado Pago rechazo el reembolso de un pago (502): sin saldo en la cuenta
+  // del vendedor, pago muy viejo (180 dias), monto invalido, etc.
+  MP_REFUND_FAILED: 'MP_REFUND_FAILED',
+  // Mercado Pago rechazo la cancelacion de un pago pendiente (502).
+  MP_PAYMENT_CANCEL_FAILED: 'MP_PAYMENT_CANCEL_FAILED',
   // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
   // el cliente deberia reintentar mas tarde (503).
   MP_UNAVAILABLE: 'MP_UNAVAILABLE',
@@ -304,6 +321,9 @@ export const ErrorCodes = {
   // 401 de firma invalida", y porque un 200 sin haber leido el estado real
   // seria dar por procesado un pago que nadie verifico.
   MP_WEBHOOK_ORDER_UNVERIFIED: 'MP_WEBHOOK_ORDER_UNVERIFIED',
+  // Idem para un pago de reserva identificado cuyo despacho al ciclo de vida
+  // fallo de forma inesperada (503): Mercado Pago tiene que reintentar.
+  MP_WEBHOOK_PAYMENT_UNVERIFIED: 'MP_WEBHOOK_PAYMENT_UNVERIFIED',
 
   // Facturacion electronica (ARCA)
   // La playa no tiene ARCA vinculada (o la integracion esta apagada en este

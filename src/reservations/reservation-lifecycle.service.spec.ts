@@ -870,6 +870,266 @@ describe('ReservationLifecycleService', () => {
     });
   });
 
+  describe('rechazo y reintento en el mismo checkout', () => {
+    it('un pago rechazado y luego aprobado con otro id confirma la reserva', async () => {
+      seed();
+      await service.markPaymentRejected(RES_ID, { providerPaymentId: 'mp_1' });
+      expect(db.paymentOf().status).toBe('rejected');
+
+      const result = await service.markPaid(
+        RES_ID,
+        { providerPaymentId: 'mp_2' },
+        NOW,
+      );
+
+      expect(result).toMatchObject({ changed: true, outcome: 'confirmed' });
+      expect(db.payments).toHaveLength(1);
+      expect(db.paymentOf()).toMatchObject({
+        status: 'approved',
+        providerPaymentId: 'mp_2',
+        approvedAt: NOW,
+      });
+    });
+
+    it('con una segunda fila creada por el reintento del conductor aprueba esa y deja la rechazada', async () => {
+      seed(
+        {},
+        payment({
+          status: 'rejected',
+          providerPaymentId: 'mp_1',
+          createdAt: NOW,
+        }),
+      );
+      db.payments.push(
+        payment({ id: 'pay-2', createdAt: minutes(NOW, 1), checkoutUrl: 'x' }),
+      );
+
+      await service.markPaid(RES_ID, { providerPaymentId: 'mp_2' }, NOW);
+
+      expect(
+        db.payments.map((p) => [p.id as string, p.status as string]),
+      ).toEqual([
+        ['pay-1', 'rejected'],
+        ['pay-2', 'approved'],
+      ]);
+      expect(db.payments[1].providerPaymentId).toBe('mp_2');
+    });
+
+    it('si llega aprobado el id de la fila rechazada, cancela la fila viva para respetar el índice', async () => {
+      seed(
+        {},
+        payment({
+          status: 'rejected',
+          providerPaymentId: 'mp_1',
+          createdAt: NOW,
+        }),
+      );
+      db.payments.push(payment({ id: 'pay-2', createdAt: minutes(NOW, 1) }));
+
+      await service.markPaid(RES_ID, { providerPaymentId: 'mp_1' }, NOW);
+
+      expect(
+        db.payments.map((p) => [p.id as string, p.status as string]),
+      ).toEqual([
+        ['pay-1', 'approved'],
+        ['pay-2', 'cancelled'],
+      ]);
+      expect(
+        db.payments.filter((p) =>
+          ['created', 'approved'].includes(p.status as string),
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('es idempotente: aprobar de nuevo no toca la fila ya aprobada', async () => {
+      seed();
+      await service.markPaymentRejected(RES_ID, { providerPaymentId: 'mp_1' });
+      await service.markPaid(RES_ID, { providerPaymentId: 'mp_2' }, NOW);
+      const result = await service.markPaid(
+        RES_ID,
+        { providerPaymentId: 'mp_2' },
+        minutes(NOW, 1),
+      );
+
+      expect(result.changed).toBe(false);
+      expect(db.paymentOf()).toMatchObject({
+        status: 'approved',
+        providerPaymentId: 'mp_2',
+        approvedAt: NOW,
+      });
+    });
+  });
+
+  describe('confirmRefund', () => {
+    const pendingRefund = (extra: Row = {}) =>
+      seed(
+        {
+          status: 'cancelled',
+          paidAt: NOW,
+          refundStatus: 'pending',
+          refundRequestedAt: NOW,
+          refundRequestedArs: 9000,
+          refundAttempts: 1,
+          ...extra,
+        },
+        payment({ status: 'approved', providerPaymentId: 'mp_1' }),
+      );
+
+    it('total: pasa a refunded, guarda el monto y deja el pago refunded', async () => {
+      pendingRefund();
+
+      const result = await service.confirmRefund(
+        RES_ID,
+        { refundedAmountArs: 9000, providerPaymentId: 'mp_1' },
+        NOW,
+      );
+
+      expect(result).toMatchObject({ changed: true, outcome: 'refunded' });
+      expect(db.reservationById()).toMatchObject({
+        refundStatus: 'refunded',
+        refundedAmountArs: 9000,
+        refundError: null,
+        status: 'cancelled',
+      });
+      expect(db.paymentOf().status).toBe('refunded');
+      expect(db.audits).toHaveLength(1);
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.refund_confirmed',
+        actorUserId: null,
+        severity: 'info',
+        metadata: {
+          actorRole: 'system',
+          refundArs: 9000,
+          refundStatus: 'refunded',
+        },
+      });
+    });
+
+    it('parcial: pasa a partial y el pago a partially_refunded', async () => {
+      pendingRefund({ refundRequestedArs: 4500 });
+
+      const result = await service.confirmRefund(RES_ID, {
+        refundedAmountArs: 4500,
+      });
+
+      expect(result.outcome).toBe('partial');
+      expect(db.reservationById()).toMatchObject({
+        refundStatus: 'partial',
+        refundedAmountArs: 4500,
+      });
+      expect(db.paymentOf().status).toBe('partially_refunded');
+    });
+
+    it('un segundo aviso es un no-op: no cambia nada ni audita de nuevo', async () => {
+      pendingRefund();
+      await service.confirmRefund(RES_ID, { refundedAmountArs: 9000 });
+      const before = snapshotOf();
+
+      const result = await service.confirmRefund(RES_ID, {
+        refundedAmountArs: 9000,
+      });
+
+      expect(result).toMatchObject({ changed: false, outcome: 'ignored' });
+      expect(snapshotOf()).toEqual(before);
+      expect(db.audits).toHaveLength(1);
+    });
+
+    it('desde failed: lo confirma y limpia el error', async () => {
+      pendingRefund({ refundStatus: 'failed', refundError: 'Sin saldo' });
+
+      const result = await service.confirmRefund(RES_ID, {
+        refundedAmountArs: 9000,
+      });
+
+      expect(result.outcome).toBe('refunded');
+      expect(db.reservationById()).toMatchObject({
+        refundStatus: 'refunded',
+        refundError: null,
+      });
+    });
+
+    it('con refundStatus none (reembolso desde el panel de MP) no toca la reserva', async () => {
+      seed(
+        { status: 'confirmed', paidAt: NOW },
+        payment({ status: 'approved', providerPaymentId: 'mp_1' }),
+      );
+      const before = snapshotOf();
+
+      const result = await service.confirmRefund(RES_ID, {
+        refundedAmountArs: 9000,
+        providerPaymentId: 'mp_1',
+      });
+
+      expect(result).toMatchObject({
+        changed: false,
+        outcome: 'ignored_unrequested',
+      });
+      expect(snapshotOf()).toEqual(before);
+      expect(db.paymentOf()).toMatchObject({
+        status: 'approved',
+        providerStatus: 'refunded',
+      });
+      expect(db.audits).toHaveLength(0);
+    });
+
+    it('una reserva inexistente responde 404', async () => {
+      await expectFailure(
+        service.confirmRefund(RES_ID, { refundedAmountArs: 1 }),
+        HttpStatus.NOT_FOUND,
+        'RESERVATION_NOT_FOUND',
+      );
+    });
+  });
+
+  describe('markRefundFailedBySystem', () => {
+    const pendingRefund = (extra: Row = {}) =>
+      seed(
+        {
+          status: 'cancelled',
+          paidAt: NOW,
+          refundStatus: 'pending',
+          refundRequestedArs: 9000,
+          ...extra,
+        },
+        payment({ status: 'approved', providerPaymentId: 'mp_1' }),
+      );
+
+    it('deja failed un reembolso pending, con el mensaje y una auditoría warn del sistema', async () => {
+      pendingRefund();
+
+      const result = await service.markRefundFailedBySystem(
+        RES_ID,
+        TENANT,
+        'La cuenta de Mercado Pago está desvinculada.',
+      );
+
+      expect(result.changed).toBe(true);
+      expect(db.reservationById()).toMatchObject({
+        refundStatus: 'failed',
+        refundError: 'La cuenta de Mercado Pago está desvinculada.',
+      });
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.refund_failed',
+        severity: 'warn',
+        actorUserId: null,
+        metadata: { actorRole: 'system', refundArs: 9000 },
+      });
+    });
+
+    it('si ya no está pending (o es de otra playa) no hace nada', async () => {
+      pendingRefund({ refundStatus: 'refunded' });
+      const first = await service.markRefundFailedBySystem(RES_ID, TENANT, 'x');
+      expect(first.changed).toBe(false);
+      expect(db.reservationById().refundStatus).toBe('refunded');
+      await expectFailure(
+        service.markRefundFailedBySystem(RES_ID, OTHER_TENANT, 'x'),
+        HttpStatus.NOT_FOUND,
+        'RESERVATION_NOT_FOUND',
+      );
+      expect(db.audits).toHaveLength(0);
+    });
+  });
+
   describe('transiciones del sweeper', () => {
     it('expireHold vence la pending_payment pasado el margen y cancela el checkout', async () => {
       seed({ holdExpiresAt: minutes(NOW, -6) });
