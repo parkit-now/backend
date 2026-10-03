@@ -25,6 +25,12 @@ export class FakeReservationPaymentGateway implements ReservationPaymentGateway 
   nextRefundStatus: RefundResult['status'] = 'refunded';
   /** Respuesta de `getPayment`. */
   nextPayment: ProviderPayment | null = null;
+  /** Respuesta de `findApprovedPayment`; por defecto no hay pago. */
+  nextApprovedPayment: ProviderPayment | null = null;
+  /** Si está, `findApprovedPayment` tira este error. */
+  nextFindApprovedError: Error | null = null;
+  readonly findApprovedCalls: { tenantId: string; reservationId: string }[] =
+    [];
 
   createCheckout(input: CreateCheckoutInput): Promise<CheckoutResult> {
     this.checkouts.push(input);
@@ -58,7 +64,20 @@ export class FakeReservationPaymentGateway implements ReservationPaymentGateway 
         providerPaymentId: input.providerPaymentId,
         status: 'approved',
         amountArs: 0,
+        refundedAmountArs: 0,
+        externalReference: null,
       },
     );
+  }
+
+  findApprovedPayment(input: {
+    tenantId: string;
+    reservationId: string;
+  }): Promise<ProviderPayment | null> {
+    this.findApprovedCalls.push(input);
+    if (this.nextFindApprovedError) {
+      return Promise.reject(this.nextFindApprovedError);
+    }
+    return Promise.resolve(this.nextApprovedPayment);
   }
 }

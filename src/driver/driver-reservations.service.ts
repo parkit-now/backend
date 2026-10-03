@@ -350,6 +350,11 @@ export class DriverReservationsService {
         amountArs,
         expiresAt: holdExpiresAt,
         returnUrl: effectiveReturnUrl ?? '',
+        description: {
+          parkingName: reservation.tenant.name,
+          entryAt: reservation.entryAt,
+          exitAt: reservation.exitAt,
+        },
       });
     } catch {
       if (expireOnFailure) {

@@ -69,7 +69,14 @@ export class DevCheckoutGateway implements ReservationPaymentGateway {
       providerPaymentId: input.providerPaymentId,
       status: 'approved',
       amountArs: 0,
+      refundedAmountArs: 0,
+      externalReference: null,
     });
+  }
+
+  /** El checkout de dev no tiene un proveedor donde buscar: nunca hay pago. */
+  findApprovedPayment(): Promise<ProviderPayment | null> {
+    return Promise.resolve(null);
   }
 }
 

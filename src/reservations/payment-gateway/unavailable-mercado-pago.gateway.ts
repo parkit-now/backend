@@ -42,4 +42,8 @@ export class UnavailableMercadoPagoGateway implements ReservationPaymentGateway 
       new Error('Mercado Pago payments are not available yet.'),
     );
   }
+
+  findApprovedPayment(): Promise<ProviderPayment | null> {
+    return Promise.resolve(null);
+  }
 }

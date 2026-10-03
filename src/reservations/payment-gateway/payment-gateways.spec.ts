@@ -5,6 +5,7 @@ import { DevCheckoutGateway, devPaymentId } from './dev-checkout.gateway';
 import { FakeReservationPaymentGateway } from './fake-reservation-payment.gateway';
 import {
   createReservationPaymentGateway,
+  resolvePublicApiUrl,
   resolveReservationPaymentProvider,
 } from './reservation-payment.provider';
 import type { ReservationPaymentGateway } from './reservation-payment-gateway';
@@ -18,10 +19,17 @@ const checkoutInput = {
   amountArs: 9000,
   expiresAt: new Date('2026-09-27T16:10:00Z'),
   returnUrl: 'parkit://reservas',
+  description: {
+    parkingName: 'Playa Centro',
+    entryAt: new Date('2026-09-28T12:00:00Z'),
+    exitAt: new Date('2026-09-28T14:00:00Z'),
+  },
 };
 
 describe('DevCheckoutGateway', () => {
-  const gateway = new DevCheckoutGateway('http://localhost:3000');
+  const gateway: ReservationPaymentGateway = new DevCheckoutGateway(
+    'http://localhost:3000',
+  );
 
   it('el checkout apunta a la página de dev de la API', async () => {
     expect(await gateway.createCheckout(checkoutInput)).toEqual({
@@ -61,6 +69,15 @@ describe('DevCheckoutGateway', () => {
         idempotencyKey: 'refund:x:2',
       }),
     ).toEqual({ status: 'refunded', amountArs: 4500 });
+  });
+
+  it('no busca pagos en ningún proveedor: findApprovedPayment es null', async () => {
+    expect(
+      await gateway.findApprovedPayment({
+        tenantId: TENANT,
+        reservationId: RES_ID,
+      }),
+    ).toBeNull();
   });
 
   it('los ids de pago de dev llevan el prefijo dev_', () => {
@@ -131,15 +148,47 @@ describe('FakeReservationPaymentGateway', () => {
     ).rejects.toThrow('sin saldo');
     expect(gateway.refunds).toHaveLength(1);
   });
+
+  it('findApprovedPayment registra la búsqueda y responde lo configurado', async () => {
+    const gateway = new FakeReservationPaymentGateway();
+    const input = { tenantId: TENANT, reservationId: RES_ID };
+    expect(await gateway.findApprovedPayment(input)).toBeNull();
+
+    gateway.nextApprovedPayment = {
+      providerPaymentId: 'p1',
+      status: 'approved',
+      amountArs: 9000,
+      refundedAmountArs: 0,
+      externalReference: RES_ID,
+    };
+    expect((await gateway.findApprovedPayment(input))?.providerPaymentId).toBe(
+      'p1',
+    );
+    expect(gateway.findApprovedCalls).toEqual([input, input]);
+
+    gateway.nextFindApprovedError = new Error('MP caído');
+    await expect(gateway.findApprovedPayment(input)).rejects.toThrow(
+      'MP caído',
+    );
+  });
 });
 
 describe('resolveReservationPaymentProvider', () => {
   it('por defecto: dev fuera de producción, mercado_pago en producción', () => {
-    expect(resolveReservationPaymentProvider(undefined, false)).toBe('dev');
-    expect(resolveReservationPaymentProvider('', false)).toBe('dev');
-    expect(resolveReservationPaymentProvider(undefined, true)).toBe(
-      'mercado_pago',
-    );
+    // `bun test` carga el `.env` local, que puede traer la variable: sin
+    // sacarla, `undefined` cae al valor del entorno y el test depende de la
+    // máquina.
+    const previous = process.env.RESERVATION_PAYMENT_PROVIDER;
+    try {
+      delete process.env.RESERVATION_PAYMENT_PROVIDER;
+      expect(resolveReservationPaymentProvider(undefined, false)).toBe('dev');
+      expect(resolveReservationPaymentProvider('', false)).toBe('dev');
+      expect(resolveReservationPaymentProvider(undefined, true)).toBe(
+        'mercado_pago',
+      );
+    } finally {
+      restoreEnv('RESERVATION_PAYMENT_PROVIDER', previous);
+    }
   });
 
   it('respeta la variable explícita', () => {
@@ -165,11 +214,67 @@ describe('resolveReservationPaymentProvider', () => {
   });
 
   it('arma el gateway que corresponde', () => {
-    expect(createReservationPaymentGateway('dev')).toBeInstanceOf(
-      DevCheckoutGateway,
+    const previous = process.env.PUBLIC_API_URL;
+    try {
+      process.env.PUBLIC_API_URL = 'https://api.parkit.test';
+      expect(createReservationPaymentGateway('dev')).toBeInstanceOf(
+        DevCheckoutGateway,
+      );
+      expect(createReservationPaymentGateway('mercado_pago')).toBeInstanceOf(
+        UnavailableMercadoPagoGateway,
+      );
+    } finally {
+      restoreEnv('PUBLIC_API_URL', previous);
+    }
+  });
+
+  it('con mercado_pago y sin PUBLIC_API_URL el arranque falla nombrando la variable', () => {
+    const previous = process.env.PUBLIC_API_URL;
+    try {
+      delete process.env.PUBLIC_API_URL;
+      expect(() => createReservationPaymentGateway('mercado_pago')).toThrow(
+        'PUBLIC_API_URL es obligatoria con RESERVATION_PAYMENT_PROVIDER=mercado_pago',
+      );
+      // `dev` no la necesita.
+      expect(() => createReservationPaymentGateway('dev')).not.toThrow();
+    } finally {
+      restoreEnv('PUBLIC_API_URL', previous);
+    }
+  });
+});
+
+describe('resolvePublicApiUrl', () => {
+  it('sin valor (o vacío) falla', () => {
+    expect(() => resolvePublicApiUrl('', false)).toThrow('PUBLIC_API_URL');
+    expect(() => resolvePublicApiUrl('   ', true)).toThrow('PUBLIC_API_URL');
+  });
+
+  it('saca la barra final', () => {
+    expect(resolvePublicApiUrl('https://api.parkit.test/', true)).toBe(
+      'https://api.parkit.test',
     );
-    expect(createReservationPaymentGateway('mercado_pago')).toBeInstanceOf(
-      UnavailableMercadoPagoGateway,
+    expect(resolvePublicApiUrl('https://api.parkit.test//', true)).toBe(
+      'https://api.parkit.test',
+    );
+  });
+
+  it('en producción exige HTTPS; afuera acepta http', () => {
+    expect(() => resolvePublicApiUrl('http://api.parkit.test', true)).toThrow(
+      'HTTPS',
+    );
+    expect(resolvePublicApiUrl('http://localhost:3000', false)).toBe(
+      'http://localhost:3000',
+    );
+  });
+
+  it('una URL inválida falla', () => {
+    expect(() => resolvePublicApiUrl('no-es-una-url', false)).toThrow(
+      'no es una URL válida',
     );
   });
 });
+
+function restoreEnv(name: string, previous: string | undefined): void {
+  if (previous === undefined) delete process.env[name];
+  else process.env[name] = previous;
+}
