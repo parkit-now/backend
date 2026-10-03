@@ -2,6 +2,7 @@
 import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {EntryEntity} from './entry.entity'
+import {ServiceEntity} from './service.entity'
 import {TenantEntity} from './tenant.entity'
 
 
@@ -61,6 +62,7 @@ updatedAt: Date ;
 })
 deletedAt: Date  | null;
 entries?: EntryEntity[] ;
+reservationServices?: ServiceEntity[] ;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

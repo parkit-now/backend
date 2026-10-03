@@ -61,7 +61,8 @@ export class ServicesController {
   @Patch(':code')
   @EntityRole(MembershipRole.owner)
   @ApiOperation({
-    summary: 'Update a service for the active tenant',
+    summary:
+      'Update a service for the active tenant (ADVANCE_RESERVATION also takes the reservation rate and reservable spots)',
   })
   @ApiOkResponse({ type: ServiceCatalogItemDto })
   @ApiParam({
@@ -72,6 +73,8 @@ export class ServicesController {
   async update(@Param('code') code: string, @Body() dto: UpdateServiceDto) {
     return this.servicesService.updateService(code, {
       enabled: dto.enabled,
+      reservationRateId: dto.reservationRateId,
+      reservableSpots: dto.reservableSpots,
     });
   }
 }
