@@ -1,7 +1,6 @@
 
 import {ApiProperty} from '@nestjs/swagger'
 import {VehicleCategoryEntity} from './vehicle-category.entity'
-import {VehicleCatalogDefaultEntity} from './vehicle-catalog-default.entity'
 
 
 export class VehicleTypeDefaultEntity {
@@ -13,5 +12,4 @@ accepted: boolean ;
 })
 category: string ;
 categoryRef?: VehicleCategoryEntity ;
-catalogDefaults?: VehicleCatalogDefaultEntity[] ;
 }

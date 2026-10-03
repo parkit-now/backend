@@ -45,12 +45,15 @@ import { join } from 'node:path';
 
 import { BRANDS } from './data/vehicle-brands';
 import {
+  isVehicleCategory,
+  type VehicleCategory,
+} from '../src/vehicle-categories/vehicle-categories';
+import {
   CARROCERIA_TO_TYPE,
-  DEFAULT_TYPE_NAMES,
   EXCLUDED_CARROCERIAS,
   EXCLUDED_MODELS,
   MODEL_TYPES,
-  TEMPLATE_TYPE_NAME,
+  TEMPLATE_CATEGORY,
   type CatalogVehicleType,
 } from './data/vehicle-types';
 
@@ -59,7 +62,7 @@ const CATALOG_JSON = join(__dirname, 'data', 'vehicle-catalog.json');
 /** Límites de `vehicle_catalog_defaults`. Mejor fallar acá que en el INSERT. */
 const MAX_BRAND_LEN = 120;
 const MAX_MODEL_LEN = 120;
-const MAX_TYPE_NAME_LEN = 60;
+const MAX_CATEGORY_LEN = 20;
 
 interface ImportedEntry {
   brand: string;
@@ -126,8 +129,8 @@ interface CatalogRow {
   model: string;
   /** Carrocería: el dato de origen. */
   type: CatalogVehicleType;
-  /** Nombre del tipo por defecto con el que se siembra. */
-  typeName: string;
+  /** Categoría de la plataforma con la que se siembra. */
+  category: VehicleCategory;
 }
 
 interface BuildResult {
@@ -314,15 +317,15 @@ function buildCatalog(): BuildResult {
     );
   }
 
-  // La plantilla no puede apuntar a un tipo que no exista entre los defaults. La
-  // FK a `vehicle_type_defaults(name)` es el backstop en la base; esto falla
-  // acá, antes de emitir una sola línea de SQL.
-  const unknownTypeNames = [...new Set(Object.values(TEMPLATE_TYPE_NAME))].filter(
-    (name) => !DEFAULT_TYPE_NAMES.includes(name as (typeof DEFAULT_TYPE_NAMES)[number]),
+  // La plantilla no puede apuntar a una categoría que no exista. La FK a
+  // `vehicle_categories(code)` es el backstop en la base; esto falla acá, antes
+  // de emitir una sola línea de SQL.
+  const unknownCategories = [...new Set(Object.values(TEMPLATE_CATEGORY))].filter(
+    (category) => !isVehicleCategory(category) || category.length > MAX_CATEGORY_LEN,
   );
-  if (unknownTypeNames.length > 0) {
+  if (unknownCategories.length > 0) {
     throw new Error(
-      `TEMPLATE_TYPE_NAME apunta a tipos que no están en DEFAULT_TYPE_NAMES: ${unknownTypeNames.join(', ')}`,
+      `TEMPLATE_CATEGORY apunta a categorías que no existen en VEHICLE_CATEGORIES: ${unknownCategories.join(', ')}`,
     );
   }
 
@@ -332,7 +335,7 @@ function buildCatalog(): BuildResult {
       brand,
       model,
       type: type as CatalogVehicleType,
-      typeName: TEMPLATE_TYPE_NAME[type as CatalogVehicleType],
+      category: TEMPLATE_CATEGORY[type as CatalogVehicleType],
     }))
     .sort((a, b) => a.brand.localeCompare(b.brand) || a.model.localeCompare(b.model));
 
@@ -342,9 +345,6 @@ function buildCatalog(): BuildResult {
   for (const row of rows) {
     if (row.brand.length > MAX_BRAND_LEN) tooLong.push(`brand: ${row.brand}`);
     if (row.model.length > MAX_MODEL_LEN) tooLong.push(`model: ${row.model}`);
-    if (row.typeName.length > MAX_TYPE_NAME_LEN) {
-      tooLong.push(`type_name: ${row.typeName}`);
-    }
   }
   if (tooLong.length > 0) {
     throw new Error(
@@ -413,14 +413,14 @@ function backfillSql(): string {
 -- 20260604024720_fix_sync_seq_zero.sql.
 
 INSERT INTO vehicles (id, tenant_id, brand, model, type_id)
-SELECT gen_random_uuid(), t.id, d.brand, d.model, vt.id
+SELECT gen_random_uuid(), t.id, d.brand, d.model, tipo.id
   FROM tenants t
   CROSS JOIN vehicle_catalog_defaults d
-  JOIN vehicle_types vt
-    ON vt.tenant_id = t.id
-   AND vt.deleted_at IS NULL
-   AND lower(btrim(vt.name)) = lower(btrim(d.type_name))
- WHERE NOT EXISTS (
+  CROSS JOIN LATERAL (
+    SELECT resolve_tenant_vehicle_type(t.id, d.category) AS id
+  ) tipo
+ WHERE tipo.id IS NOT NULL
+   AND NOT EXISTS (
    SELECT 1
      FROM vehicles v
     WHERE v.tenant_id = t.id
@@ -436,18 +436,18 @@ function main(): void {
   const { rows, curated, imported, excludedByCarroceria, excludedByModel } =
     buildCatalog();
 
-  const byTypeName = rows.reduce<Record<string, number>>((acc, r) => {
-    acc[r.typeName] = (acc[r.typeName] ?? 0) + 1;
+  const byCategory = rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.category] = (acc[r.category] ?? 0) + 1;
     return acc;
   }, {});
   const brands = new Set(rows.map((r) => r.brand)).size;
 
   const values = rows
-    .map((r) => `  (${lit(r.brand)}, ${lit(r.model)}, ${lit(r.typeName)})`)
+    .map((r) => `  (${lit(r.brand)}, ${lit(r.model)}, ${lit(r.category)})`)
     .join(',\n');
 
   process.stdout.write(`-- Plantilla del catálogo de vehículos: ${brands} marcas, ${rows.length} modelos.
--- Reparto por tipo sembrado: ${Object.entries(byTypeName)
+-- Reparto por categoría sembrada: ${Object.entries(byCategory)
     .sort((a, b) => b[1] - a[1])
     .map(([t, n]) => `${t}=${n}`)
     .join(', ')}.
@@ -474,16 +474,17 @@ function main(): void {
 -- \`bootstrap_tenant_defaults()\`, que le da a cada cuenta nueva su copia propia
 -- y editable.${withBackfill ? ' A las playas que ya existen las alcanza el\n-- bloque de backfill del final.' : ' Cambiarla afecta a las cuentas futuras; nunca a las\n-- existentes.'}
 --
--- Los utilitarios (Kangoo, Partner, Berlingo, furgones y chasis) se siembran
--- como "Otro": "Utilitario" no está entre los siete defaults a propósito, es el
--- ejemplo canónico de la categoría que crea el dueño. El mapeo vive en
--- TEMPLATE_TYPE_NAME (scripts/data/vehicle-types.ts), en una sola línea.
+-- Cada modelo apunta a una CATEGORÍA de la plataforma (vehicle_categories), no
+-- al nombre de un tipo: el trigger lo cuelga del tipo vivo más antiguo de esa
+-- categoría de la cuenta (resolve_tenant_vehicle_type). Los utilitarios
+-- (Kangoo, Partner, Berlingo, furgones y chasis) son \`van\`. El mapeo vive en
+-- TEMPLATE_CATEGORY (scripts/data/vehicle-types.ts), en una sola línea.
 --
 -- Sin \`id\`: la PK es (brand, model) y cada tenant genera los suyos al copiar.
 -- Eso elimina el aparato de UUIDv5 determinísticos que necesitaba el catálogo
 -- global, donde los ids eran compartidos por todas las playas.
 
-INSERT INTO vehicle_catalog_defaults (brand, model, type_name) VALUES
+INSERT INTO vehicle_catalog_defaults (brand, model, category) VALUES
 ${values}
 ON CONFLICT DO NOTHING;
 ${withBackfill ? backfillSql() : ''}`);

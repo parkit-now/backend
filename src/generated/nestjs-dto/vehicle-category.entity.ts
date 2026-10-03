@@ -1,6 +1,7 @@
 
 import {ApiProperty} from '@nestjs/swagger'
 import {VehicleTypeDefaultEntity} from './vehicle-type-default.entity'
+import {VehicleCatalogDefaultEntity} from './vehicle-catalog-default.entity'
 import {VehicleTypeEntity} from './vehicle-type.entity'
 
 
@@ -14,5 +15,6 @@ label: string ;
 sortOrder: number ;
 reservable: boolean ;
 typeDefaults?: VehicleTypeDefaultEntity[] ;
+catalogDefaults?: VehicleCatalogDefaultEntity[] ;
 vehicleTypes?: VehicleTypeEntity[] ;
 }

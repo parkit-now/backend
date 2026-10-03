@@ -18,8 +18,9 @@ model VehicleCategory {
   sortOrder  Int     @unique @map("sort_order") @db.SmallInt
   reservable Boolean @default(false)
 
-  typeDefaults VehicleTypeDefault[]
-  vehicleTypes VehicleType[]
+  typeDefaults    VehicleTypeDefault[]
+  catalogDefaults VehicleCatalogDefault[]
+  vehicleTypes    VehicleType[]
 
   @@map("vehicle_categories")
 }

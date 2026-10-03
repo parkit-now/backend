@@ -20,8 +20,6 @@ model VehicleTypeDefault {
   category    String          @db.VarChar(20)
   categoryRef VehicleCategory @relation(fields: [category], references: [code], onUpdate: Cascade)
 
-  catalogDefaults VehicleCatalogDefault[]
-
   @@map("vehicle_type_defaults")
 }
 
@@ -34,10 +32,12 @@ model VehicleCatalogDefault {
   brand String @db.VarChar(120)
   model String @db.VarChar(120)
 
-  /// Nombre del tipo por defecto. FK a `vehicle_type_defaults.name` para que
-  /// el generador no pueda emitir un tipo inexistente.
-  typeName    String             @map("type_name") @db.VarChar(60)
-  defaultType VehicleTypeDefault @relation(fields: [typeName], references: [name], onUpdate: Cascade)
+  /// Categoría de la plataforma del modelo (migración 20261005120100). Antes
+  /// era `type_name`, el nombre de un tipo por defecto: el trigger lo resolvía
+  /// por nombre y dejaba de encontrarlo si el dueño renombraba. Ahora cuelga
+  /// del tipo vivo más antiguo de esa categoría (`resolve_tenant_vehicle_type`).
+  category    String          @db.VarChar(20)
+  categoryRef VehicleCategory @relation(fields: [category], references: [code], onUpdate: Cascade)
 
   @@id([brand, model])
   @@map("vehicle_catalog_defaults")
