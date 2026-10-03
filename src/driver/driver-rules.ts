@@ -170,3 +170,109 @@ export function reservationWindowProblem(
   }
   return null;
 }
+
+// ─── Reservas: cupo y disponibilidad (SCRUM-261, SCRUM-214) ──────────────────
+
+/**
+ * Una reserva deja de ocupar lugar este tiempo después de su hora de ingreso:
+ * o el auto ya entró (y cuenta como vehículo adentro) o no vino (no-show).
+ * Regla provisoria acordada el 2026-09-27; ajustar acá.
+ */
+export const NO_SHOW_TOLERANCE_MINUTES = 30;
+
+export type ReservationWindow = { entryAt: Date; exitAt: Date };
+
+export function windowsOverlap(
+  left: ReservationWindow,
+  right: ReservationWindow,
+): boolean {
+  return (
+    left.entryAt.getTime() < right.exitAt.getTime() &&
+    right.entryAt.getTime() < left.exitAt.getTime()
+  );
+}
+
+/**
+ * Máximo de reservas simultáneas dentro de `window`. No es la cantidad de
+ * reservas que la tocan: 10–11 y 17–18 tocan una ventana de 10 a 18 pero nunca
+ * coinciden, así que ocupan UNA plaza, no dos. Barrido por eventos; en el
+ * mismo instante una salida libera antes de que entre la siguiente.
+ */
+export function peakConcurrentReservations(
+  reservations: ReservationWindow[],
+  window: ReservationWindow,
+): number {
+  const events: { at: number; delta: number }[] = [];
+  for (const reservation of reservations) {
+    if (!windowsOverlap(reservation, window)) continue;
+    events.push({ at: reservation.entryAt.getTime(), delta: 1 });
+    events.push({ at: reservation.exitAt.getTime(), delta: -1 });
+  }
+  events.sort((left, right) => left.at - right.at || left.delta - right.delta);
+  let current = 0;
+  let peak = 0;
+  for (const event of events) {
+    current += event.delta;
+    peak = Math.max(peak, current);
+  }
+  return peak;
+}
+
+/**
+ * ¿Entra una reserva nueva? El cupo es `reservable_spots` de "Servicios →
+ * Reservas" (SCRUM-214): plazas que se pueden reservar A LA VEZ. Entra si en
+ * el momento más cargado de su ventana las reservas confirmadas siguen por
+ * debajo del cupo. Los autos que entran sin reserva no lo consumen: el dueño
+ * aparta esas plazas para reservas.
+ */
+export function hasReservationQuotaFor(
+  reservableSpots: number,
+  peakConcurrent: number,
+): boolean {
+  return peakConcurrent < reservableSpots;
+}
+
+/**
+ * ¿La reserva ocupa un lugar "ahora" para el conteo de disponibilidad? Sí si
+ * es de HOY (día civil en la zona de la playa) y todavía no venció.
+ */
+export function reservationHoldsSpotNow(
+  entryAt: Date,
+  now: Date,
+  tz = DEFAULT_TIME_ZONE,
+): boolean {
+  const expiresAt = entryAt.getTime() + NO_SHOW_TOLERANCE_MINUTES * 60_000;
+  return (
+    dayKeyIn(entryAt, tz) === dayKeyIn(now, tz) && now.getTime() < expiresAt
+  );
+}
+
+/**
+ * Lugares libres para el conductor: capacidad − adentro − reservas de hoy
+ * vigentes. `null` si la playa no declaró capacidad (no se puede saber).
+ */
+export function availableSpots(
+  capacity: number,
+  occupiedNow: number,
+  reservedToday: number,
+): number | null {
+  if (capacity <= 0) return null;
+  return Math.max(capacity - occupiedNow - reservedToday, 0);
+}
+
+export type DriverReservationState = 'active' | 'completed' | 'cancelled';
+
+/** Estado que ve el conductor, derivado de la hora (sin cron). */
+export function reservationState(
+  status: 'confirmed' | 'cancelled',
+  exitAt: Date,
+  now: Date,
+): DriverReservationState {
+  if (status === 'cancelled') return 'cancelled';
+  return exitAt.getTime() <= now.getTime() ? 'completed' : 'active';
+}
+
+/** Patente normalizada: mayúsculas, sin espacios ni guiones. */
+export function normalizePlate(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}

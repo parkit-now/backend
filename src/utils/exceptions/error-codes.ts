@@ -129,6 +129,14 @@ export const ErrorCodes = {
   RESERVATION_STAY_TOO_LONG: 'RESERVATION_STAY_TOO_LONG',
   // La playa cierra en algún momento entre el ingreso y el egreso.
   RESERVATION_OUTSIDE_OPENING_HOURS: 'RESERVATION_OUTSIDE_OPENING_HOURS',
+  // No queda cupo en la ventana pedida (SCRUM-261).
+  RESERVATION_NO_CAPACITY: 'RESERVATION_NO_CAPACITY',
+  // La reserva no existe o es de otro conductor (mismo code para ambos).
+  RESERVATION_NOT_FOUND: 'RESERVATION_NOT_FOUND',
+  // Ya empezó o ya estaba cancelada.
+  RESERVATION_NOT_CANCELLABLE: 'RESERVATION_NOT_CANCELLABLE',
+  // El id (clave de idempotencia) ya lo usó otra reserva distinta.
+  RESERVATION_ID_CONFLICT: 'RESERVATION_ID_CONFLICT',
 
   // Services (amenities)
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',

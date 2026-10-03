@@ -8,6 +8,7 @@ const mockTenantClient = {
   schedule: { findMany: jest.fn() },
   service: { findFirst: jest.fn() },
   entry: { count: jest.fn() },
+  reservation: { findMany: jest.fn() },
 };
 
 // `prismaForTenant(prisma, id)` es `prisma.$extends(...)`: el cliente acotado
@@ -61,6 +62,7 @@ describe('DriverService', () => {
       reservationRate: reservationRate(1800),
     });
     mockTenantClient.entry.count.mockResolvedValue(8);
+    mockTenantClient.reservation.findMany.mockResolvedValue([]);
   });
 
   describe('findNearby', () => {
@@ -119,6 +121,20 @@ describe('DriverService', () => {
         reservationHourPriceArs: null,
       });
     });
+  });
+
+  it('descuenta las reservas de hoy que todavía ocupan lugar', async () => {
+    mockTenantClient.reservation.findMany.mockResolvedValue([
+      { entryAt: ar('2026-09-27T18:00:00') }, // más tarde hoy: ocupa
+      { entryAt: ar('2026-09-27T15:40:00') }, // vigente (vence 16:10)
+      { entryAt: ar('2026-09-27T11:00:00') }, // vencida: no ocupa
+    ]);
+    const [parking] = await service.findNearby(
+      { latitude: -34.6037, longitude: -58.3816, radiusMeters: 5000 },
+      NOW,
+    );
+    // 20 de capacidad − 8 adentro − 2 reservas vigentes.
+    expect(parking.availableSpots).toBe(10);
   });
 
   describe('quote', () => {

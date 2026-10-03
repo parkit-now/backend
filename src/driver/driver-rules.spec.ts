@@ -1,10 +1,17 @@
 import { ScheduleDay } from '@prisma/client';
 import {
+  availableSpots,
   boundingBox,
   distanceMeters,
+  hasReservationQuotaFor,
   isOpenAt,
   isOpenThroughout,
+  normalizePlate,
+  peakConcurrentReservations,
+  reservationHoldsSpotNow,
+  reservationState,
   reservationWindowProblem,
+  windowsOverlap,
   type ScheduleRange,
 } from './driver-rules';
 
@@ -150,5 +157,90 @@ describe('reservationWindowProblem', () => {
         now,
       ),
     ).toBeNull();
+  });
+});
+
+describe('reservas: disponibilidad y cupo', () => {
+  const now = ar('2026-09-28T10:00:00');
+  const window = (from: string, to: string) => ({
+    entryAt: ar(`2026-09-28T${from}:00`),
+    exitAt: ar(`2026-09-28T${to}:00`),
+  });
+
+  it('una reserva de hoy ocupa lugar hasta 30 min después del ingreso', () => {
+    expect(reservationHoldsSpotNow(ar('2026-09-28T18:00:00'), now)).toBe(true);
+    expect(reservationHoldsSpotNow(ar('2026-09-28T09:45:00'), now)).toBe(true);
+    expect(reservationHoldsSpotNow(ar('2026-09-28T09:15:00'), now)).toBe(false);
+  });
+
+  it('una reserva de otro día no descuenta hoy', () => {
+    expect(reservationHoldsSpotNow(ar('2026-09-29T10:00:00'), now)).toBe(false);
+    // 22:00 del 27 en Argentina es 01:00Z del 28: no debe contarse como hoy.
+    expect(
+      reservationHoldsSpotNow(
+        ar('2026-09-27T22:00:00'),
+        ar('2026-09-27T21:00:00'),
+      ),
+    ).toBe(true);
+  });
+
+  it('calcula los libres y no baja de cero', () => {
+    expect(availableSpots(20, 8, 3)).toBe(9);
+    expect(availableSpots(10, 8, 5)).toBe(0);
+    expect(availableSpots(0, 3, 1)).toBeNull();
+  });
+
+  it('detecta superposición de ventanas (bordes no se pisan)', () => {
+    const a = window('10:00', '12:00');
+    expect(windowsOverlap(a, window('11:00', '13:00'))).toBe(true);
+    expect(windowsOverlap(a, window('12:00', '13:00'))).toBe(false);
+  });
+
+  it('cuenta el pico de reservas simultáneas, no las que tocan la ventana', () => {
+    const requested = window('10:00', '18:00');
+    // 10–11 y 17–18 tocan la ventana pero nunca coinciden: pico 1.
+    expect(
+      peakConcurrentReservations(
+        [window('10:00', '11:00'), window('17:00', '18:00')],
+        requested,
+      ),
+    ).toBe(1);
+    // 12–15 y 14–16 coinciden de 14 a 15: pico 2.
+    expect(
+      peakConcurrentReservations(
+        [window('12:00', '15:00'), window('14:00', '16:00')],
+        requested,
+      ),
+    ).toBe(2);
+    // Una sale cuando entra la otra: no se pisan.
+    expect(
+      peakConcurrentReservations(
+        [window('10:00', '12:00'), window('12:00', '14:00')],
+        requested,
+      ),
+    ).toBe(1);
+    // Fuera de la ventana no cuenta.
+    expect(
+      peakConcurrentReservations([window('08:00', '10:00')], requested),
+    ).toBe(0);
+  });
+
+  it('entra mientras el pico quede por debajo del cupo', () => {
+    expect(hasReservationQuotaFor(3, 2)).toBe(true);
+    expect(hasReservationQuotaFor(3, 3)).toBe(false);
+    expect(hasReservationQuotaFor(0, 0)).toBe(false);
+  });
+
+  it('deriva el estado de la reserva y normaliza la patente', () => {
+    expect(reservationState('confirmed', ar('2026-09-28T12:00:00'), now)).toBe(
+      'active',
+    );
+    expect(reservationState('confirmed', ar('2026-09-28T09:00:00'), now)).toBe(
+      'completed',
+    );
+    expect(reservationState('cancelled', ar('2026-09-28T12:00:00'), now)).toBe(
+      'cancelled',
+    );
+    expect(normalizePlate(' ab-123 cd ')).toBe('AB123CD');
   });
 });

@@ -42,6 +42,8 @@ model User {
   // (global/payment-intents.prisma). Back-relation de `createdByUserId`, que es
   // `SET NULL` al borrar: el historial de cobros sobrevive al empleado.
   createdPaymentIntents      PaymentIntent[]
+  // Reservas que hizo como conductor (tenant/reservations.prisma).
+  reservations               Reservation[]
 
   @@map("users")
 }
