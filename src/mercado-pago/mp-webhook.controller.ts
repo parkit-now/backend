@@ -104,6 +104,9 @@ export class MpWebhookController {
       // correcta y `req.query.data?.id` no existiría.
       dataId: first(req.query['data.id']),
       rawBody: req.body,
+      queryType: first(req.query['type']),
+      queryTopic: first(req.query['topic']),
+      queryId: first(req.query['id']),
     });
   }
 }

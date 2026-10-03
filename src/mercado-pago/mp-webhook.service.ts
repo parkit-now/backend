@@ -1,8 +1,14 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { PaymentIntentStatus } from '@prisma/client';
 import type { PaymentIntent } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
+import {
+  RESERVATION_PAYMENT_GATEWAY,
+  type ProviderPayment,
+  type ReservationPaymentGateway,
+} from '../reservations/payment-gateway/reservation-payment-gateway';
+import { ReservationLifecycleService } from '../reservations/reservation-lifecycle.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { MpApiClient, type MpOrder } from './mp-api.client';
@@ -18,6 +24,24 @@ const INSTANCE = '/integrations/mercadopago/webhook';
  * los habilita en el panel, y todos tienen que terminar en un 200 silencioso.
  */
 const ORDER_TOPIC = 'order';
+
+/** Pagos de Checkout Pro (reservas): el estado sale de leer el pago. */
+const PAYMENT_TOPIC = 'payment';
+
+/** Contracargos: fuera del MVP, se acusa recibo y se loguea. */
+const CHARGEBACK_TOPICS: readonly string[] = [
+  'topic_chargebacks_wh',
+  'chargebacks',
+];
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Los `code` con los que `MpApiClient` avisa que Mercado Pago no responde. */
+const MP_DOWN_CODES: readonly string[] = [
+  ErrorCodes.MP_UNAVAILABLE,
+  ErrorCodes.MP_UNREACHABLE,
+];
 
 /**
  * Los `status` de una `Order` de Mercado Pago. Son STRINGS y no un enum de
@@ -49,6 +73,14 @@ export interface MpWebhookNotification {
   readonly dataId?: string | null;
   /** El cuerpo sin tocar: un `Buffer` del parser raw de `main.ts`. */
   readonly rawBody?: unknown;
+  /**
+   * Query `type` / `topic` / `id`. Mercado Pago pone `?type=payment&data.id=`
+   * en las notificaciones firmadas y `?topic=payment&id=` en las IPN viejas
+   * (sin firma). El tópico del cuerpo gana cuando está.
+   */
+  readonly queryType?: string | null;
+  readonly queryTopic?: string | null;
+  readonly queryId?: string | null;
   /** Reloj inyectable, para testear la ventana de replay. */
   readonly now?: Date;
 }
@@ -123,6 +155,9 @@ export class MpWebhookService {
     private readonly tokens: MpTokenService,
     private readonly mpApi: MpApiClient,
     private readonly audit: AuditService,
+    @Inject(RESERVATION_PAYMENT_GATEWAY)
+    private readonly gateway: ReservationPaymentGateway,
+    private readonly lifecycle: ReservationLifecycleService,
   ) {}
 
   /**
@@ -134,6 +169,22 @@ export class MpWebhookService {
    * ahí la llamada saliente a Mercado Pago.
    */
   async handle(notification: MpWebhookNotification): Promise<void> {
+    // ── 0. IPN legacy ─────────────────────────────────────────────────────
+    //
+    // El formato viejo (`?topic=payment&id=123`) no viene firmado y no hay
+    // forma de autenticarlo: se acusa recibo (un 401 sólo generaría reintentos)
+    // y se ignora. Los pagos nos llegan por el webhook firmado.
+    if (
+      !str(notification.signatureHeader) &&
+      !str(notification.dataId) &&
+      (str(notification.queryTopic) || str(notification.queryId))
+    ) {
+      this.logger.debug(
+        `Ignoring a legacy unsigned IPN (topic "${str(notification.queryTopic) ?? 'unknown'}")`,
+      );
+      return;
+    }
+
     // ── 1. Firma ──────────────────────────────────────────────────────────
     //
     // Va PRIMERO y antes de cualquier query: si no está firmada, esto es
@@ -162,7 +213,12 @@ export class MpWebhookService {
     }
 
     // ── 2. El cuerpo, leído a mano y campo por campo ──────────────────────
-    const payload = parseBody(notification.rawBody);
+    const queryTopic =
+      str(notification.queryType) ?? str(notification.queryTopic);
+    // Con el tópico en la query el cuerpo es opcional (el `payment` firmado se
+    // resuelve por `data.id`); sin tópico en ningún lado, un cuerpo ilegible no
+    // tiene de dónde sacar nada.
+    const payload = parseBody(notification.rawBody) ?? (queryTopic ? {} : null);
     if (!payload) {
       this.logger.warn(
         'A signed Mercado Pago notification arrived with an unreadable body: ignoring it',
@@ -170,11 +226,30 @@ export class MpWebhookService {
       return;
     }
 
-    const type = str(payload.type) ?? str(payload.topic);
+    const type = str(payload.type) ?? str(payload.topic) ?? queryTopic;
     const action = str(payload.action);
     const bodyDataId = str(obj(payload.data)?.id);
 
     // ── 3. Tópico ─────────────────────────────────────────────────────────
+    if (type === PAYMENT_TOPIC) {
+      await this.handlePayment(
+        str(notification.dataId) ?? bodyDataId,
+        str(payload.user_id) ??
+          (typeof payload.user_id === 'number'
+            ? String(payload.user_id)
+            : null),
+        type,
+      );
+      return;
+    }
+
+    if (type && CHARGEBACK_TOPICS.includes(type)) {
+      this.logger.log(
+        `Acknowledging Mercado Pago chargeback notification "${type}" (out of scope for now)`,
+      );
+      return;
+    }
+
     if (type !== ORDER_TOPIC) {
       this.logger.log(
         `Ignoring Mercado Pago notification of topic "${type ?? 'unknown'}" (action "${action ?? 'none'}")`,
@@ -221,6 +296,175 @@ export class MpWebhookService {
 
     // ── 7. La transición ──────────────────────────────────────────────────
     await this.applyOrderStatus(intent, order);
+  }
+
+  /**
+   * Un pago de Checkout Pro. Igual que con las órdenes, la notificación es un
+   * DISPARADOR: el estado sale de leer el pago en Mercado Pago, con el token de
+   * la playa, y nunca del cuerpo.
+   *
+   * Pasos: (1) deducir la playa, (2) leer el pago, (3) ubicar la reserva por
+   * `external_reference` entre las de esa playa, (4) despachar al ciclo de vida
+   * (idempotente: un aviso repetido o fuera de orden es inofensivo).
+   *
+   * Errores: Mercado Pago caído -> 503 (que reintente); token vencido, cuenta
+   * desvinculada o cualquier otra cosa -> 200 con un warn: el barrido de
+   * reservas recupera el pago aprobado que se haya perdido.
+   */
+  private async handlePayment(
+    paymentId: string | null,
+    userId: string | null,
+    topic: string,
+  ): Promise<void> {
+    if (!paymentId) {
+      this.logger.warn(
+        'A Mercado Pago payment notification arrived without data.id: ignoring it',
+      );
+      return;
+    }
+
+    const tenantIds = await this.resolveTenants(paymentId, userId);
+    if (tenantIds.length === 0) {
+      this.logger.debug(
+        `Mercado Pago payment ${paymentId} (topic ${topic}) does not belong to any linked entity: ignoring it`,
+      );
+      return;
+    }
+
+    let reservationId: string | null = null;
+    try {
+      const payment = await this.gateway.getPayment({
+        tenantId: tenantIds[0],
+        providerPaymentId: paymentId,
+      });
+
+      reservationId = payment.externalReference;
+      const match =
+        reservationId && UUID_RE.test(reservationId)
+          ? await this.prisma.reservationPayment.findFirst({
+              where: { reservationId, tenantId: { in: tenantIds } },
+              select: { reservationId: true, tenantId: true },
+            })
+          : null;
+      if (!match) {
+        this.logger.debug(
+          `Mercado Pago payment ${paymentId} (topic ${topic}) is not a reservation payment: ignoring it`,
+        );
+        return;
+      }
+
+      await this.applyPayment(
+        match.reservationId,
+        payment,
+        topic,
+        match.tenantId,
+      );
+    } catch (error) {
+      const code = failureCode(error);
+      if (code && MP_DOWN_CODES.includes(code)) {
+        this.logger.error(
+          `Mercado Pago is unavailable while handling payment ${paymentId} (reservation ${reservationId ?? 'unknown'}, topic ${topic}): ${describeFailure(error)}`,
+        );
+        throw new FormattedException(
+          'Service Unavailable',
+          HttpStatus.SERVICE_UNAVAILABLE,
+          `Could not verify Mercado Pago payment ${paymentId}. Retry later.`,
+          INSTANCE,
+          ErrorCodes.MP_UNAVAILABLE,
+        );
+      }
+      this.logger.warn(
+        `Could not apply Mercado Pago payment ${paymentId} (reservation ${reservationId ?? 'unknown'}, topic ${topic}): ${describeFailure(error)}`,
+      );
+    }
+  }
+
+  /**
+   * La playa dueña del pago: primero por un pago ya conocido
+   * (`providerPaymentId`) y, si es el primer aviso, por el `user_id` del
+   * vendedor contra las cuentas vinculadas. Más de una cuenta puede compartir
+   * `mpUserId` (no es único), por eso devuelve una lista.
+   */
+  private async resolveTenants(
+    paymentId: string,
+    userId: string | null,
+  ): Promise<string[]> {
+    const known = await this.prisma.reservationPayment.findFirst({
+      where: { providerPaymentId: paymentId },
+      select: { tenantId: true },
+    });
+    if (known) return [known.tenantId];
+    if (!userId) return [];
+
+    const accounts = await this.prisma.mpAccount.findMany({
+      where: { mpUserId: userId, status: 'linked' },
+      select: { tenantId: true },
+    });
+    return accounts.map((account) => account.tenantId);
+  }
+
+  /** Despacha el estado leído del pago al ciclo de vida de la reserva. */
+  private async applyPayment(
+    reservationId: string,
+    payment: ProviderPayment,
+    topic: string,
+    tenantId: string,
+  ): Promise<void> {
+    const ref = {
+      providerPaymentId: payment.providerPaymentId,
+      providerStatusDetail: payment.statusDetail,
+    };
+    const context = `payment ${payment.providerPaymentId}, reservation ${reservationId}, entity ${tenantId}, topic ${topic}`;
+
+    switch (payment.status) {
+      case 'approved': {
+        const result = await this.lifecycle.markPaid(reservationId, {
+          ...ref,
+          providerStatus: 'approved',
+        });
+        this.logger.log(
+          `Mercado Pago ${context}: approved -> ${result.outcome}`,
+        );
+        return;
+      }
+      case 'partially_refunded': {
+        // Un pago devuelto a medias estuvo aprobado: si todavía no lo
+        // habíamos anotado, se confirma primero (idempotente).
+        await this.lifecycle.markPaid(reservationId, {
+          ...ref,
+          providerStatus: 'approved',
+        });
+        const result = await this.lifecycle.confirmRefund(reservationId, {
+          refundedAmountArs: payment.refundedAmountArs,
+          providerPaymentId: payment.providerPaymentId,
+        });
+        this.logger.log(
+          `Mercado Pago ${context}: partially refunded -> ${result.outcome}`,
+        );
+        return;
+      }
+      case 'refunded': {
+        const result = await this.lifecycle.confirmRefund(reservationId, {
+          refundedAmountArs: payment.refundedAmountArs || payment.amountArs,
+          providerPaymentId: payment.providerPaymentId,
+        });
+        this.logger.log(
+          `Mercado Pago ${context}: refunded -> ${result.outcome}`,
+        );
+        return;
+      }
+      case 'rejected':
+        await this.lifecycle.markPaymentRejected(reservationId, {
+          ...ref,
+          providerStatus: 'rejected',
+        });
+        this.logger.log(`Mercado Pago ${context}: rejected`);
+        return;
+      default:
+        this.logger.log(
+          `Mercado Pago ${context} is "${payment.status}": nothing to do`,
+        );
+    }
   }
 
   /**
@@ -507,4 +751,13 @@ function describeFailure(error: unknown): string {
     return `HTTP ${error.getStatus()}`;
   }
   return error instanceof Error ? error.name : 'unknown error';
+}
+
+/** El `code` estable de un `FormattedException`, o `null`. */
+function failureCode(error: unknown): string | null {
+  if (!(error instanceof FormattedException)) return null;
+  const body: unknown = error.getResponse();
+  return body !== null && typeof body === 'object' && 'code' in body
+    ? String((body as Record<string, unknown>).code)
+    : null;
 }
