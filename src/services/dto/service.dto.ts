@@ -31,6 +31,33 @@ export class ServiceDto {
   })
   reservableSpots: number | null;
 
+  @ApiProperty({
+    type: [String],
+    description: 'ADVANCE_RESERVATION: tipos de vehículo que pueden reservar.',
+  })
+  reservationVehicleKinds: string[];
+
+  @ApiProperty({ description: 'ADVANCE_RESERVATION: opening | custom.' })
+  reservationHoursMode: string;
+
+  @ApiProperty({ description: 'ADVANCE_RESERVATION: auto | manual.' })
+  acceptanceMode: string;
+
+  @ApiProperty({ type: Number })
+  approvalWindowMinutes: number;
+
+  @ApiProperty({ type: Number })
+  freeCancelMinutes: number;
+
+  @ApiProperty({ type: Number })
+  lateCancelRefundPct: number;
+
+  @ApiProperty({ type: Number })
+  earlyArrivalMinutes: number;
+
+  @ApiProperty({ type: Number })
+  graceMinutes: number;
+
   @ApiProperty({ type: Number })
   version: number;
 

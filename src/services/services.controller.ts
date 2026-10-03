@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Put,
   Query,
   UseGuards,
   UseInterceptors,
@@ -14,12 +15,18 @@ import {
   ApiOperation,
   ApiParam,
   ApiTags,
+  ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { MembershipRole } from '@prisma/client';
 import { EntityRole } from '../auth/decorators/entity-role.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
+import { ProblemDetailsDto } from '../utils/exceptions/dto/problem-details.dto';
 import { TenantInterceptor } from '../database/tenant.interceptor';
+import {
+  ReservationHoursDto,
+  ReservationNotReadyProblemDto,
+} from './dto/reservation-hours.dto';
 import { ServiceCatalogItemDto } from './dto/service-catalog-item.dto';
 import { ServiceChangesQueryDto } from './dto/service-changes-query.dto';
 import { ServiceChangesResponseDto } from './dto/service-changes-response.dto';
@@ -65,6 +72,12 @@ export class ServicesController {
       'Update a service for the active tenant (ADVANCE_RESERVATION also takes the reservation rate and reservable spots)',
   })
   @ApiOkResponse({ type: ServiceCatalogItemDto })
+  @ApiUnprocessableEntityResponse({
+    type: ReservationNotReadyProblemDto,
+    description:
+      'SERVICE_RESERVATION_NOT_READY: se intentó activar las reservas sin ' +
+      'cumplir los requisitos; `missing` los lista.',
+  })
   @ApiParam({
     name: 'tenantId',
     description: 'The ID of the tenant (parking lot)',
@@ -75,6 +88,48 @@ export class ServicesController {
       enabled: dto.enabled,
       reservationRateId: dto.reservationRateId,
       reservableSpots: dto.reservableSpots,
+      reservationVehicleKinds: dto.reservationVehicleKinds,
+      acceptanceMode: dto.acceptanceMode,
+      approvalWindowMinutes: dto.approvalWindowMinutes,
+      freeCancelMinutes: dto.freeCancelMinutes,
+      lateCancelRefundPct: dto.lateCancelRefundPct,
+      earlyArrivalMinutes: dto.earlyArrivalMinutes,
+      graceMinutes: dto.graceMinutes,
     });
+  }
+
+  // Rutas literales (ADVANCE_RESERVATION) y no `:code/hours`: el horario de
+  // reservas sólo existe para ese servicio.
+  @Get('ADVANCE_RESERVATION/hours')
+  @ApiOperation({
+    summary: 'Reservation hours: mode (opening | custom) and custom ranges',
+  })
+  @ApiOkResponse({ type: ReservationHoursDto })
+  @ApiParam({
+    name: 'tenantId',
+    description: 'The ID of the tenant (parking lot)',
+  })
+  async getReservationHours() {
+    return this.servicesService.getReservationHours();
+  }
+
+  @Put('ADVANCE_RESERVATION/hours')
+  @EntityRole(MembershipRole.owner)
+  @ApiOperation({
+    summary:
+      'Replace the whole reservation hours set (ranges must fall within the opening hours)',
+  })
+  @ApiOkResponse({ type: ReservationHoursDto })
+  @ApiUnprocessableEntityResponse({
+    type: ProblemDetailsDto,
+    description:
+      'RESERVATION_HOURS_OUTSIDE_OPENING: algún rango no cae dentro del horario de apertura.',
+  })
+  @ApiParam({
+    name: 'tenantId',
+    description: 'The ID of the tenant (parking lot)',
+  })
+  async putReservationHours(@Body() dto: ReservationHoursDto) {
+    return this.servicesService.putReservationHours(dto);
   }
 }

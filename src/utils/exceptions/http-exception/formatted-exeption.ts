@@ -39,8 +39,12 @@ export class FormattedExceptionWithValidation extends HttpException {
     instance: string,
     code: ErrorCode,
     validationsErrors: ValidationErr[],
+    // Miembros de extensión del problem (RFC 7807 §3.2), p. ej. `missing`.
+    // Van primero para que nunca pisen los campos estándar.
+    extensions: Record<string, unknown> = {},
   ) {
     const body: ProblemDetails = {
+      ...extensions,
       title,
       status,
       detail,
