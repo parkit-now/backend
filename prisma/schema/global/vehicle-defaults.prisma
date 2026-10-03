@@ -15,6 +15,11 @@ model VehicleTypeDefault {
   name     String  @id @db.VarChar(60)
   accepted Boolean @default(true)
 
+  /// Categoría de la plataforma con la que nace el tipo (migración
+  /// 20261005120000). El trigger de alta de cuentas la copia a `vehicle_types`.
+  category    String          @db.VarChar(20)
+  categoryRef VehicleCategory @relation(fields: [category], references: [code], onUpdate: Cascade)
+
   catalogDefaults VehicleCatalogDefault[]
 
   @@map("vehicle_type_defaults")

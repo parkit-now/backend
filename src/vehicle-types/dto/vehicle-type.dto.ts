@@ -1,4 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import type { VehicleCategory } from '../../vehicle-categories/vehicle-categories';
 
 export class VehicleTypeDto {
   @ApiProperty({ format: 'uuid' })
@@ -17,6 +19,22 @@ export class VehicleTypeDto {
       'relación con el catálogo.',
   })
   accepted: boolean;
+
+  @ApiProperty({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    description:
+      'Categoría de la plataforma a la que pertenece el tipo. El `name` es ' +
+      'sólo la etiqueta que el dueño le pone en su playa.',
+  })
+  category: VehicleCategory;
+
+  @ApiProperty({
+    description:
+      'true si la categoría la adivinó el sistema (backfill o alta desde una ' +
+      'caja vieja). La web muestra "Revisá la categoría" hasta que el dueño ' +
+      'la guarda con PATCH.',
+  })
+  categoryInferred: boolean;
 
   @ApiProperty({
     type: Number,

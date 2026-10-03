@@ -422,10 +422,15 @@ type SeedVehicle = {
 };
 
 /**
- * Tipo propio de demo. "Utilitario" NO está entre los siete defaults a
- * propósito: es el ejemplo canónico de la categoría que crea el dueño. Que Once
- * lo tenga hace que el seed DEMUESTRE la feature en vez de contradecirla — y le
- * da al Iveco Daily una clasificación honesta en vez de mandarlo a "Otro".
+ * Tipos propios de demo (el trigger de `tenants` ya siembra los ocho
+ * estándar).
+ *
+ * - "Utilitario" (categoría `van`): el ejemplo canónico del tipo que crea el
+ *   dueño. Que Once lo tenga hace que el seed DEMUESTRE la feature en vez de
+ *   contradecirla, y le da al Iveco Daily una clasificación honesta.
+ * - "Camioneta" (`other`, inferida): es ambiguo a propósito (SUV o pickup),
+ *   así que queda marcado para que la web muestre el aviso "Revisá la
+ *   categoría" en el entorno de demo.
  */
 const TENANT_VEHICLE_TYPES = [
   {
@@ -433,6 +438,16 @@ const TENANT_VEHICLE_TYPES = [
     tenantId: TENANTS.once,
     name: 'Utilitario',
     accepted: true,
+    category: 'van',
+    categoryInferred: false,
+  },
+  {
+    seq: SEQ.vehicleType + 2,
+    tenantId: TENANTS.once,
+    name: 'Camioneta',
+    accepted: true,
+    category: 'other',
+    categoryInferred: true,
   },
 ];
 
@@ -1434,7 +1449,12 @@ async function seedTenantVehicles(): Promise<void> {
   // El tipo propio de demo va primero: los vehículos lo referencian por FK.
   for (const type of TENANT_VEHICLE_TYPES) {
     const id = seedUuidV7(type.seq);
-    const fields = { name: type.name, accepted: type.accepted };
+    const fields = {
+      name: type.name,
+      accepted: type.accepted,
+      category: type.category,
+      categoryInferred: type.categoryInferred,
+    };
     const existing = await prisma.vehicleType.findUnique({ where: { id } });
     if (!existing) {
       await prisma.vehicleType.create({
@@ -1446,7 +1466,7 @@ async function seedTenantVehicles(): Promise<void> {
   }
 
   for (const vehicle of TENANT_VEHICLES) {
-    // Los siete tipos por defecto los siembra el trigger de `tenants`; acá se
+    // Los ocho tipos por defecto los siembra el trigger de `tenants`; acá se
     // resuelve el nombre al id de ESE estacionamiento.
     const type = await prisma.vehicleType.findFirst({
       where: {

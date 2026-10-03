@@ -114,7 +114,10 @@ export class VehicleTypesController {
   @ApiOperation({
     operationId: 'vehicleTypesCreate',
     summary: 'Create a vehicle type for the entity',
-    description: 'Requires owner role. El `id` lo genera el cliente (UUIDv7).',
+    description:
+      'Requires owner role. El `id` lo genera el cliente (UUIDv7). `category` ' +
+      'es opcional sólo por compatibilidad con cajas viejas: si falta se infiere ' +
+      'y el tipo queda con `categoryInferred = true`.',
   })
   @ApiCreatedResponse({ type: VehicleTypeDto })
   @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
@@ -132,7 +135,9 @@ export class VehicleTypesController {
   @ApiOperation({
     operationId: 'vehicleTypesUpdate',
     summary: 'Update a vehicle type using optimistic locking (expectedVersion)',
-    description: 'Updates name and/or accepted. Requires owner role.',
+    description:
+      'Updates name, accepted and/or category. Guardar `category` apaga ' +
+      '`categoryInferred`. Requires owner role.',
   })
   @ApiOkResponse({ type: VehicleTypeDto })
   @ApiBadRequestResponse({ type: ValidationProblemDetailsDto })
