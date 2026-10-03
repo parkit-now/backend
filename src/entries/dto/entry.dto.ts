@@ -69,18 +69,19 @@ export class EntryDto {
   })
   whitelistId: string | null;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     type: String,
     format: 'uuid',
     nullable: true,
     description:
       'Reserva con la que entró el auto. La vincula el backend al crear el ' +
       'ingreso (por `reservationId` o por patente dentro de la ventana de ' +
-      'llegada). null en los ingresos sin reserva y en los anteriores.',
+      'llegada). null en los ingresos sin reserva y en los anteriores. ' +
+      'Opcional en el contrato: un backend anterior a la fase 6 no lo manda.',
   })
   reservationId: string | null;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     type: Number,
     nullable: true,
     description:
