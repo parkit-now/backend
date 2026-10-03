@@ -33,6 +33,7 @@ import {
   DriverReservationDetailDto,
   DriverReservationStateDto,
 } from './dto/reservation.dto';
+import { reservationCode } from '../reservations/reservation-checkin';
 
 const RESERVATIONS_PATH = '/driver/reservations';
 const LIST_LIMIT = 100;
@@ -477,7 +478,7 @@ export class DriverReservationsService {
     const payment = row.payments[0] ?? null;
     return {
       id: row.id,
-      code: `R-${row.id.replace(/-/g, '').slice(-6).toUpperCase()}`,
+      code: reservationCode(row.id),
       state: reservationState(
         row.status,
         row.exitAt,

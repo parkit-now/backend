@@ -168,6 +168,25 @@ export type ArrivalCandidate = Prisma.ReservationGetPayload<{
 
 type ReservationDb = Pick<Prisma.TransactionClient, 'reservation'>;
 
+/**
+ * `where` de las reservas vinculables de una patente cuya ventana puede
+ * incluir `at`, o `null` si la patente no tiene nada utilizable.
+ */
+export function arrivalCandidatesWhere(
+  tenantId: string,
+  plate: string,
+  at: Date,
+): Prisma.ReservationWhereInput | null {
+  const normalized = normalizePlate(plate);
+  if (!normalized) return null;
+  return {
+    tenantId,
+    vehiclePlate: normalized,
+    status: { in: [...LINKABLE_STATUSES] },
+    entryAt: arrivalSearchRange(at),
+  };
+}
+
 /** Las reservas vinculables de una patente cuya ventana puede incluir `at`. */
 export async function findArrivalCandidates(
   db: ReservationDb,
@@ -175,17 +194,9 @@ export async function findArrivalCandidates(
   plate: string,
   at: Date,
 ): Promise<ArrivalCandidate[]> {
-  const normalized = normalizePlate(plate);
-  if (!normalized) return [];
-  return db.reservation.findMany({
-    where: {
-      tenantId,
-      vehiclePlate: normalized,
-      status: { in: [...LINKABLE_STATUSES] },
-      entryAt: arrivalSearchRange(at),
-    },
-    select: ARRIVAL_SELECT,
-  });
+  const where = arrivalCandidatesWhere(tenantId, plate, at);
+  if (!where) return [];
+  return db.reservation.findMany({ where, select: ARRIVAL_SELECT });
 }
 
 export type ArrivalLink = {

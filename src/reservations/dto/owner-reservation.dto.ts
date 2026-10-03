@@ -125,6 +125,39 @@ export class OwnerReservationPaymentDto {
   createdAt: string;
 }
 
+/** El ingreso de la caja vinculado a la reserva (fase 6). */
+export class OwnerReservationStayDto {
+  @ApiProperty({ format: 'uuid' })
+  entryId: string;
+
+  @ApiProperty({ format: 'date-time', description: 'Cuándo entró el auto.' })
+  enteredAt: string;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'Cuándo salió; null mientras sigue adentro.',
+  })
+  leftAt: string | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Lo cobrado en la caja al salir: el excedente sobre el prepago. null ' +
+      'mientras sigue adentro.',
+  })
+  excessChargedArs: number | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description: 'Prepago descontado en la caja (snapshot del ingreso).',
+  })
+  prepaidAmountArs: number | null;
+}
+
 export class OwnerReservationDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
@@ -206,6 +239,15 @@ export class OwnerReservationDto {
 
   @ApiProperty({ type: OwnerReservationPolicyDto })
   policy: OwnerReservationPolicyDto;
+
+  @ApiProperty({
+    type: OwnerReservationStayDto,
+    nullable: true,
+    description:
+      'Ingreso de la caja vinculado (checked_in / completed). null si el auto ' +
+      'todavía no entró o la reserva no llegó a usarse.',
+  })
+  stay: OwnerReservationStayDto | null;
 }
 
 export class OwnerReservationDetailDto extends OwnerReservationDto {
@@ -237,4 +279,80 @@ export class PaginatedOwnerReservationsDto {
 
   @ApiProperty({ type: 'integer', example: 20 })
   pageSize: number;
+}
+
+/** `GET /reservations/match?plate=`: la patente que tipea la caja. */
+export class ReservationMatchQueryDto {
+  @ApiProperty({
+    description: 'Patente tal como la tipea el operador; se normaliza.',
+    example: 'AB 123 CD',
+    maxLength: 20,
+  })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  plate: string;
+}
+
+/** La reserva que el banner de la caja muestra al cargar la patente. */
+export class ReservationMatchDto {
+  @ApiProperty({ format: 'uuid' })
+  id: string;
+
+  @ApiProperty({ description: 'Código corto (R-XXXXXX).' })
+  code: string;
+
+  @ApiProperty({ enum: ReservationStatus, enumName: 'ReservationStatus' })
+  status: ReservationStatus;
+
+  @ApiProperty()
+  vehiclePlate: string;
+
+  @ApiProperty({ ...VEHICLE_CATEGORY_API_PROPERTY, nullable: true })
+  vehicleCategory: VehicleCategory | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  driverName: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  entryAt: string;
+
+  @ApiProperty({ format: 'date-time' })
+  exitAt: string;
+
+  @ApiProperty({
+    format: 'date-time',
+    description: 'Desde cuándo puede entrar (entryAt − llegada anticipada).',
+  })
+  arrivalFrom: string;
+
+  @ApiProperty({
+    format: 'date-time',
+    description: 'Hasta cuándo puede entrar (entryAt + tolerancia).',
+  })
+  arrivalUntil: string;
+
+  @ApiProperty({ description: 'Precio total de la reserva.' })
+  totalArs: number;
+
+  @ApiProperty({
+    description:
+      'Lo que el conductor ya pagó por Mercado Pago; la caja lo descuenta. 0 ' +
+      'si no hay pago registrado (camino viejo, sólo fuera de producción).',
+  })
+  prepaidAmountArs: number;
+}
+
+export class ReservationMatchResponseDto {
+  @ApiProperty({
+    type: ReservationMatchDto,
+    nullable: true,
+    description:
+      'La reserva confirmada de esa patente dentro de su ventana de llegada, ' +
+      'o null.',
+  })
+  reservation: ReservationMatchDto | null;
 }
