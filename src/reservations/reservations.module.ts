@@ -3,6 +3,7 @@ import { PrismaModule } from '../database/prisma.module';
 import { MercadoPagoModule } from '../mercado-pago/mercado-pago.module';
 import { DevCheckoutController } from './dev-checkout.controller';
 import { resolveReservationPaymentProvider } from './payment-gateway/reservation-payment.provider';
+import { MpReturnController } from './mp-return.controller';
 import { OwnerReservationsController } from './owner-reservations.controller';
 import { OwnerReservationsService } from './owner-reservations.service';
 import { ReservationPaymentGatewayProvider } from './payment-gateway/reservation-payment.provider';
@@ -21,6 +22,8 @@ import { ReservationSweeperService } from './reservation-sweeper.service';
   imports: [PrismaModule, MercadoPagoModule],
   controllers: [
     OwnerReservationsController,
+    // Página puente de Checkout Pro: siempre registrada (inofensiva sin MP).
+    MpReturnController,
     // Sólo con el proveedor `dev` (nunca en producción: ver el proveedor).
     ...(resolveReservationPaymentProvider() === 'dev'
       ? [DevCheckoutController]

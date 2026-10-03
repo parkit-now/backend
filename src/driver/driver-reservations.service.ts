@@ -11,6 +11,7 @@ import {
   RESERVATION_PAYMENT_GATEWAY,
   type ReservationPaymentGateway,
 } from '../reservations/payment-gateway/reservation-payment-gateway';
+import { isAllowedReturnUrl } from '../reservations/return-url';
 import { resolveReservationPaymentProvider } from '../reservations/payment-gateway/reservation-payment.provider';
 import { lockAndCheckCapacity } from '../reservations/reservation-capacity';
 import { ReservationLifecycleService } from '../reservations/reservation-lifecycle.service';
@@ -82,6 +83,15 @@ export class DriverReservationsService {
     dto: CreateReservationDto,
     now = new Date(),
   ): Promise<CreateReservationResponseDto | DriverReservationDetailDto> {
+    if (dto.returnUrl && !isAllowedReturnUrl(dto.returnUrl)) {
+      throw new FormattedException(
+        'Bad Request',
+        HttpStatus.BAD_REQUEST,
+        'The returnUrl is not an allowed destination.',
+        RESERVATIONS_PATH,
+        ErrorCodes.RESERVATION_RETURN_URL_NOT_ALLOWED,
+      );
+    }
     // TODO(fase-4): sacar el camino viejo cuando mobile mande `returnUrl`.
     const legacy = !dto.returnUrl;
     if (legacy && isProduction()) {
