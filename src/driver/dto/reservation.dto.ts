@@ -49,10 +49,10 @@ export class CreateReservationDto {
   @ApiProperty({
     required: false,
     description:
-      'A dónde vuelve el conductor después de pagar. Con él la reserva nace ' +
-      'en pending_payment y la respuesta trae el checkout. Sin él: en ' +
-      'producción 422 RESERVATION_CLIENT_OUTDATED; fuera de producción se ' +
-      'mantiene el camino viejo (confirmada, sin pago, respuesta plana).',
+      'A dónde vuelve el conductor después de pagar (parkit://, exp:// o ' +
+      'http://localhost:8081/). Con él la reserva nace en pending_payment y ' +
+      'la respuesta trae el checkout. Sin él: 422 RESERVATION_CLIENT_OUTDATED ' +
+      '(una app vieja no sabe pagar).',
   })
   @IsOptional()
   @IsString()
