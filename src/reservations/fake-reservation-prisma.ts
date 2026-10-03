@@ -24,6 +24,8 @@ function matches(row: Row, where: Record<string, any>): boolean {
 export class FakePrisma {
   reservations: Row[] = [];
   payments: Row[] = [];
+  /** Filas de `audit_log` que escribió el ciclo de vida. */
+  audits: Row[] = [];
   reservableSpots: number | null = 1;
   /** Lo que devuelve la consulta de cupo (reservas que se superponen). */
   overlapping: { entryAt: Date; exitAt: Date }[] = [];
@@ -59,6 +61,7 @@ export class FakePrisma {
         approvalDeadlineAt: null,
         cancelledAt: null,
         cancelledBy: null,
+        cancelledByUserId: null,
         reason: null,
         refundStatus: 'none',
         refundedAmountArs: null,
@@ -101,6 +104,13 @@ export class FakePrisma {
       const hit = this.payments.filter((p) => matches(p, where));
       hit.forEach((p) => this.apply(p, data));
       return { count: hit.length };
+    },
+  };
+
+  auditLog = {
+    create: async ({ data }: any) => {
+      this.audits.push({ ...data });
+      return { ...(data as Row) };
     },
   };
 

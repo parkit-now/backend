@@ -1,3 +1,4 @@
+import type { User, UserMembership } from '@prisma/client';
 import {
   Body,
   Controller,
@@ -18,6 +19,8 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { CurrentMembership } from '../auth/decorators/entity-role.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { TenantInterceptor } from '../database/tenant.interceptor';
@@ -28,6 +31,18 @@ import {
   ReservationReasonDto,
 } from './dto/owner-reservation.dto';
 import { OwnerReservationsService } from './owner-reservations.service';
+import type { ReservationActor } from './reservation-lifecycle.service';
+
+/**
+ * Quién actúa: el rol que tiene en la playa (dueño u operador) o `admin` si
+ * es un administrador global sin membresía.
+ */
+function actorOf(
+  user: User,
+  membership: UserMembership | null | undefined,
+): ReservationActor {
+  return { userId: user.id, role: membership?.role ?? 'admin' };
+}
 
 /**
  * Reservas de la playa para su equipo. Sin `@EntityRole`: el dueño y el
@@ -71,8 +86,14 @@ export class OwnerReservationsController {
   accept(
     @Param('tenantId', ParseUUIDPipe) tenantId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
   ) {
-    return this.reservations.accept(tenantId, reservationId);
+    return this.reservations.accept(
+      tenantId,
+      reservationId,
+      actorOf(user, membership),
+    );
   }
 
   @Post(':reservationId/reject')
@@ -86,8 +107,15 @@ export class OwnerReservationsController {
     @Param('tenantId', ParseUUIDPipe) tenantId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
     @Body() dto: ReservationReasonDto,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
   ) {
-    return this.reservations.reject(tenantId, reservationId, dto.reason);
+    return this.reservations.reject(
+      tenantId,
+      reservationId,
+      dto.reason,
+      actorOf(user, membership),
+    );
   }
 
   @Post(':reservationId/cancel')
@@ -101,8 +129,15 @@ export class OwnerReservationsController {
     @Param('tenantId', ParseUUIDPipe) tenantId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
     @Body() dto: ReservationReasonDto,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
   ) {
-    return this.reservations.cancel(tenantId, reservationId, dto.reason);
+    return this.reservations.cancel(
+      tenantId,
+      reservationId,
+      dto.reason,
+      actorOf(user, membership),
+    );
   }
 
   @Post(':reservationId/refund/retry')
@@ -113,7 +148,13 @@ export class OwnerReservationsController {
   retryRefund(
     @Param('tenantId', ParseUUIDPipe) tenantId: string,
     @Param('reservationId', ParseUUIDPipe) reservationId: string,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
   ) {
-    return this.reservations.retryRefund(tenantId, reservationId);
+    return this.reservations.retryRefund(
+      tenantId,
+      reservationId,
+      actorOf(user, membership),
+    );
   }
 }

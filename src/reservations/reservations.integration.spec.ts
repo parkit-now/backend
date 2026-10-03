@@ -19,6 +19,7 @@ const ENTRY = ar('2026-09-28T10:00:00');
 const EXIT = ar('2026-09-28T12:00:00');
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const RES = '0192f0a0-0000-7000-8000-00000000abcd';
+const OWNER = { userId: 'user-owner', role: 'owner' } as const;
 const USER = { id: 'user-1' } as User;
 
 const policy = (acceptanceMode: 'auto' | 'manual') => ({
@@ -101,7 +102,7 @@ describe('reservas: recorrido completo (integración del módulo)', () => {
     expect(paid.outcome).toBe('pending_approval');
     expect((await view(at(2))).payment?.status).toBe('approved');
 
-    await lifecycle.accept(TENANT, RES, at(5));
+    await lifecycle.accept(TENANT, RES, OWNER, at(5));
     expect((await view(at(5))).status).toBe('confirmed');
 
     await driver.cancel(USER, RES, at(10));
@@ -133,7 +134,13 @@ describe('reservas: recorrido completo (integración del módulo)', () => {
     );
     expect(paid.outcome).toBe('confirmed');
 
-    await lifecycle.ownerCancel(TENANT, RES, 'cierre por mantenimiento', at(3));
+    await lifecycle.ownerCancel(
+      TENANT,
+      RES,
+      'cierre por mantenimiento',
+      OWNER,
+      at(3),
+    );
     expect(await view(at(3))).toMatchObject({
       status: 'cancelled',
       refundStatus: 'refunded',
@@ -150,14 +157,14 @@ describe('reservas: recorrido completo (integración del módulo)', () => {
     await lifecycle.markPaid(RES, { providerPaymentId: 'devfail_3' }, at(1));
     gateway.nextRefundError = new Error('devfail');
 
-    await lifecycle.reject(TENANT, RES, 'sin lugar', at(2));
+    await lifecycle.reject(TENANT, RES, 'sin lugar', OWNER, at(2));
     expect(await view(at(2))).toMatchObject({
       status: 'rejected',
       refundStatus: 'failed',
     });
 
     gateway.nextRefundError = null;
-    await lifecycle.retryRefund(TENANT, RES, at(4));
+    await lifecycle.retryRefund(TENANT, RES, OWNER, at(4));
     expect(await view(at(4))).toMatchObject({
       refundStatus: 'refunded',
       refundedAmountArs: 9000,

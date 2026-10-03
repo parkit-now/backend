@@ -79,6 +79,19 @@ export const AuditActions = {
   // —el arqueo de ese turno contó esa plata y ahora está mal— y `warn` si
   // todavía estaba en `approved`, donde nadie lo había contado.
   PAYMENT_INTENT_REFUNDED: 'payment_intent.refunded',
+  // Reservas · acciones de una persona (conductor, dueño u operador) o del
+  // sistema que cambian el estado o mueven plata. `metadata.actorRole` dice
+  // quién fue (owner | operator | admin | driver | system).
+  RESERVATION_ACCEPTED: 'reservation.accepted',
+  RESERVATION_REJECTED: 'reservation.rejected',
+  RESERVATION_CANCELLED: 'reservation.cancelled',
+  RESERVATION_REFUND_RETRIED: 'reservation.refund_retried',
+  // El proveedor no pudo devolver la plata: `warn`, alguien tiene que
+  // reintentarlo a mano.
+  RESERVATION_REFUND_FAILED: 'reservation.refund_failed',
+  // Llegó un pago que ya no correspondía (sin cupo tras vencer la retención, o
+  // sobre una reserva cancelada) y el sistema lo devolvió entero.
+  RESERVATION_LATE_PAYMENT_REFUNDED: 'reservation.late_payment_refunded',
 } as const;
 
 export interface RecordAuditInput {

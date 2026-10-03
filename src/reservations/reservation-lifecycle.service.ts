@@ -6,6 +6,7 @@ import {
   type Prisma,
   type Reservation,
 } from '@prisma/client';
+import { AuditActions } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
@@ -33,6 +34,33 @@ const UNPAID_TERMINAL_STATUSES: ReservationStatus[] = [
   ReservationStatus.no_show,
 ];
 const MAX_REFUND_ERROR_LENGTH = 500;
+/** El resumen del error que va a la auditoría es más corto que el de la fila. */
+const MAX_AUDIT_ERROR_LENGTH = 200;
+
+/** Quién hace la acción, para `cancelled_by_user_id` y la auditoría. */
+export type ReservationActorRole =
+  | 'owner'
+  | 'operator'
+  | 'admin'
+  | 'driver'
+  | 'system';
+
+export type ReservationActor = {
+  /** `null` cuando lo hace el sistema (sweeper, webhook, checkout de dev). */
+  userId: string | null;
+  role: ReservationActorRole;
+};
+
+export const SYSTEM_ACTOR: ReservationActor = { userId: null, role: 'system' };
+
+/** El lado que se guarda en `cancelled_by`: dueño y operador son "owner". */
+function sideOf(actor: ReservationActor): 'driver' | 'owner' | 'system' {
+  if (actor.role === 'driver') return 'driver';
+  if (actor.role === 'system') return 'system';
+  return 'owner';
+}
+
+type AuditDb = Pick<Prisma.TransactionClient, 'auditLog'>;
 
 /** Datos del pago que reporta el proveedor (o el checkout de dev). */
 export type ProviderPaymentRef = {
@@ -201,7 +229,20 @@ export class ReservationLifecycleService {
               reason: 'late_payment_no_capacity',
             },
       });
-      return updated.count === 0 ? null : room;
+      if (updated.count === 0) return null;
+      if (!room) {
+        await this.audit(tx, {
+          action: AuditActions.RESERVATION_LATE_PAYMENT_REFUNDED,
+          reservation,
+          actor: SYSTEM_ACTOR,
+          extra: {
+            reasonCode: 'late_payment_no_capacity',
+            refundArs: Number(reservation.totalArs),
+            refundStatus: 'pending',
+          },
+        });
+      }
+      return room;
     });
     if (hadRoom === null) {
       return { changed: false, outcome: 'ignored', reservation };
@@ -209,7 +250,12 @@ export class ReservationLifecycleService {
 
     await this.approvePayment(reservation, payment, now);
     if (!hadRoom) {
-      await this.startRefund(reservation, Number(reservation.totalArs), now);
+      await this.startRefund(
+        reservation,
+        Number(reservation.totalArs),
+        now,
+        SYSTEM_ACTOR,
+      );
     }
     return {
       changed: true,
@@ -229,20 +275,39 @@ export class ReservationLifecycleService {
     payment: ProviderPaymentRef,
     now: Date,
   ): Promise<MarkPaidResult> {
-    const claimed = await this.prisma.reservation.updateMany({
-      where: {
-        id: reservation.id,
-        tenantId: reservation.tenantId,
-        status: reservation.status,
-        paidAt: null,
-      },
-      data: { paidAt: now },
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.reservation.updateMany({
+        where: {
+          id: reservation.id,
+          tenantId: reservation.tenantId,
+          status: reservation.status,
+          paidAt: null,
+        },
+        data: { paidAt: now },
+      });
+      if (result.count === 0) return false;
+      await this.audit(tx, {
+        action: AuditActions.RESERVATION_LATE_PAYMENT_REFUNDED,
+        reservation,
+        actor: SYSTEM_ACTOR,
+        extra: {
+          reasonCode: 'payment_after_cancel',
+          refundArs: Number(reservation.totalArs),
+          refundStatus: 'pending',
+        },
+      });
+      return true;
     });
-    if (claimed.count === 0) {
+    if (!claimed) {
       return { changed: false, outcome: 'ignored', reservation };
     }
     await this.approvePayment(reservation, payment, now);
-    await this.startRefund(reservation, Number(reservation.totalArs), now);
+    await this.startRefund(
+      reservation,
+      Number(reservation.totalArs),
+      now,
+      SYSTEM_ACTOR,
+    );
     return {
       changed: true,
       outcome: 'refunded_after_cancel',
@@ -289,6 +354,7 @@ export class ReservationLifecycleService {
   async accept(
     tenantId: string,
     reservationId: string,
+    actor: ReservationActor,
     now = new Date(),
   ): Promise<TransitionResult> {
     const instance = `/tenants/${tenantId}/reservations/${reservationId}/accept`;
@@ -311,15 +377,24 @@ export class ReservationLifecycleService {
         ErrorCodes.RESERVATION_APPROVAL_EXPIRED,
       );
     }
-    const updated = await this.prisma.reservation.updateMany({
-      where: {
-        id: reservation.id,
-        tenantId,
-        status: ReservationStatus.pending_approval,
-      },
-      data: { status: ReservationStatus.confirmed },
+    const accepted = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.reservation.updateMany({
+        where: {
+          id: reservation.id,
+          tenantId,
+          status: ReservationStatus.pending_approval,
+        },
+        data: { status: ReservationStatus.confirmed },
+      });
+      if (updated.count === 0) return false;
+      await this.audit(tx, {
+        action: AuditActions.RESERVATION_ACCEPTED,
+        reservation,
+        actor,
+      });
+      return true;
     });
-    if (updated.count === 0) throw notPendingApproval(instance);
+    if (!accepted) throw notPendingApproval(instance);
     return { changed: true, reservation: await this.reload(reservation.id) };
   }
 
@@ -328,6 +403,7 @@ export class ReservationLifecycleService {
     tenantId: string,
     reservationId: string,
     reason: string,
+    actor: ReservationActor,
     now = new Date(),
   ): Promise<TransitionResult> {
     const instance = `/tenants/${tenantId}/reservations/${reservationId}/reject`;
@@ -341,7 +417,7 @@ export class ReservationLifecycleService {
     }
     const rejected = await this.cancelAndRefund(reservation, {
       to: ReservationStatus.rejected,
-      by: 'owner',
+      actor,
       reason: reason.trim(),
       refundArs: Number(reservation.totalArs),
       now,
@@ -355,6 +431,7 @@ export class ReservationLifecycleService {
     tenantId: string,
     reservationId: string,
     reason: string,
+    actor: ReservationActor,
     now = new Date(),
   ): Promise<TransitionResult> {
     const instance = `/tenants/${tenantId}/reservations/${reservationId}/cancel`;
@@ -367,7 +444,7 @@ export class ReservationLifecycleService {
     if (!preview.allowed) throw notCancellable(instance);
     const cancelled = await this.cancelAndRefund(reservation, {
       to: ReservationStatus.cancelled,
-      by: 'owner',
+      actor,
       reason: reason.trim(),
       refundArs: preview.refundArs,
       now,
@@ -383,6 +460,7 @@ export class ReservationLifecycleService {
   async retryRefund(
     tenantId: string,
     reservationId: string,
+    actor: ReservationActor,
     now = new Date(),
   ): Promise<TransitionResult> {
     const instance = `/tenants/${tenantId}/reservations/${reservationId}/refund/retry`;
@@ -400,17 +478,30 @@ export class ReservationLifecycleService {
     if (reservation.refundStatus !== 'failed') throw notRetryable();
 
     // Toma el reintento: dos pedidos a la vez no mandan dos reembolsos.
-    const claimed = await this.prisma.reservation.updateMany({
-      where: { id: reservation.id, tenantId, refundStatus: 'failed' },
-      data: { refundStatus: 'pending' },
-    });
-    if (claimed.count === 0) throw notRetryable();
-
-    await this.startRefund(
-      reservation,
-      Number(reservation.refundRequestedArs ?? reservation.totalArs),
-      now,
+    const refundArs = Number(
+      reservation.refundRequestedArs ?? reservation.totalArs,
     );
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.reservation.updateMany({
+        where: { id: reservation.id, tenantId, refundStatus: 'failed' },
+        data: { refundStatus: 'pending' },
+      });
+      if (result.count === 0) return false;
+      await this.audit(tx, {
+        action: AuditActions.RESERVATION_REFUND_RETRIED,
+        reservation,
+        actor,
+        extra: {
+          refundArs,
+          refundStatus: 'pending',
+          attempt: reservation.refundAttempts + 1,
+        },
+      });
+      return true;
+    });
+    if (!claimed) throw notRetryable();
+
+    await this.startRefund(reservation, refundArs, now, actor);
     return { changed: true, reservation: await this.reload(reservation.id) };
   }
 
@@ -434,7 +525,7 @@ export class ReservationLifecycleService {
     if (!preview.allowed) throw notCancellable(instance);
     const cancelled = await this.cancelAndRefund(reservation, {
       to: ReservationStatus.cancelled,
-      by: 'driver',
+      actor: { userId, role: 'driver' },
       reason: null,
       refundArs: preview.refundArs,
       now,
@@ -487,8 +578,8 @@ export class ReservationLifecycleService {
     }
     const rejected = await this.cancelAndRefund(reservation, {
       to: ReservationStatus.rejected,
-      by: 'system',
-      reason: 'approval_timeout',
+      actor: SYSTEM_ACTOR,
+      reasonCode: 'approval_timeout',
       refundArs: Number(reservation.totalArs),
       now,
     });
@@ -583,28 +674,62 @@ export class ReservationLifecycleService {
     reservation: Reservation,
     options: {
       to: 'cancelled' | 'rejected';
-      by: 'driver' | 'owner' | 'system';
-      reason: string | null;
+      actor: ReservationActor;
+      /** Motivo que escribió la persona. */
+      reason?: string | null;
+      /** Motivo fijo del sistema (se guarda en `reason` si no hay otro). */
+      reasonCode?: string;
       refundArs: number;
       now: Date;
     },
   ): Promise<Reservation | null> {
     const { tenantId } = reservation;
-    const updated = await this.prisma.reservation.updateMany({
-      where: { id: reservation.id, tenantId, status: reservation.status },
-      data: {
-        status: options.to,
-        cancelledAt: options.now,
-        cancelledBy: options.by,
-        reason: options.reason,
-      },
+    const { actor } = options;
+    // Sin cobro previo (`pending_payment`) o de camino viejo (`paidAt` null)
+    // no hay nada que devolver.
+    const refunds =
+      reservation.status !== ReservationStatus.pending_payment &&
+      reservation.paidAt !== null &&
+      options.refundArs > 0;
+    const done = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.reservation.updateMany({
+        where: { id: reservation.id, tenantId, status: reservation.status },
+        data: {
+          status: options.to,
+          cancelledAt: options.now,
+          cancelledBy: sideOf(actor),
+          cancelledByUserId: actor.userId,
+          reason: options.reason ?? options.reasonCode ?? null,
+        },
+      });
+      if (updated.count === 0) return false;
+      await this.audit(tx, {
+        action:
+          options.to === 'rejected'
+            ? AuditActions.RESERVATION_REJECTED
+            : AuditActions.RESERVATION_CANCELLED,
+        reservation,
+        actor,
+        extra: {
+          reason: options.reason ?? undefined,
+          reasonCode: options.reasonCode,
+          refundArs: refunds ? options.refundArs : 0,
+          refundStatus: refunds ? 'pending' : 'none',
+        },
+      });
+      return true;
     });
-    if (updated.count === 0) return null;
+    if (!done) return null;
 
     if (reservation.status === ReservationStatus.pending_payment) {
       await this.cancelUnpaidCheckout(reservation.id, tenantId);
     } else {
-      await this.startRefund(reservation, options.refundArs, options.now);
+      await this.startRefund(
+        reservation,
+        options.refundArs,
+        options.now,
+        actor,
+      );
     }
     return this.reload(reservation.id);
   }
@@ -656,6 +781,7 @@ export class ReservationLifecycleService {
     reservation: Reservation,
     amountArs: number,
     now: Date,
+    actor: ReservationActor,
   ): Promise<void> {
     if (amountArs <= 0) return;
     const { id, tenantId } = reservation;
@@ -680,7 +806,12 @@ export class ReservationLifecycleService {
     });
 
     if (!payment?.providerPaymentId) {
-      await this.markRefundFailed(id, 'No approved payment to refund.');
+      await this.markRefundFailed(
+        reservation,
+        amountArs,
+        'No approved payment to refund.',
+        actor,
+      );
       return;
     }
 
@@ -696,7 +827,12 @@ export class ReservationLifecycleService {
       this.logger.warn(
         `Refund failed for reservation ${id} (attempt ${refundAttempts}): ${describe(error)}`,
       );
-      await this.markRefundFailed(id, describe(error));
+      await this.markRefundFailed(
+        reservation,
+        amountArs,
+        describe(error),
+        actor,
+      );
       return;
     }
 
@@ -719,12 +855,66 @@ export class ReservationLifecycleService {
     });
   }
 
-  private async markRefundFailed(id: string, error: string): Promise<void> {
-    await this.prisma.reservation.update({
-      where: { id },
+  /** Deja el reembolso `failed` y lo audita (`warn`) en la misma transacción. */
+  private async markRefundFailed(
+    reservation: Reservation,
+    amountArs: number,
+    error: string,
+    actor: ReservationActor,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const current = await tx.reservation.update({
+        where: { id: reservation.id },
+        data: {
+          refundStatus: 'failed',
+          refundError: error.slice(0, MAX_REFUND_ERROR_LENGTH),
+        },
+      });
+      // No es una transición: `previousStatus` es el estado en que está ahora.
+      await this.audit(tx, {
+        action: AuditActions.RESERVATION_REFUND_FAILED,
+        reservation: { ...reservation, status: current.status },
+        actor,
+        severity: 'warn',
+        extra: {
+          refundArs: amountArs,
+          refundStatus: 'failed',
+          refundError: error.slice(0, MAX_AUDIT_ERROR_LENGTH),
+        },
+      });
+    });
+  }
+
+  /**
+   * Registra el evento en `audit_log` con el cliente de la transacción que
+   * hace la transición: si ésta no cambió nada, no se llama.
+   */
+  private async audit(
+    db: AuditDb,
+    event: {
+      action: string;
+      reservation: Reservation;
+      actor: ReservationActor;
+      severity?: 'info' | 'warn';
+      extra?: Record<string, string | number | undefined>;
+    },
+  ): Promise<void> {
+    const { reservation, actor } = event;
+    await db.auditLog.create({
       data: {
-        refundStatus: 'failed',
-        refundError: error.slice(0, MAX_REFUND_ERROR_LENGTH),
+        action: event.action,
+        entityType: 'reservation',
+        entityId: reservation.id,
+        actorUserId: actor.userId,
+        tenantId: reservation.tenantId,
+        severity: event.severity ?? 'info',
+        metadata: {
+          actorRole: actor.role,
+          previousStatus: reservation.status,
+          vehiclePlate: reservation.vehiclePlate,
+          entryAt: reservation.entryAt.toISOString(),
+          ...event.extra,
+        },
       },
     });
   }

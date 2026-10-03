@@ -70,6 +70,7 @@ paidAt: Date  | null;
 })
 approvalDeadlineAt: Date  | null;
 cancelledBy: string  | null;
+cancelledByUserId: string  | null;
 reason: string  | null;
 refundStatus: string ;
 @ApiProperty({
@@ -108,5 +109,6 @@ tenantId: string ;
 tenant?: TenantEntity ;
 userId: string ;
 user?: UserEntity ;
+cancelledByUser?: UserEntity  | null;
 payments?: ReservationPaymentEntity[] ;
 }

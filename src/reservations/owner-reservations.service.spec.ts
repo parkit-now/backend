@@ -8,6 +8,7 @@ import { ReservationLifecycleService } from './reservation-lifecycle.service';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const RES = '0192f0a0-0000-7000-8000-00000000abcd';
+const ACTOR = { userId: 'user-op', role: 'operator' } as const;
 const at = (iso: string) => new Date(`${iso}-03:00`);
 
 const row = (extra: Record<string, unknown> = {}) => ({
@@ -143,21 +144,31 @@ describe('OwnerReservationsService', () => {
 
   describe('acciones', () => {
     it('accept, reject, cancel y retryRefund pasan el tenant de la ruta al ciclo de vida y devuelven el detalle', async () => {
-      await service.accept(TENANT, RES);
-      await service.reject(TENANT, RES, 'sin lugar');
-      await service.cancel(TENANT, RES, 'cierre');
-      const result = await service.retryRefund(TENANT, RES);
+      await service.accept(TENANT, RES, ACTOR);
+      await service.reject(TENANT, RES, 'sin lugar', ACTOR);
+      await service.cancel(TENANT, RES, 'cierre', ACTOR);
+      const result = await service.retryRefund(TENANT, RES, ACTOR);
 
-      expect(lifecycle.accept).toHaveBeenCalledWith(TENANT, RES);
-      expect(lifecycle.reject).toHaveBeenCalledWith(TENANT, RES, 'sin lugar');
-      expect(lifecycle.ownerCancel).toHaveBeenCalledWith(TENANT, RES, 'cierre');
-      expect(lifecycle.retryRefund).toHaveBeenCalledWith(TENANT, RES);
+      expect(lifecycle.accept).toHaveBeenCalledWith(TENANT, RES, ACTOR);
+      expect(lifecycle.reject).toHaveBeenCalledWith(
+        TENANT,
+        RES,
+        'sin lugar',
+        ACTOR,
+      );
+      expect(lifecycle.ownerCancel).toHaveBeenCalledWith(
+        TENANT,
+        RES,
+        'cierre',
+        ACTOR,
+      );
+      expect(lifecycle.retryRefund).toHaveBeenCalledWith(TENANT, RES, ACTOR);
       expect(result.id).toBe(RES);
     });
 
     it('si el ciclo de vida responde 409 no relee nada', async () => {
       lifecycle.accept.mockRejectedValue(new Error('409'));
-      await expect(service.accept(TENANT, RES)).rejects.toThrow('409');
+      await expect(service.accept(TENANT, RES, ACTOR)).rejects.toThrow('409');
       expect(tenantClient.reservation.findFirst).not.toHaveBeenCalled();
     });
   });

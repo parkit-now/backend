@@ -5,7 +5,10 @@ import { PrismaService } from '../database/prisma.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { FakeReservationPaymentGateway } from './payment-gateway/fake-reservation-payment.gateway';
 import { FakePrisma, type Row } from './fake-reservation-prisma';
-import { ReservationLifecycleService } from './reservation-lifecycle.service';
+import {
+  ReservationLifecycleService,
+  type ReservationActor,
+} from './reservation-lifecycle.service';
 
 const ar = (iso: string) => new Date(`${iso}-03:00`);
 const NOW = ar('2026-09-27T16:00:00');
@@ -15,6 +18,11 @@ const TENANT = '11111111-1111-4111-8111-111111111111';
 const OTHER_TENANT = '22222222-2222-4222-8222-222222222222';
 const USER = 'user-1';
 const RES_ID = '0192f0a0-0000-7000-8000-00000000abcd';
+const OWNER: ReservationActor = { userId: 'user-owner', role: 'owner' };
+const OPERATOR: ReservationActor = {
+  userId: 'user-operator',
+  role: 'operator',
+};
 const minutes = (base: Date, delta: number) =>
   new Date(base.getTime() + delta * 60_000);
 
@@ -393,7 +401,7 @@ describe('ReservationLifecycleService', () => {
     it('pending_approval pasa a confirmed', async () => {
       pendingApproval();
 
-      const result = await service.accept(TENANT, RES_ID, NOW);
+      const result = await service.accept(TENANT, RES_ID, OWNER, NOW);
 
       expect(result.changed).toBe(true);
       expect(result.reservation.status).toBe('confirmed');
@@ -406,7 +414,7 @@ describe('ReservationLifecycleService', () => {
         const before = snapshotOf();
 
         await expectFailure(
-          service.accept(TENANT, RES_ID, NOW),
+          service.accept(TENANT, RES_ID, OWNER, NOW),
           HttpStatus.CONFLICT,
           'RESERVATION_NOT_PENDING_APPROVAL',
         );
@@ -418,7 +426,7 @@ describe('ReservationLifecycleService', () => {
       pendingApproval({ approvalDeadlineAt: minutes(NOW, -1) });
 
       await expectFailure(
-        service.accept(TENANT, RES_ID, NOW),
+        service.accept(TENANT, RES_ID, OWNER, NOW),
         HttpStatus.CONFLICT,
         'RESERVATION_APPROVAL_EXPIRED',
       );
@@ -435,7 +443,7 @@ describe('ReservationLifecycleService', () => {
       pendingApproval();
 
       await expectFailure(
-        service.accept(OTHER_TENANT, RES_ID, NOW),
+        service.accept(OTHER_TENANT, RES_ID, OWNER, NOW),
         HttpStatus.NOT_FOUND,
         'RESERVATION_NOT_FOUND',
       );
@@ -450,7 +458,13 @@ describe('ReservationLifecycleService', () => {
         payment({ status: 'approved', providerPaymentId: 'dev_1' }),
       );
 
-      const result = await service.reject(TENANT, RES_ID, ' Sin lugar ', NOW);
+      const result = await service.reject(
+        TENANT,
+        RES_ID,
+        ' Sin lugar ',
+        OWNER,
+        NOW,
+      );
 
       expect(result.reservation).toMatchObject({
         status: 'rejected',
@@ -468,7 +482,7 @@ describe('ReservationLifecycleService', () => {
       const before = snapshotOf();
 
       await expectFailure(
-        service.reject(TENANT, RES_ID, 'x', NOW),
+        service.reject(TENANT, RES_ID, 'x', OWNER, NOW),
         HttpStatus.CONFLICT,
         'RESERVATION_NOT_PENDING_APPROVAL',
       );
@@ -480,7 +494,7 @@ describe('ReservationLifecycleService', () => {
       seed({ status: 'pending_approval' });
 
       await expectFailure(
-        service.reject(TENANT, RES_ID, '  ', NOW),
+        service.reject(TENANT, RES_ID, '  ', OWNER, NOW),
         HttpStatus.BAD_REQUEST,
         'RESERVATION_REASON_REQUIRED',
       );
@@ -499,7 +513,13 @@ describe('ReservationLifecycleService', () => {
       async (status) => {
         paid(status);
 
-        const result = await service.ownerCancel(TENANT, RES_ID, 'Cierre', NOW);
+        const result = await service.ownerCancel(
+          TENANT,
+          RES_ID,
+          'Cierre',
+          OWNER,
+          NOW,
+        );
 
         expect(result.reservation).toMatchObject({
           status: 'cancelled',
@@ -518,6 +538,7 @@ describe('ReservationLifecycleService', () => {
         TENANT,
         RES_ID,
         'Cierre',
+        OWNER,
         minutes(ENTRY, 10),
       );
 
@@ -535,7 +556,7 @@ describe('ReservationLifecycleService', () => {
       const before = snapshotOf();
 
       await expectFailure(
-        service.ownerCancel(TENANT, RES_ID, 'x', NOW),
+        service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW),
         HttpStatus.CONFLICT,
         'RESERVATION_NOT_CANCELLABLE',
       );
@@ -547,7 +568,7 @@ describe('ReservationLifecycleService', () => {
       paid('confirmed');
 
       await expectFailure(
-        service.ownerCancel(TENANT, RES_ID, '', NOW),
+        service.ownerCancel(TENANT, RES_ID, '', OWNER, NOW),
         HttpStatus.BAD_REQUEST,
         'RESERVATION_REASON_REQUIRED',
       );
@@ -699,7 +720,7 @@ describe('ReservationLifecycleService', () => {
     it('refunded: registra el intento, el monto y el pago', async () => {
       confirmed();
 
-      await service.ownerCancel(TENANT, RES_ID, 'x', NOW);
+      await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
 
       expect(db.reservationById()).toMatchObject({
         refundStatus: 'refunded',
@@ -715,7 +736,7 @@ describe('ReservationLifecycleService', () => {
       confirmed();
       gateway.nextRefundError = new Error('Sin saldo en la cuenta');
 
-      const result = await service.ownerCancel(TENANT, RES_ID, 'x', NOW);
+      const result = await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
 
       expect(result.reservation).toMatchObject({
         status: 'cancelled',
@@ -730,7 +751,7 @@ describe('ReservationLifecycleService', () => {
       confirmed();
       gateway.nextRefundStatus = 'pending';
 
-      const result = await service.ownerCancel(TENANT, RES_ID, 'x', NOW);
+      const result = await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
 
       expect(result.reservation).toMatchObject({
         refundStatus: 'pending',
@@ -742,7 +763,7 @@ describe('ReservationLifecycleService', () => {
     it('con 0 $ no llama al gateway y el estado queda none', async () => {
       confirmed({ totalArs: new Prisma.Decimal(0) });
 
-      const result = await service.ownerCancel(TENANT, RES_ID, 'x', NOW);
+      const result = await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
 
       expect(result.reservation.status).toBe('cancelled');
       expect(result.reservation.refundStatus).toBe('none');
@@ -764,7 +785,7 @@ describe('ReservationLifecycleService', () => {
     it('sin un pago aprobado que reembolsar queda failed', async () => {
       seed({ status: 'confirmed', paidAt: NOW }, null);
 
-      const result = await service.ownerCancel(TENANT, RES_ID, 'x', NOW);
+      const result = await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
 
       expect(result.reservation.refundStatus).toBe('failed');
       expect(gateway.refunds).toHaveLength(0);
@@ -791,7 +812,7 @@ describe('ReservationLifecycleService', () => {
     it('reintenta con el monto pedido y una idempotencyKey nueva', async () => {
       failed();
 
-      const result = await service.retryRefund(TENANT, RES_ID, NOW);
+      const result = await service.retryRefund(TENANT, RES_ID, OWNER, NOW);
 
       expect(gateway.refunds).toEqual([
         {
@@ -813,7 +834,7 @@ describe('ReservationLifecycleService', () => {
       failed();
       gateway.nextRefundError = new Error('sigue sin saldo');
 
-      const result = await service.retryRefund(TENANT, RES_ID, NOW);
+      const result = await service.retryRefund(TENANT, RES_ID, OWNER, NOW);
 
       expect(result.reservation).toMatchObject({
         refundStatus: 'failed',
@@ -829,7 +850,7 @@ describe('ReservationLifecycleService', () => {
         const before = snapshotOf();
 
         await expectFailure(
-          service.retryRefund(TENANT, RES_ID, NOW),
+          service.retryRefund(TENANT, RES_ID, OWNER, NOW),
           HttpStatus.CONFLICT,
           'RESERVATION_REFUND_NOT_RETRYABLE',
         );
@@ -842,7 +863,7 @@ describe('ReservationLifecycleService', () => {
       failed();
 
       await expectFailure(
-        service.retryRefund(OTHER_TENANT, RES_ID, NOW),
+        service.retryRefund(OTHER_TENANT, RES_ID, OWNER, NOW),
         HttpStatus.NOT_FOUND,
         'RESERVATION_NOT_FOUND',
       );
@@ -916,6 +937,288 @@ describe('ReservationLifecycleService', () => {
       expect(await service.markNoShow(RES_ID, TENANT, NOW)).toBe(true);
       expect(db.reservationById().status).toBe('no_show');
       expect(await service.markNoShow(RES_ID, TENANT, NOW)).toBe(false);
+    });
+  });
+
+  describe('auditoría', () => {
+    const confirmedPaid = (extra: Row = {}) =>
+      seed(
+        { status: 'confirmed', paidAt: NOW, ...extra },
+        payment({ status: 'approved', providerPaymentId: 'dev_1' }),
+      );
+    const pendingApproval = (extra: Row = {}) =>
+      confirmedPaid({
+        status: 'pending_approval',
+        policySnapshot: manual(),
+        approvalDeadlineAt: minutes(NOW, 10),
+        ...extra,
+      });
+    const base = {
+      entityType: 'reservation',
+      entityId: RES_ID,
+      tenantId: TENANT,
+    };
+
+    it('accept registra al dueño con su rol', async () => {
+      pendingApproval();
+
+      await service.accept(TENANT, RES_ID, OWNER, NOW);
+
+      expect(db.audits).toEqual([
+        {
+          ...base,
+          action: 'reservation.accepted',
+          actorUserId: 'user-owner',
+          severity: 'info',
+          metadata: {
+            actorRole: 'owner',
+            previousStatus: 'pending_approval',
+            vehiclePlate: 'AB123CD',
+            entryAt: ENTRY.toISOString(),
+          },
+        },
+      ]);
+    });
+
+    it('reject registra al operador (distinto del dueño), el motivo y el reembolso', async () => {
+      pendingApproval();
+
+      await service.reject(TENANT, RES_ID, ' Sin lugar ', OPERATOR, NOW);
+
+      expect(db.audits).toHaveLength(1);
+      expect(db.audits[0]).toMatchObject({
+        ...base,
+        action: 'reservation.rejected',
+        actorUserId: 'user-operator',
+        severity: 'info',
+        metadata: {
+          actorRole: 'operator',
+          reason: 'Sin lugar',
+          previousStatus: 'pending_approval',
+          refundArs: 9000,
+          refundStatus: 'pending',
+          vehiclePlate: 'AB123CD',
+        },
+      });
+      expect(db.reservationById()).toMatchObject({
+        cancelledBy: 'owner',
+        cancelledByUserId: 'user-operator',
+      });
+    });
+
+    it('ownerCancel por un admin global registra rol admin', async () => {
+      confirmedPaid();
+
+      await service.ownerCancel(
+        TENANT,
+        RES_ID,
+        'x',
+        { userId: 'user-admin', role: 'admin' },
+        NOW,
+      );
+
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.cancelled',
+        actorUserId: 'user-admin',
+        metadata: { actorRole: 'admin', previousStatus: 'confirmed' },
+      });
+    });
+
+    it('driverCancel registra al conductor y su id en cancelled_by_user_id', async () => {
+      confirmedPaid();
+
+      await service.driverCancel(USER, RES_ID, NOW);
+
+      expect(db.audits).toHaveLength(1);
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.cancelled',
+        actorUserId: USER,
+        metadata: {
+          actorRole: 'driver',
+          previousStatus: 'confirmed',
+          refundArs: 9000,
+          refundStatus: 'pending',
+        },
+      });
+      expect(db.audits[0].metadata.reason).toBeUndefined();
+      expect(db.reservationById()).toMatchObject({
+        cancelledBy: 'driver',
+        cancelledByUserId: USER,
+      });
+    });
+
+    it('cancelar sin haber pagado audita sin reembolso', async () => {
+      seed();
+
+      await service.driverCancel(USER, RES_ID, NOW);
+
+      expect(db.audits[0].metadata).toMatchObject({
+        previousStatus: 'pending_payment',
+        refundArs: 0,
+        refundStatus: 'none',
+      });
+    });
+
+    it('el vencimiento de la aprobación audita como sistema, sin actor', async () => {
+      pendingApproval({ approvalDeadlineAt: minutes(NOW, -1) });
+
+      await service.rejectByTimeout(RES_ID, TENANT, NOW);
+
+      expect(db.audits).toHaveLength(1);
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.rejected',
+        actorUserId: null,
+        metadata: {
+          actorRole: 'system',
+          reasonCode: 'approval_timeout',
+          refundArs: 9000,
+        },
+      });
+      expect(db.reservationById().cancelledByUserId).toBeNull();
+    });
+
+    it('un accept fuera de plazo audita el rechazo del sistema y no una aceptación', async () => {
+      pendingApproval({ approvalDeadlineAt: minutes(NOW, -1) });
+
+      await expect(
+        service.accept(TENANT, RES_ID, OWNER, NOW),
+      ).rejects.toThrow();
+
+      expect(db.audits.map((a): string => a.action as string)).toEqual([
+        'reservation.rejected',
+      ]);
+      expect(db.audits[0].actorUserId).toBeNull();
+    });
+
+    it('si el reembolso falla audita refund_failed (warn) con el error resumido', async () => {
+      confirmedPaid();
+      gateway.nextRefundError = new Error('x'.repeat(400));
+
+      await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
+
+      expect(db.audits.map((a): string => a.action as string)).toEqual([
+        'reservation.cancelled',
+        'reservation.refund_failed',
+      ]);
+      const failed = db.audits[1];
+      expect(failed).toMatchObject({
+        severity: 'warn',
+        actorUserId: 'user-owner',
+        metadata: {
+          actorRole: 'owner',
+          previousStatus: 'cancelled',
+          refundArs: 9000,
+          refundStatus: 'failed',
+        },
+      });
+      expect(failed.metadata.refundError).toHaveLength(200);
+    });
+
+    it('retryRefund audita quién reintenta; si vuelve a fallar, también refund_failed', async () => {
+      seed(
+        {
+          status: 'cancelled',
+          paidAt: NOW,
+          refundStatus: 'failed',
+          refundAttempts: 1,
+          refundRequestedArs: new Prisma.Decimal(4500),
+        },
+        payment({ status: 'approved', providerPaymentId: 'dev_1' }),
+      );
+      gateway.nextRefundError = new Error('otra vez');
+
+      await service.retryRefund(TENANT, RES_ID, OPERATOR, NOW);
+
+      expect(db.audits.map((a): string => a.action as string)).toEqual([
+        'reservation.refund_retried',
+        'reservation.refund_failed',
+      ]);
+      expect(db.audits[0]).toMatchObject({
+        actorUserId: 'user-operator',
+        severity: 'info',
+        metadata: {
+          actorRole: 'operator',
+          previousStatus: 'cancelled',
+          refundArs: 4500,
+          attempt: 2,
+        },
+      });
+    });
+
+    it('el pago tardío sin cupo audita como sistema', async () => {
+      seed({ status: 'expired', holdExpiresAt: minutes(NOW, -60) });
+      db.overlapping = [{ entryAt: ENTRY, exitAt: EXIT }];
+
+      await service.markPaid(RES_ID, { providerPaymentId: 'dev_1' }, NOW);
+
+      expect(db.audits).toHaveLength(1);
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.late_payment_refunded',
+        actorUserId: null,
+        severity: 'info',
+        metadata: {
+          actorRole: 'system',
+          reasonCode: 'late_payment_no_capacity',
+          previousStatus: 'expired',
+          refundArs: 9000,
+        },
+      });
+    });
+
+    it('el pago sobre una reserva cancelada audita como sistema, una sola vez', async () => {
+      seed({ status: 'cancelled', cancelledAt: NOW });
+
+      await service.markPaid(RES_ID, { providerPaymentId: 'dev_1' }, NOW);
+      await service.markPaid(RES_ID, { providerPaymentId: 'dev_1' }, NOW);
+
+      expect(db.audits).toHaveLength(1);
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.late_payment_refunded',
+        actorUserId: null,
+        metadata: { actorRole: 'system', reasonCode: 'payment_after_cancel' },
+      });
+    });
+
+    it('una transición inválida o repetida no audita', async () => {
+      confirmedPaid();
+      await expect(
+        service.accept(TENANT, RES_ID, OWNER, NOW),
+      ).rejects.toThrow();
+      await expect(
+        service.retryRefund(TENANT, RES_ID, OWNER, NOW),
+      ).rejects.toThrow();
+      await expect(
+        service.reject(TENANT, RES_ID, 'x', OWNER, NOW),
+      ).rejects.toThrow();
+      await expect(service.driverCancel('otro', RES_ID, NOW)).rejects.toThrow();
+      expect(db.audits).toHaveLength(0);
+
+      await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
+      const total = db.audits.length;
+      await expect(
+        service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW),
+      ).rejects.toThrow();
+      expect(db.audits).toHaveLength(total);
+    });
+
+    it('un cancel que pierde la carrera (otro actor movió la reserva) no audita', async () => {
+      confirmedPaid();
+      db.reservation.updateMany = () => Promise.resolve({ count: 0 });
+
+      await expect(
+        service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW),
+      ).rejects.toThrow();
+
+      expect(db.audits).toHaveLength(0);
+    });
+
+    it('expireHold y markNoShow no auditan', async () => {
+      seed({ holdExpiresAt: minutes(NOW, -6) });
+      await service.expireHold(RES_ID, TENANT, NOW);
+      db.reservations = [];
+      seed({ status: 'confirmed', entryAt: minutes(NOW, -60) });
+      await service.markNoShow(RES_ID, TENANT, NOW);
+      expect(db.audits).toHaveLength(0);
     });
   });
 

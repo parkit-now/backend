@@ -11,7 +11,10 @@ import {
   OwnerReservationDto,
   PaginatedOwnerReservationsDto,
 } from './dto/owner-reservation.dto';
-import { ReservationLifecycleService } from './reservation-lifecycle.service';
+import {
+  ReservationLifecycleService,
+  type ReservationActor,
+} from './reservation-lifecycle.service';
 import { readPolicySnapshot } from './reservation-policy';
 
 const WITH_DETAIL = {
@@ -70,23 +73,41 @@ export class OwnerReservationsService {
     );
   }
 
-  async accept(tenantId: string, reservationId: string) {
-    await this.lifecycle.accept(tenantId, reservationId);
+  async accept(
+    tenantId: string,
+    reservationId: string,
+    actor: ReservationActor,
+  ) {
+    await this.lifecycle.accept(tenantId, reservationId, actor);
     return this.detail(reservationId, instanceOf(tenantId, reservationId));
   }
 
-  async reject(tenantId: string, reservationId: string, reason: string) {
-    await this.lifecycle.reject(tenantId, reservationId, reason);
+  async reject(
+    tenantId: string,
+    reservationId: string,
+    reason: string,
+    actor: ReservationActor,
+  ) {
+    await this.lifecycle.reject(tenantId, reservationId, reason, actor);
     return this.detail(reservationId, instanceOf(tenantId, reservationId));
   }
 
-  async cancel(tenantId: string, reservationId: string, reason: string) {
-    await this.lifecycle.ownerCancel(tenantId, reservationId, reason);
+  async cancel(
+    tenantId: string,
+    reservationId: string,
+    reason: string,
+    actor: ReservationActor,
+  ) {
+    await this.lifecycle.ownerCancel(tenantId, reservationId, reason, actor);
     return this.detail(reservationId, instanceOf(tenantId, reservationId));
   }
 
-  async retryRefund(tenantId: string, reservationId: string) {
-    await this.lifecycle.retryRefund(tenantId, reservationId);
+  async retryRefund(
+    tenantId: string,
+    reservationId: string,
+    actor: ReservationActor,
+  ) {
+    await this.lifecycle.retryRefund(tenantId, reservationId, actor);
     return this.detail(reservationId, instanceOf(tenantId, reservationId));
   }
 
