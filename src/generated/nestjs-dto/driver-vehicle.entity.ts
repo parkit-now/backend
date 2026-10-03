@@ -1,12 +1,13 @@
 
 import {ApiProperty} from '@nestjs/swagger'
 import {UserEntity} from './user.entity'
+import {VehicleCategoryEntity} from './vehicle-category.entity'
 
 
 export class DriverVehicleEntity {
   id: string ;
 plate: string ;
-kind: string ;
+category: string ;
 brand: string  | null;
 model: string  | null;
 isPrimary: boolean ;
@@ -22,4 +23,5 @@ createdAt: Date ;
 updatedAt: Date ;
 userId: string ;
 user?: UserEntity ;
+categoryRef?: VehicleCategoryEntity ;
 }

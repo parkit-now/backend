@@ -4,6 +4,8 @@ import {VehicleTypeDefaultEntity} from './vehicle-type-default.entity'
 import {VehicleCatalogDefaultEntity} from './vehicle-catalog-default.entity'
 import {VehicleTypeEntity} from './vehicle-type.entity'
 import {EntryEntity} from './entry.entity'
+import {DriverVehicleEntity} from './driver-vehicle.entity'
+import {ReservationEntity} from './reservation.entity'
 
 
 export class VehicleCategoryEntity {
@@ -19,4 +21,6 @@ typeDefaults?: VehicleTypeDefaultEntity[] ;
 catalogDefaults?: VehicleCatalogDefaultEntity[] ;
 vehicleTypes?: VehicleTypeEntity[] ;
 entries?: EntryEntity[] ;
+driverVehicles?: DriverVehicleEntity[] ;
+reservations?: ReservationEntity[] ;
 }

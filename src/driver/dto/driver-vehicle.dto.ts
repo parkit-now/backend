@@ -2,20 +2,22 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
-  IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
 } from 'class-validator';
+import {
+  RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY,
+  VEHICLE_CATEGORY_API_PROPERTY,
+} from '../../vehicle-categories/dto/vehicle-category.dto';
+import {
+  RESERVABLE_VEHICLE_CATEGORIES,
+  type ReservableVehicleCategory,
+  type VehicleCategory,
+} from '../../vehicle-categories/vehicle-categories';
 import { normalizePlate } from '../driver-rules';
-
-/** Categoría del vehículo del conductor. */
-export enum DriverVehicleKind {
-  car = 'car',
-  suvPickup = 'suv_pickup',
-  motorcycle = 'motorcycle',
-}
 
 const trimToNull = ({ value }: { value: unknown }) => {
   if (typeof value !== 'string') return value;
@@ -36,9 +38,14 @@ export class CreateDriverVehicleDto {
   @Matches(/^[A-Z0-9]{3,10}$/)
   plate: string;
 
-  @ApiProperty({ enum: DriverVehicleKind, enumName: 'DriverVehicleKind' })
-  @IsEnum(DriverVehicleKind)
-  kind: DriverVehicleKind;
+  @ApiProperty({
+    ...RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY,
+    description:
+      'Categoría de la plataforma (`GET /vehicle-categories`). Sólo se aceptan ' +
+      'las reservables: una categoría que no lo es (bici, camión, otro) da 400.',
+  })
+  @IsIn(RESERVABLE_VEHICLE_CATEGORIES)
+  category: ReservableVehicleCategory;
 
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 60 })
   @IsOptional()
@@ -77,13 +84,14 @@ export class UpdateDriverVehicleDto {
   plate?: string;
 
   @ApiPropertyOptional({
-    enum: DriverVehicleKind,
-    enumName: 'DriverVehicleKind',
-    description: 'No se puede cambiar con una reserva activa del vehículo.',
+    ...RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY,
+    description:
+      'Categoría de la plataforma; sólo las reservables. No se puede cambiar ' +
+      'con una reserva activa del vehículo.',
   })
   @IsOptional()
-  @IsEnum(DriverVehicleKind)
-  kind?: DriverVehicleKind;
+  @IsIn(RESERVABLE_VEHICLE_CATEGORIES)
+  category?: ReservableVehicleCategory;
 
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 60 })
   @IsOptional()
@@ -116,8 +124,13 @@ export class DriverVehicleDto {
   @ApiProperty({ example: 'AB123CD' })
   plate: string;
 
-  @ApiProperty({ enum: DriverVehicleKind, enumName: 'DriverVehicleKind' })
-  kind: DriverVehicleKind;
+  @ApiProperty({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    description:
+      'Categoría de la plataforma. La API sólo deja guardar las reservables ' +
+      '(car, suv, pickup, van, motorcycle).',
+  })
+  category: VehicleCategory;
 
   @ApiProperty({ type: String, nullable: true })
   brand: string | null;

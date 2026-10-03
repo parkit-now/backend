@@ -180,6 +180,12 @@ const MODELS: Record<string, readonly (readonly [string, string])[]> = {
     ['Renault', 'Kangoo'],
     ['Fiat', 'Fiorino'],
   ],
+  // Desde las categorías, las cuentas nuevas nacen con "Utilitario / Van".
+  'Utilitario / Van': [
+    ['Iveco', 'Daily'],
+    ['Renault', 'Kangoo'],
+    ['Fiat', 'Fiorino'],
+  ],
   Bici: [['Vairo', 'XR 3.5']],
   Otro: [['Genérico', 'Sin especificar']],
 };
@@ -194,6 +200,7 @@ const TYPE_MIX = [
   ['SUV', 11],
   ['Pickup', 8],
   ['Utilitario', 5],
+  ['Utilitario / Van', 5],
   ['Camión', 3],
   ['Otro', 2],
   ['Bici', 1],
@@ -250,6 +257,8 @@ type EntryRow = {
   vehicleBrand: string;
   vehicleModel: string;
   vehicleType: string;
+  vehicleTypeId: string;
+  vehicleCategory: string;
   enteredAt: Date;
   leftAt: Date | null;
   amountPaid: string | null;
@@ -368,9 +377,10 @@ async function main(): Promise<void> {
     // `bootstrap_tenant_defaults()` y renombrarlos es justamente la feature.
     const types = await prisma.vehicleType.findMany({
       where: { tenantId: plan.id, deletedAt: null },
-      select: { name: true },
+      select: { id: true, name: true, category: true },
     });
-    const typeNames = new Set(types.map((t) => t.name));
+    const typeByName = new Map(types.map((t) => [t.name, t]));
+    const typeNames = new Set(typeByName.keys());
     if (typeNames.size === 0) {
       console.error(
         `✗ ${plan.label} no tiene vehicle_types. Corré 'make seed-all' primero.`,
@@ -484,9 +494,11 @@ async function main(): Promise<void> {
           // Se llena SIEMPRE, a diferencia de la app real, donde hoy sólo lo
           // escribe el ingreso por LPR. Si quedara null como en producción, el
           // filtro por tipo y `byVehicleType` no tendrían nada que mostrar y
-          // este seed no cumpliría su función. No confundir con que la
-          // limitación esté resuelta: no lo está.
+          // este seed no cumpliría su función. Desde las categorías el alta
+          // manual también lo escribe (con `vehicleTypeId` y `vehicleCategory`).
           vehicleType: typeName,
+          vehicleTypeId: typeByName.get(typeName)!.id,
+          vehicleCategory: typeByName.get(typeName)!.category,
           enteredAt,
           leftAt: stillOpen ? null : new Date(leftMs),
           amountPaid: stillOpen ? null : money(amount),

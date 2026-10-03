@@ -4,7 +4,6 @@ import { PrismaService } from '../database/prisma.service';
 import { holdingWhere } from '../reservations/reservation-capacity';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { DriverVehiclesService } from './driver-vehicles.service';
-import { DriverVehicleKind } from './dto/driver-vehicle.dto';
 
 const NOW = new Date('2026-10-03T12:00:00-03:00');
 const USER = { id: 'user-1' } as User;
@@ -22,6 +21,7 @@ const client = {
     delete: jest.fn(),
   },
   reservation: { findMany: jest.fn() },
+  vehicleCatalogDefault: { findMany: jest.fn() },
 };
 
 // La transacción corre el callback con el mismo doble: lo que importa es QUÉ
@@ -37,7 +37,7 @@ const vehicle = (overrides: object = {}) => ({
   id: VEHICLE_ID,
   userId: USER.id,
   plate: 'AB123CD',
-  kind: 'car',
+  category: 'car',
   brand: 'Toyota',
   model: 'Etios',
   isPrimary: true,
@@ -74,7 +74,7 @@ describe('DriverVehiclesService', () => {
         vehicle({
           id: 'v-2',
           plate: 'A123BCD',
-          kind: 'motorcycle',
+          category: 'motorcycle',
           isPrimary: false,
         }),
       ]);
@@ -107,7 +107,7 @@ describe('DriverVehiclesService', () => {
   });
 
   describe('create', () => {
-    const dto = { plate: 'AB123CD', kind: DriverVehicleKind.car };
+    const dto = { plate: 'AB123CD', category: 'car' as const };
 
     it('el primer vehículo es principal aunque no se pida', async () => {
       client.driverVehicle.count.mockResolvedValue(0);
@@ -193,12 +193,7 @@ describe('DriverVehiclesService', () => {
         'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
       );
       await expectFailure(
-        service.update(
-          USER,
-          VEHICLE_ID,
-          { kind: DriverVehicleKind.suvPickup },
-          NOW,
-        ),
+        service.update(USER, VEHICLE_ID, { category: 'suv' as const }, NOW),
         HttpStatus.CONFLICT,
         'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
       );
@@ -267,10 +262,12 @@ describe('DriverVehiclesService', () => {
     });
   });
 
-  it('findOwnedKind busca por conductor y patente y devuelve el tipo', async () => {
-    client.driverVehicle.findUnique.mockResolvedValue({ kind: 'motorcycle' });
+  it('findOwnedCategory busca por conductor y patente y devuelve el tipo', async () => {
+    client.driverVehicle.findUnique.mockResolvedValue({
+      category: 'motorcycle',
+    });
     // eslint-disable-next-line @typescript-eslint/await-thenable
-    await expect(service.findOwnedKind(USER, 'AB123CD')).resolves.toBe(
+    await expect(service.findOwnedCategory(USER, 'AB123CD')).resolves.toBe(
       'motorcycle',
     );
     expect(client.driverVehicle.findUnique).toHaveBeenCalledWith(
@@ -280,9 +277,32 @@ describe('DriverVehiclesService', () => {
     );
   });
 
-  it('findOwnedKind devuelve null si la patente no es del conductor', async () => {
+  it('findOwnedCategory devuelve null si la patente no es del conductor', async () => {
     client.driverVehicle.findUnique.mockResolvedValue(null);
     // eslint-disable-next-line @typescript-eslint/await-thenable
-    await expect(service.findOwnedKind(USER, 'ZZ999ZZ')).resolves.toBeNull();
+    await expect(
+      service.findOwnedCategory(USER, 'ZZ999ZZ'),
+    ).resolves.toBeNull();
+  });
+
+  describe('listCatalog', () => {
+    it('devuelve marca, modelo y categoría ordenados por marca y modelo', async () => {
+      client.vehicleCatalogDefault.findMany.mockResolvedValue([
+        { brand: 'Toyota', model: 'Hilux', category: 'pickup' },
+        { brand: 'Renault', model: 'Kangoo', category: 'van' },
+        // Una categoría fuera de la lista (no debería pasar) no se publica.
+        { brand: 'X', model: 'Y', category: 'monopatin' },
+      ]);
+
+      const result = await service.listCatalog();
+
+      expect(client.vehicleCatalogDefault.findMany).toHaveBeenCalledWith({
+        orderBy: [{ brand: 'asc' }, { model: 'asc' }],
+      });
+      expect(result).toEqual([
+        { brand: 'Toyota', model: 'Hilux', category: 'pickup' },
+        { brand: 'Renault', model: 'Kangoo', category: 'van' },
+      ]);
+    });
   });
 });

@@ -22,6 +22,8 @@ model VehicleCategory {
   catalogDefaults VehicleCatalogDefault[]
   vehicleTypes    VehicleType[]
   entries         Entry[]
+  driverVehicles  DriverVehicle[]
+  reservations    Reservation[]
 
   @@map("vehicle_categories")
 }

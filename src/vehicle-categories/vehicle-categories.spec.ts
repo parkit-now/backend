@@ -18,6 +18,14 @@ const MIGRATION = readFileSync(
   'utf8',
 );
 
+const RESERVATIONS_MIGRATION = readFileSync(
+  join(
+    __dirname,
+    '../../supabase/migrations/20261005120300_reservations_vehicle_categories.sql',
+  ),
+  'utf8',
+);
+
 const PREVIEW = readFileSync(
   join(__dirname, '../../scripts/sql/preview-vehicle-categories.sql'),
   'utf8',
@@ -113,6 +121,17 @@ describe('categorías de vehículo', () => {
       expect([...RESERVABLE_VEHICLE_CATEGORIES] as string[]).toEqual(
         VEHICLE_CATEGORY_INFO.filter((c) => c.reservable).map((c) => c.code),
       );
+    });
+
+    it('el CHECK de services.reservation_vehicle_categories son las reservables', () => {
+      const check = RESERVATIONS_MIGRATION.match(
+        /<@ ARRAY\[([^\]]+)\]::text\[\]/,
+      );
+      expect(check).not.toBeNull();
+      const fromSql = (check?.[1] ?? '')
+        .split(',')
+        .map((c) => c.trim().replace(/^'|'$/g, ''));
+      expect(fromSql).toEqual([...RESERVABLE_VEHICLE_CATEGORIES]);
     });
 
     it('la lista de alias del backfill es la misma que la del código', () => {

@@ -10,6 +10,8 @@ import {
   MaxLength,
 } from 'class-validator';
 import { normalizePlate } from '../driver-rules';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import { type VehicleCategory } from '../../vehicle-categories/vehicle-categories';
 
 export class CreateReservationDto {
   @ApiProperty({
@@ -97,6 +99,14 @@ export class DriverReservationDto {
 
   @ApiProperty()
   vehiclePlate: string;
+
+  @ApiProperty({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    nullable: true,
+    description:
+      'Categoría del vehículo del conductor al reservar (snapshot). null en las reservas anteriores a las categorías.',
+  })
+  vehicleCategory: VehicleCategory | null;
 
   @ApiProperty({ format: 'date-time' })
   entryAt: string;

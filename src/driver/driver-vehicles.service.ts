@@ -3,11 +3,12 @@ import { Prisma, type DriverVehicle, type User } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { holdingWhere } from '../reservations/reservation-capacity';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
+import { isVehicleCategory } from '../vehicle-categories/vehicle-categories';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
+import { DriverVehicleCatalogItemDto } from './dto/driver-vehicle-catalog.dto';
 import {
   CreateDriverVehicleDto,
   DriverVehicleDto,
-  DriverVehicleKind,
   UpdateDriverVehicleDto,
 } from './dto/driver-vehicle.dto';
 
@@ -56,7 +57,7 @@ export class DriverVehiclesService {
           data: {
             userId: user.id,
             plate: dto.plate,
-            kind: dto.kind,
+            category: dto.category,
             brand: dto.brand ?? null,
             model: dto.model ?? null,
             isPrimary,
@@ -89,7 +90,7 @@ export class DriverVehiclesService {
         const vehicle = await this.findOwned(tx, user, vehicleId, instance);
         const changesIdentity =
           (dto.plate !== undefined && dto.plate !== vehicle.plate) ||
-          (dto.kind !== undefined && (dto.kind as string) !== vehicle.kind);
+          (dto.category !== undefined && dto.category !== vehicle.category);
         if (changesIdentity) {
           await this.assertNoActiveReservation(tx, vehicle, now, instance);
         }
@@ -100,7 +101,7 @@ export class DriverVehiclesService {
           where: { id: vehicle.id },
           data: {
             ...(dto.plate !== undefined && { plate: dto.plate }),
-            ...(dto.kind !== undefined && { kind: dto.kind }),
+            ...(dto.category !== undefined && { category: dto.category }),
             ...(dto.brand !== undefined && { brand: dto.brand }),
             ...(dto.model !== undefined && { model: dto.model }),
             ...(dto.isPrimary === true && { isPrimary: true }),
@@ -134,16 +135,31 @@ export class DriverVehiclesService {
   }
 
   /**
-   * Tipo (`kind`) del vehículo del conductor con esa patente, o `null` si la
-   * patente no es de ninguno de sus vehículos (reservas, SCRUM-285). El tipo
-   * decide si la playa deja reservar.
+   * Catálogo de la plataforma (`vehicle_catalog_defaults`): marca, modelo y
+   * categoría. Global, sin tenant. Ordenado como lo mostraría un buscador.
    */
-  async findOwnedKind(user: User, plate: string): Promise<string | null> {
+  async listCatalog(): Promise<DriverVehicleCatalogItemDto[]> {
+    const rows = await this.prisma.vehicleCatalogDefault.findMany({
+      orderBy: [{ brand: 'asc' }, { model: 'asc' }],
+    });
+    return rows.flatMap((row) =>
+      isVehicleCategory(row.category)
+        ? [{ brand: row.brand, model: row.model, category: row.category }]
+        : [],
+    );
+  }
+
+  /**
+   * Categoría del vehículo del conductor con esa patente, o `null` si la
+   * patente no es de ninguno de sus vehículos (reservas, SCRUM-285). La
+   * categoría decide si la playa deja reservar.
+   */
+  async findOwnedCategory(user: User, plate: string): Promise<string | null> {
     const vehicle = await this.prisma.driverVehicle.findUnique({
       where: { userId_plate: { userId: user.id, plate } },
-      select: { kind: true },
+      select: { category: true },
     });
-    return vehicle?.kind ?? null;
+    return vehicle?.category ?? null;
   }
 
   private async findOwned(
@@ -213,7 +229,8 @@ function toDto(vehicle: DriverVehicle, activePlates: Set<string>) {
   return {
     id: vehicle.id,
     plate: vehicle.plate,
-    kind: vehicle.kind as DriverVehicleKind,
+    // La FK admite toda la lista aunque la API sólo guarde reservables.
+    category: isVehicleCategory(vehicle.category) ? vehicle.category : 'other',
     brand: vehicle.brand,
     model: vehicle.model,
     isPrimary: vehicle.isPrimary,

@@ -6,14 +6,9 @@
  */
 import { MpAccountStatus } from '@prisma/client';
 
-/** Mismo conjunto que `DriverVehicle.kind` (CHECK en driver_vehicles). */
-export const RESERVATION_VEHICLE_KINDS = [
-  'car',
-  'suv_pickup',
-  'motorcycle',
-] as const;
-export type ReservationVehicleKind = (typeof RESERVATION_VEHICLE_KINDS)[number];
-
+// Las categorías reservables salen de `vehicle-categories` (un spec las compara
+// con la migración): son las que un conductor puede cargar y una playa puede
+// aceptar para reservar.
 export const RESERVATION_HOURS_MODES = ['opening', 'custom'] as const;
 export type ReservationHoursMode = (typeof RESERVATION_HOURS_MODES)[number];
 
@@ -38,7 +33,7 @@ export type ReservationReadinessInput = {
   capacityTotal: number;
   /** La tarifa existe, está activa y no está borrada. */
   rateUsable: boolean;
-  vehicleKinds: readonly string[];
+  vehicleCategories: readonly string[];
   hoursMode: string;
   /** Filas de `schedules` (horario de apertura). */
   scheduleCount: number;
@@ -61,7 +56,7 @@ export function computeReservationReadiness(
     ['mp_account', input.mpStatus === MpAccountStatus.linked],
     ['spots', spotsOk],
     ['hours', hoursOk],
-    ['vehicles', input.vehicleKinds.length > 0],
+    ['vehicles', input.vehicleCategories.length > 0],
     ['rate', input.rateUsable],
   ];
   const missing = checks.filter(([, ok]) => !ok).map(([name]) => name);

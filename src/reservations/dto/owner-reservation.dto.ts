@@ -10,6 +10,8 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../utils/pagination/pagination-query.dto';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import { type VehicleCategory } from '../../vehicle-categories/vehicle-categories';
 
 const REFUND_STATUSES = ['none', 'pending', 'refunded', 'partial', 'failed'];
 
@@ -135,6 +137,14 @@ export class OwnerReservationDto {
 
   @ApiProperty()
   vehiclePlate: string;
+
+  @ApiProperty({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    nullable: true,
+    description:
+      'Categoría del vehículo del conductor al reservar (snapshot). null en las reservas anteriores a las categorías.',
+  })
+  vehicleCategory: VehicleCategory | null;
 
   @ApiProperty({ type: String, nullable: true })
   driverName: string | null;

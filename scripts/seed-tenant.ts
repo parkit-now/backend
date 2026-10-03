@@ -831,6 +831,12 @@ type SeedEntry = {
   plate: string;
   vehicleBrand?: string;
   vehicleModel?: string;
+  /**
+   * Nombre del tipo de vehículo elegido al ingresar, en ESE estacionamiento.
+   * Se resuelve a `vehicleTypeId` + `vehicleCategory` + el snapshot del nombre,
+   * como hace el alta de un ingreso. Sin él, queda sin tipo (como una caja vieja).
+   */
+  vehicleTypeName?: string;
   color?: string;
   cochera?: string;
   notes?: string;
@@ -875,6 +881,7 @@ const ENTRIES: SeedEntry[] = [
     seq: SEQ.entry + 1,
     tenantId: TENANTS.once,
     plate: 'AF412XZ',
+    vehicleTypeName: 'Auto',
     vehicleBrand: 'Toyota',
     vehicleModel: 'Corolla',
     color: 'Negro',
@@ -897,6 +904,7 @@ const ENTRIES: SeedEntry[] = [
     seq: SEQ.entry + 2,
     tenantId: TENANTS.once,
     plate: 'RKL482',
+    vehicleTypeName: 'Utilitario',
     vehicleBrand: 'Renault',
     vehicleModel: 'Kangoo',
     color: 'Blanco',
@@ -928,6 +936,7 @@ const ENTRIES: SeedEntry[] = [
     seq: SEQ.entry + 3,
     tenantId: TENANTS.once,
     plate: 'A054HRT',
+    vehicleTypeName: 'Moto',
     vehicleBrand: 'Zanella',
     vehicleModel: 'RX 150',
     color: 'Rojo',
@@ -1036,8 +1045,8 @@ const ENTRIES: SeedEntry[] = [
   },
   {
     // Ingreso AUTOMÁTICO por cámara: `source='auto'`, con el tipo de vehículo
-    // snapshoteado (el alta manual no lo manda: `CreateEntryDto` ni siquiera
-    // tiene el campo) y enganchado al abonado por patente. Sin tarifa ni
+    // snapshoteado (por nombre; el backend lo resuelve a tipo y categoría) y
+    // enganchado al abonado por patente. Sin tarifa ni
     // ticket: el camino LPR no elige tarifa ni numera, eso pasa al cobrar.
     seq: SEQ.entry + 7,
     tenantId: TENANTS.once,
@@ -1060,6 +1069,7 @@ const ENTRIES: SeedEntry[] = [
     seq: SEQ.entry + 8,
     tenantId: TENANTS.belgrano,
     plate: 'MQR318',
+    vehicleTypeName: 'Utilitario / Van',
     vehicleBrand: 'Renault',
     vehicleModel: 'Kangoo',
     color: 'Rojo',
@@ -2014,6 +2024,21 @@ async function seedEntries(): Promise<void> {
       whitelistId = authorized?.id ?? null;
     }
 
+    // Tipo, nombre y categoría: lo que el alta congela del vehículo. Para el
+    // ingreso por cámara sale del nombre que mandó (`lpr.vehicleType`).
+    const typeName = entry.vehicleTypeName ?? entry.lpr?.vehicleType;
+    const vehicleType = typeName
+      ? await prisma.vehicleType.findFirst({
+          where: { tenantId: entry.tenantId, name: typeName, deletedAt: null },
+          select: { id: true, name: true, category: true },
+        })
+      : null;
+    if (typeName && !vehicleType) {
+      console.warn(
+        `⚠ ${entry.plate}: no existe el tipo "${typeName}" en ese estacionamiento; el ingreso queda sin tipo.`,
+      );
+    }
+
     const fields = {
       tenantId: entry.tenantId,
       plate: entry.plate,
@@ -2040,7 +2065,9 @@ async function seedEntries(): Promise<void> {
       cashSessionId,
       ticketNumber: entry.ticketNumber ?? null,
       source: entry.lpr ? 'auto' : 'manual',
-      vehicleType: entry.lpr?.vehicleType ?? null,
+      vehicleType: vehicleType?.name ?? entry.lpr?.vehicleType ?? null,
+      vehicleTypeId: vehicleType?.id ?? null,
+      vehicleCategory: vehicleType?.category ?? null,
       entryCameraId: entry.lpr?.cameraId ?? null,
       whitelistId,
     };
@@ -2151,14 +2178,14 @@ async function main(): Promise<void> {
 const DRIVER_VEHICLES = [
   {
     plate: 'AB123CD',
-    kind: 'car',
+    category: 'car',
     brand: 'Toyota',
     model: 'Etios',
     isPrimary: true,
   },
   {
     plate: 'A123BCD',
-    kind: 'motorcycle',
+    category: 'motorcycle',
     brand: 'Honda',
     model: 'Wave',
     isPrimary: false,

@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  RESERVABLE_VEHICLE_CATEGORIES,
   VEHICLE_CATEGORIES,
   type VehicleCategory,
 } from '../vehicle-categories';
@@ -11,6 +12,15 @@ import {
 export const VEHICLE_CATEGORY_API_PROPERTY = {
   enum: VEHICLE_CATEGORIES,
   enumName: 'VehicleCategory',
+} as const;
+
+/**
+ * Subconjunto reservable (auto, SUV, pickup, utilitario y moto), como enum
+ * `ReservableVehicleCategory` de OpenAPI.
+ */
+export const RESERVABLE_VEHICLE_CATEGORY_API_PROPERTY = {
+  enum: RESERVABLE_VEHICLE_CATEGORIES,
+  enumName: 'ReservableVehicleCategory',
 } as const;
 
 export class VehicleCategoryDto {

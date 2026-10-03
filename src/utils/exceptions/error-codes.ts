@@ -141,8 +141,8 @@ export const ErrorCodes = {
   RESERVATION_VEHICLE_NOT_FOUND: 'RESERVATION_VEHICLE_NOT_FOUND',
   // El tipo del vehículo (auto, SUV/pickup, moto) no está entre los que la
   // playa deja reservar.
-  RESERVATION_VEHICLE_KIND_NOT_ACCEPTED:
-    'RESERVATION_VEHICLE_KIND_NOT_ACCEPTED',
+  RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED:
+    'RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED',
   // La estadía no cae entera dentro del horario de reservas (modo custom).
   RESERVATION_OUTSIDE_RESERVATION_HOURS:
     'RESERVATION_OUTSIDE_RESERVATION_HOURS',

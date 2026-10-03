@@ -16,7 +16,7 @@ export class CreateQuoteDto {
     example: 'AB123CD',
     description:
       'Patente de uno de tus vehículos. Si se manda, la cotización valida que ' +
-      'la playa acepte ese tipo de vehículo (RESERVATION_VEHICLE_KIND_NOT_ACCEPTED).',
+      'la playa acepte ese tipo de vehículo (RESERVATION_VEHICLE_CATEGORY_NOT_ACCEPTED).',
   })
   @IsOptional()
   @Transform(({ value }: { value: unknown }) =>
