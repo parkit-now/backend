@@ -46,6 +46,7 @@ describe('MpAccountsService', () => {
       findUnique: jest.fn(),
     },
     tenant: { findUnique: jest.fn() },
+    reservation: { count: jest.fn() },
     userMembership: { findUnique: jest.fn() },
     $transaction: jest.fn(),
   };
@@ -581,6 +582,58 @@ describe('MpAccountsService', () => {
     // playas y no hay red abajo que lo atrape.
     expect(prisma.mpAccount.findUnique).toHaveBeenCalledWith({
       where: { tenantId: TENANT },
+    });
+  });
+
+  describe('unlink', () => {
+    beforeEach(() => {
+      prisma.mpAccount.findUnique.mockResolvedValue(makeAccount());
+      prisma.reservation.count.mockResolvedValue(0);
+      prisma.$transaction.mockImplementation(
+        (fn: (tx: unknown) => Promise<unknown>) =>
+          fn({
+            mpAccount: { update: jest.fn() },
+            paymentMethod: { updateMany: jest.fn() },
+          }),
+      );
+    });
+
+    it('con reservas activas: 409 MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS y no toca nada', async () => {
+      prisma.reservation.count.mockResolvedValue(2);
+
+      expect(await problemOf(service.unlink(TENANT, user))).toMatchObject({
+        status: HttpStatus.CONFLICT,
+        code: 'MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS',
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(audit.record).not.toHaveBeenCalled();
+    });
+
+    it('cuenta como activas: futuras confirmadas/por aprobar, retenciones vigentes y reembolsos pendientes de ESTA playa', async () => {
+      await service.unlink(TENANT, user);
+
+      const { where } = prisma.reservation.count.mock.calls[0][0] as {
+        where: { tenantId: string; OR: Record<string, unknown>[] };
+      };
+      expect(where.tenantId).toBe(TENANT);
+      expect(where.OR).toEqual([
+        {
+          status: { in: ['confirmed', 'pending_approval'] },
+          entryAt: { gt: expect.any(Date) as Date },
+        },
+        {
+          status: 'pending_payment',
+          holdExpiresAt: { gt: expect.any(Date) as Date },
+        },
+        { refundStatus: 'pending' },
+      ]);
+    });
+
+    it('sin reservas activas: desvincula', async () => {
+      await service.unlink(TENANT, user);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(audit.record).toHaveBeenCalledTimes(1);
     });
   });
 });

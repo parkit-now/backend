@@ -161,6 +161,11 @@ export class MpAccountsController {
       'The entity has no Mercado Pago account linked (MP_NOT_LINKED).',
     type: ProblemDetailsDto,
   })
+  @ApiConflictResponse({
+    description:
+      'There are active reservations (future confirmed or pending approval, a live payment hold, or a pending refund): MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS.',
+    type: ProblemDetailsDto,
+  })
   async unlinkAccount(
     @Param('tenantId') tenantId: string,
     @CurrentUser() user: User,

@@ -216,6 +216,10 @@ export const ErrorCodes = {
   MP_ACCOUNT_TOKEN_EXPIRED: 'MP_ACCOUNT_TOKEN_EXPIRED',
   // La cuenta se desvinculo (desde nuestro panel o desde Mercado Pago) (409).
   MP_ACCOUNT_REVOKED: 'MP_ACCOUNT_REVOKED',
+  // No se puede desvincular la cuenta: hay reservas futuras confirmadas o a
+  // aprobar, retenciones vigentes o reembolsos pendientes que dependen de ella
+  // (409).
+  MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS: 'MP_ACCOUNT_HAS_ACTIVE_RESERVATIONS',
   // La playa no tiene la direccion estructurada completa y Mercado Pago la
   // exige para `Store.location` (422).
   MP_ENTITY_ADDRESS_INCOMPLETE: 'MP_ENTITY_ADDRESS_INCOMPLETE',
