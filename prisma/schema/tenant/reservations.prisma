@@ -41,8 +41,12 @@ model Reservation {
   paidAt                           DateTime?         @map("paid_at") @db.Timestamptz(6)
   // Modo manual: hasta cuándo puede responder el dueño.
   approvalDeadlineAt               DateTime?         @map("approval_deadline_at") @db.Timestamptz(6)
-  // Quién canceló o rechazó (driver | owner | system) y por qué.
+  // Quién canceló o rechazó y por qué. `cancelledBy` es el LADO: driver | owner
+  // | system, donde `owner` significa "el estacionamiento" (dueño u operador).
+  // La persona concreta está en `cancelledByUserId` (null si fue el sistema) y
+  // su rol, en la auditoría (`audit_log.metadata.actorRole`).
   cancelledBy                      String?           @map("cancelled_by")
+  cancelledByUserId                String?           @map("cancelled_by_user_id") @db.Uuid
   reason                           String?
   // Reembolso: none | pending | refunded | partial | failed.
   refundStatus                     String            @default("none") @map("refund_status")
@@ -61,6 +65,8 @@ model Reservation {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userId   String @map("user_id") @db.Uuid
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Migración 20261004130000: `ON DELETE SET NULL`.
+  cancelledByUser User? @relation("ReservationCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
 
   payments ReservationPayment[]
 
