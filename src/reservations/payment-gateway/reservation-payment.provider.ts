@@ -1,11 +1,13 @@
 import type { Provider } from '@nestjs/common';
+import { MpApiClient } from '../../mercado-pago/mp-api.client';
+import { MpTokenService } from '../../mercado-pago/mp-token.service';
 import { isProduction } from '../../utils/env';
 import { DevCheckoutGateway } from './dev-checkout.gateway';
 import {
   RESERVATION_PAYMENT_GATEWAY,
   type ReservationPaymentGateway,
 } from './reservation-payment-gateway';
-import { UnavailableMercadoPagoGateway } from './unavailable-mercado-pago.gateway';
+import { MercadoPagoCheckoutGateway } from './mercado-pago-checkout.gateway';
 
 export type ReservationPaymentProviderName = 'dev' | 'mercado_pago';
 
@@ -73,15 +75,25 @@ export function resolvePublicApiUrl(
 
 export function createReservationPaymentGateway(
   provider: ReservationPaymentProviderName = resolveReservationPaymentProvider(),
+  deps?: { api: MpApiClient; tokens: MpTokenService },
 ): ReservationPaymentGateway {
   if (provider === 'dev') return new DevCheckoutGateway();
   // Falla acá, en el arranque, si falta la URL pública.
-  resolvePublicApiUrl();
-  return new UnavailableMercadoPagoGateway();
+  const publicApiUrl = resolvePublicApiUrl();
+  if (!deps) {
+    throw new Error(
+      'El proveedor mercado_pago necesita MpApiClient y MpTokenService.',
+    );
+  }
+  return new MercadoPagoCheckoutGateway(deps.api, deps.tokens, publicApiUrl);
 }
 
 export const ReservationPaymentGatewayProvider: Provider = {
   provide: RESERVATION_PAYMENT_GATEWAY,
-  useFactory: (): ReservationPaymentGateway =>
-    createReservationPaymentGateway(),
+  inject: [MpApiClient, MpTokenService],
+  useFactory: (
+    api: MpApiClient,
+    tokens: MpTokenService,
+  ): ReservationPaymentGateway =>
+    createReservationPaymentGateway(undefined, { api, tokens }),
 };

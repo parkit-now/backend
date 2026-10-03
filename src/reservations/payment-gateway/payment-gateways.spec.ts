@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/await-thenable */
-import { HttpStatus } from '@nestjs/common';
-import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
+import type { MpApiClient } from '../../mercado-pago/mp-api.client';
+import type { MpTokenService } from '../../mercado-pago/mp-token.service';
 import { DevCheckoutGateway, devPaymentId } from './dev-checkout.gateway';
 import { FakeReservationPaymentGateway } from './fake-reservation-payment.gateway';
 import {
@@ -9,7 +9,7 @@ import {
   resolveReservationPaymentProvider,
 } from './reservation-payment.provider';
 import type { ReservationPaymentGateway } from './reservation-payment-gateway';
-import { UnavailableMercadoPagoGateway } from './unavailable-mercado-pago.gateway';
+import { MercadoPagoCheckoutGateway } from './mercado-pago-checkout.gateway';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const RES_ID = '0192f0a0-0000-7000-8000-00000000abcd';
@@ -105,32 +105,6 @@ describe('DevCheckoutGateway', () => {
   });
 });
 
-describe('UnavailableMercadoPagoGateway', () => {
-  const gateway: ReservationPaymentGateway =
-    new UnavailableMercadoPagoGateway();
-
-  it('createCheckout responde 503 RESERVATION_CHECKOUT_UNAVAILABLE', async () => {
-    const promise = gateway.createCheckout(checkoutInput);
-    await expect(promise).rejects.toBeInstanceOf(FormattedException);
-    await expect(promise).rejects.toMatchObject({
-      status: HttpStatus.SERVICE_UNAVAILABLE,
-      response: expect.objectContaining({
-        code: 'RESERVATION_CHECKOUT_UNAVAILABLE',
-      }) as unknown,
-    });
-  });
-
-  it('el reembolso falla para que quede reintentable', async () => {
-    await expect(
-      gateway.refund({
-        tenantId: TENANT,
-        providerPaymentId: 'x',
-        idempotencyKey: 'k',
-      }),
-    ).rejects.toThrow();
-  });
-});
-
 describe('FakeReservationPaymentGateway', () => {
   it('registra las llamadas y permite forzar fallas', async () => {
     const gateway = new FakeReservationPaymentGateway();
@@ -220,9 +194,12 @@ describe('resolveReservationPaymentProvider', () => {
       expect(createReservationPaymentGateway('dev')).toBeInstanceOf(
         DevCheckoutGateway,
       );
-      expect(createReservationPaymentGateway('mercado_pago')).toBeInstanceOf(
-        UnavailableMercadoPagoGateway,
-      );
+      expect(
+        createReservationPaymentGateway('mercado_pago', {
+          api: {} as MpApiClient,
+          tokens: {} as MpTokenService,
+        }),
+      ).toBeInstanceOf(MercadoPagoCheckoutGateway);
     } finally {
       restoreEnv('PUBLIC_API_URL', previous);
     }
