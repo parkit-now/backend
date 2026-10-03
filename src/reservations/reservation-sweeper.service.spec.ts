@@ -18,6 +18,7 @@ const lifecycle = {
   expireHold: jest.fn(),
   rejectByTimeout: jest.fn(),
   markNoShow: jest.fn(),
+  markCompleted: jest.fn(),
   markPaid: jest.fn(),
   confirmRefund: jest.fn(),
   markRefundFailedBySystem: jest.fn(),
@@ -46,6 +47,7 @@ function stubRules(rules: {
   holds?: unknown[];
   approvals?: unknown[];
   arrivals?: unknown[];
+  finished?: unknown[];
 }) {
   prisma.reservation.findMany.mockImplementation(
     ({ where }: { where: { status: string } }) =>
@@ -54,6 +56,7 @@ function stubRules(rules: {
           pending_payment: rules.holds,
           pending_approval: rules.approvals,
           confirmed: rules.arrivals,
+          checked_in: rules.finished,
         }[where.status] ?? [],
       ),
   );
@@ -65,6 +68,7 @@ describe('ReservationSweeperService', () => {
     lifecycle.expireHold.mockResolvedValue(true);
     lifecycle.rejectByTimeout.mockResolvedValue(true);
     lifecycle.markNoShow.mockResolvedValue(true);
+    lifecycle.markCompleted.mockResolvedValue(true);
     // Sin pago aprobado en el proveedor (como el gateway de dev).
     gateway.findApprovedPayment.mockResolvedValue(null);
     stubRules({});
@@ -75,6 +79,7 @@ describe('ReservationSweeperService', () => {
       expired: 0,
       rejected: 0,
       noShow: 0,
+      completed: 0,
     });
     expect(lifecycle.expireHold).not.toHaveBeenCalled();
   });
@@ -220,17 +225,52 @@ describe('ReservationSweeperService', () => {
     expect(result.expired).toBe(1);
   });
 
-  it('corre las tres reglas en la misma pasada', async () => {
+  it('corre las cuatro reglas en la misma pasada', async () => {
     stubRules({
       holds: rows('h'),
       approvals: rows('p'),
       arrivals: [arrival('n', minutes(NOW, -90))],
+      finished: rows('c'),
     });
 
     expect(await service.sweep(NOW)).toEqual({
       expired: 1,
       rejected: 1,
       noShow: 1,
+      completed: 1,
+    });
+  });
+
+  describe('check-in de la caja (fase 6)', () => {
+    it('el no-show nunca toca las checked_in: el auto ya entró', async () => {
+      stubRules({ finished: [] });
+      await service.sweep(NOW);
+
+      const statuses = prisma.reservation.findMany.mock.calls.map(
+        (call) => (call[0] as { where: { status: string } }).where.status,
+      );
+      // La única consulta de checked_in es la de la regla 4 (completar).
+      expect(statuses.filter((status) => status === 'checked_in')).toHaveLength(
+        1,
+      );
+      expect(lifecycle.markNoShow).not.toHaveBeenCalled();
+    });
+
+    it('completa las checked_in cuyo ingreso ya cerró (red de seguridad)', async () => {
+      stubRules({ finished: rows('done') });
+
+      const result = await service.sweep(NOW);
+
+      expect(prisma.reservation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: 'checked_in',
+            entry: { is: { leftAt: { not: null } } },
+          },
+        }),
+      );
+      expect(lifecycle.markCompleted).toHaveBeenCalledWith('done', 't-1');
+      expect(result.completed).toBe(1);
     });
   });
 
