@@ -219,6 +219,70 @@ export interface MpOrder {
   readonly lastUpdatedDate: Date | null;
 }
 
+/**
+ * Body de `POST /checkout/preferences` tal como lo manda el gateway: ya en
+ * snake_case, porque es el contrato de Mercado Pago y no hay nada que traducir.
+ * Lo arma `MercadoPagoCheckoutGateway` y NO puede llevar nada calculado en el
+ * momento más allá de lo que entra en la huella de la idempotency key.
+ */
+export interface MpPreferenceBody {
+  readonly items: readonly {
+    readonly title: string;
+    readonly quantity: number;
+    readonly unit_price: number;
+    readonly currency_id: string;
+  }[];
+  readonly external_reference: string;
+  readonly notification_url: string;
+  readonly binary_mode: boolean;
+  readonly payment_methods: {
+    readonly excluded_payment_types: readonly { readonly id: string }[];
+  };
+  readonly expires: boolean;
+  readonly expiration_date_from: string;
+  readonly expiration_date_to: string;
+  readonly back_urls: {
+    readonly success: string;
+    readonly failure: string;
+    readonly pending: string;
+  };
+  readonly auto_return: string;
+  readonly marketplace_fee: number;
+}
+
+/** Lo único que usamos de la preferencia creada. */
+export interface MpPreference {
+  readonly id: string;
+  /** URL del checkout en producción (`sandbox_init_point` no se usa). */
+  readonly initPoint: string;
+}
+
+/** Un pago de Mercado Pago tal como nos interesa (`GET /v1/payments/{id}`). */
+export interface MpPayment {
+  readonly id: string;
+  /**
+   * `pending` | `approved` | `authorized` | `in_process` | `in_mediation` |
+   * `rejected` | `cancelled` | `refunded` | `charged_back`. Crudo.
+   */
+  readonly status: string | null;
+  /** `accredited`, `partially_refunded`, `by_collector`, `expired`, etc. Crudo. */
+  readonly statusDetail: string | null;
+  readonly externalReference: string | null;
+  readonly transactionAmount: number | null;
+  /** Suma de lo reembolsado hasta ahora (0 si nada). */
+  readonly transactionAmountRefunded: number | null;
+  /** Id del vendedor que cobró: sirve para atar un pago a una cuenta vinculada. */
+  readonly collectorId: string | null;
+}
+
+/** Respuesta de `POST /v1/payments/{id}/refunds`. */
+export interface MpRefund {
+  readonly id: string;
+  /** `approved` cuando ya se devolvió; otro valor, el reembolso quedó en curso. */
+  readonly status: string | null;
+  readonly amount: number | null;
+}
+
 /** Identifica una operación para traducir su fallo a un ProblemDetails. */
 interface MpOperation {
   /** Qué se estaba haciendo. Va al log y al `detail`, en inglés. */
@@ -852,6 +916,174 @@ export class MpApiClient implements OnModuleInit {
     return this.readOrder(payload, operation);
   }
 
+  /**
+   * Crea la preferencia de Checkout Pro con el token del dueño del
+   * estacionamiento: la plata va directo a su cuenta.
+   *
+   * La key llega armada del gateway (sha256 del body), igual que `createPos`:
+   * un reintento con el mismo body devuelve la misma preferencia.
+   *
+   * TODO(prod-check): la documentación de `POST /checkout/preferences` no dice
+   * si honra `X-Idempotency-Key`. Se manda igual (es inocuo) pero NO se debe
+   * confiar en que deduplique: si no lo hace, un reintento deja una preferencia
+   * huérfana sin pagos, que expira sola por `expiration_date_to`.
+   */
+  async createPreference(
+    accessToken: string,
+    body: MpPreferenceBody,
+    idempotencyKey: string,
+  ): Promise<MpPreference> {
+    const operation: MpOperation = {
+      label: 'create Mercado Pago preference',
+      code: ErrorCodes.MP_PREFERENCE_CREATE_FAILED,
+      instance: '/driver/reservations/:reservationId/checkout',
+    };
+
+    const payload = await this.post<Record<string, unknown>>(
+      operation,
+      '/checkout/preferences',
+      body as unknown as Record<string, unknown>,
+      accessToken,
+      idempotencyKey,
+    );
+
+    const id = readId(payload.id);
+    const initPoint = str(payload.init_point);
+    if (!id || !initPoint) {
+      throw this.malformed(operation, 'response has no id or init_point');
+    }
+    return { id, initPoint };
+  }
+
+  /** Lee un pago. GET: sin `X-Idempotency-Key`. */
+  async getPayment(accessToken: string, paymentId: string): Promise<MpPayment> {
+    const operation: MpOperation = {
+      label: 'fetch Mercado Pago payment',
+      code: ErrorCodes.MP_PAYMENT_READ_FAILED,
+      instance: '/integrations/mercadopago/webhook',
+    };
+
+    const payload = await this.send<Record<string, unknown>>(
+      operation,
+      'GET',
+      `/v1/payments/${encodeURIComponent(paymentId)}`,
+      undefined,
+      accessToken,
+    );
+
+    return this.readPayment(payload, operation);
+  }
+
+  /**
+   * Busca los pagos de una reserva por su `external_reference`, el más nuevo
+   * primero. Es lo que usan la reconciliación (webhook perdido) y la
+   * cancelación de pagos pendientes.
+   *
+   * No devuelve `null` si no hay nada: devuelve `[]`.
+   *
+   * TODO(prod-check): la búsqueda tiene un retraso de indexación no
+   * documentado respecto de la creación del pago. Un `[]` justo después de pagar
+   * no prueba que no haya pago; por eso el webhook y el `getPayment` por id son
+   * la fuente principal y esto es solo la red de seguridad.
+   */
+  async searchPayments(
+    accessToken: string,
+    query: { readonly externalReference: string },
+  ): Promise<MpPayment[]> {
+    const operation: MpOperation = {
+      label: 'search Mercado Pago payments',
+      code: ErrorCodes.MP_PAYMENT_READ_FAILED,
+      instance: '/reservations/payments/search',
+    };
+
+    const payload = await this.send<Record<string, unknown>>(
+      operation,
+      'GET',
+      `/v1/payments/search?external_reference=${encodeURIComponent(query.externalReference)}` +
+        '&sort=date_created&criteria=desc',
+      undefined,
+      accessToken,
+    );
+
+    if (!Array.isArray(payload.results)) {
+      throw this.malformed(operation, 'response has no results array');
+    }
+
+    const payments: MpPayment[] = [];
+    for (const item of payload.results) {
+      const row = obj(item);
+      if (row) payments.push(this.readPayment(row, operation));
+    }
+    return payments;
+  }
+
+  /**
+   * Reembolsa un pago. Sin `amount` el body va vacío y MP devuelve el TOTAL;
+   * con `amount` es parcial.
+   *
+   * La key la arma el lifecycle y es estable por reserva: reintentar la misma
+   * cancelación no puede devolver la plata dos veces.
+   *
+   * TODO(prod-check): la doc de `/refunds` no es clara sobre el `status` de la
+   * respuesta para medios que no devuelven en el momento. Se asume `approved`
+   * = devuelto y cualquier otro valor = en curso; el sweeper reconcilia.
+   */
+  async refundPayment(
+    accessToken: string,
+    paymentId: string,
+    idempotencyKey: string,
+    amount?: number,
+  ): Promise<MpRefund> {
+    const operation: MpOperation = {
+      label: 'refund Mercado Pago payment',
+      code: ErrorCodes.MP_REFUND_FAILED,
+      instance: '/reservations/:reservationId/refund',
+    };
+
+    const payload = await this.post<Record<string, unknown>>(
+      operation,
+      `/v1/payments/${encodeURIComponent(paymentId)}/refunds`,
+      amount === undefined ? {} : { amount },
+      accessToken,
+      idempotencyKey,
+    );
+
+    const id = readId(payload.id);
+    if (!id) {
+      // 🔴 2xx sin id: el reembolso SÍ se ejecutó. Es `MP_MALFORMED_RESPONSE`
+      // y no `MP_REFUND_FAILED` por lo mismo que en `createOrder`.
+      throw this.malformed(operation, 'response has no refund id');
+    }
+    return { id, status: str(payload.status), amount: num(payload.amount) };
+  }
+
+  /**
+   * Cancela un pago `pending` / `in_process`: `PUT /v1/payments/{id}` con
+   * `{ status: 'cancelled' }`. Un pago `approved` no se cancela, se reembolsa.
+   */
+  async cancelPayment(
+    accessToken: string,
+    paymentId: string,
+    idempotencyKey: string,
+  ): Promise<MpPayment> {
+    const operation: MpOperation = {
+      label: 'cancel Mercado Pago payment',
+      code: ErrorCodes.MP_PAYMENT_CANCEL_FAILED,
+      instance: '/reservations/:reservationId/cancel',
+    };
+
+    const payload = await this.send<Record<string, unknown>>(
+      operation,
+      'PUT',
+      `/v1/payments/${encodeURIComponent(paymentId)}`,
+      { status: 'cancelled' },
+      accessToken,
+      idempotencyKey,
+    );
+
+    return this.readPayment(payload, operation);
+  }
+
   private async post<T>(
     operation: MpOperation,
     path: string,
@@ -886,7 +1118,7 @@ export class MpApiClient implements OnModuleInit {
    */
   private async send<T>(
     operation: MpOperation,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     body: Record<string, unknown> | undefined,
     accessToken?: string,
@@ -1057,6 +1289,26 @@ export class MpApiClient implements OnModuleInit {
       statusDetail: str(payload.status_detail),
       externalReference: str(payload.external_reference),
       lastUpdatedDate: date(payload.last_updated_date),
+    };
+  }
+
+  /** Lee un pago exigiendo solo el id; el resto es diagnóstico y puede faltar. */
+  private readPayment(
+    payload: Record<string, unknown>,
+    operation: MpOperation,
+  ): MpPayment {
+    const id = readId(payload.id);
+    if (!id) {
+      throw this.malformed(operation, 'response has no payment id');
+    }
+    return {
+      id,
+      status: str(payload.status),
+      statusDetail: str(payload.status_detail),
+      externalReference: str(payload.external_reference),
+      transactionAmount: num(payload.transaction_amount),
+      transactionAmountRefunded: num(payload.transaction_amount_refunded),
+      collectorId: readId(payload.collector_id),
     };
   }
 

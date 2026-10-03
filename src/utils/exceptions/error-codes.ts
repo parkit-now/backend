@@ -233,6 +233,17 @@ export const ErrorCodes = {
   // pudo generar el cobro con QR") y el detalle de cual fallo ya esta en el
   // `detail` y en el log.
   MP_ORDER_CREATE_FAILED: 'MP_ORDER_CREATE_FAILED',
+  // Mercado Pago rechazo la creacion de la preferencia de Checkout Pro de una
+  // reserva (502): el conductor no puede pagar ahora mismo.
+  MP_PREFERENCE_CREATE_FAILED: 'MP_PREFERENCE_CREATE_FAILED',
+  // Fallo la lectura o la busqueda de pagos en Mercado Pago (502). Cubre
+  // `GET /v1/payments/{id}` y `GET /v1/payments/search`.
+  MP_PAYMENT_READ_FAILED: 'MP_PAYMENT_READ_FAILED',
+  // Mercado Pago rechazo el reembolso de un pago (502): sin saldo en la cuenta
+  // del vendedor, pago muy viejo (180 dias), monto invalido, etc.
+  MP_REFUND_FAILED: 'MP_REFUND_FAILED',
+  // Mercado Pago rechazo la cancelacion de un pago pendiente (502).
+  MP_PAYMENT_CANCEL_FAILED: 'MP_PAYMENT_CANCEL_FAILED',
   // Mercado Pago contesto que esta caido (5xx propio o 429): es transitorio y
   // el cliente deberia reintentar mas tarde (503).
   MP_UNAVAILABLE: 'MP_UNAVAILABLE',
