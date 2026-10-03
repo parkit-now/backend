@@ -1,9 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await, @typescript-eslint/await-thenable */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/await-thenable */
 import { HttpStatus } from '@nestjs/common';
 import { Prisma, type Reservation } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { FakeReservationPaymentGateway } from './payment-gateway/fake-reservation-payment.gateway';
+import { FakePrisma, type Row } from './fake-reservation-prisma';
 import { ReservationLifecycleService } from './reservation-lifecycle.service';
 
 const ar = (iso: string) => new Date(`${iso}-03:00`);
@@ -16,113 +17,6 @@ const USER = 'user-1';
 const RES_ID = '0192f0a0-0000-7000-8000-00000000abcd';
 const minutes = (base: Date, delta: number) =>
   new Date(base.getTime() + delta * 60_000);
-
-type Row = Record<string, any>;
-
-function matches(row: Row, where: Record<string, any>): boolean {
-  return Object.entries(where).every(([key, expected]) => {
-    const actual = row[key];
-    if (
-      expected &&
-      typeof expected === 'object' &&
-      !(expected instanceof Date)
-    ) {
-      if ('in' in expected) return expected.in.includes(actual);
-      if ('lt' in expected) return actual !== null && actual < expected.lt;
-      if ('not' in expected) return actual !== expected.not;
-      return false;
-    }
-    return actual === expected;
-  });
-}
-
-/** Prisma en memoria: lo justo para ejecutar las transiciones de verdad. */
-class FakePrisma {
-  reservations: Row[] = [];
-  payments: Row[] = [];
-  reservableSpots: number | null = 1;
-  /** Lo que devuelve la consulta de cupo (reservas que se superponen). */
-  overlapping: { entryAt: Date; exitAt: Date }[] = [];
-  capacityQueries: any[] = [];
-  readonly $executeRaw = jest.fn();
-
-  reservation = {
-    findFirst: async ({ where }: any) =>
-      this.copy(this.reservations.find((r) => matches(r, where))),
-    findMany: async (args: any) => {
-      this.capacityQueries.push(args);
-      return this.overlapping;
-    },
-    updateMany: async ({ where, data }: any) => {
-      const hit = this.reservations.filter((r) => matches(r, where));
-      hit.forEach((r) => this.apply(r, data));
-      return { count: hit.length };
-    },
-    update: async ({ where, data }: any) => {
-      const row = this.reservations.find((r) => r.id === where.id)!;
-      this.apply(row, data);
-      return { ...row };
-    },
-  };
-
-  reservationPayment = {
-    findFirst: async ({ where }: any) =>
-      this.copy(
-        [...this.payments]
-          .reverse()
-          .find((p) => matches(p, stripNot(where, p))),
-      ),
-    updateMany: async ({ where, data }: any) => {
-      const hit = this.payments.filter((p) => matches(p, where));
-      hit.forEach((p) => this.apply(p, data));
-      return { count: hit.length };
-    },
-  };
-
-  service = {
-    findFirst: async () =>
-      this.reservableSpots === null
-        ? null
-        : { reservableSpots: this.reservableSpots },
-  };
-
-  $transaction = async (fn: (tx: this) => unknown) => fn(this);
-
-  private copy(row: Row | undefined) {
-    return row ? { ...row } : null;
-  }
-
-  private apply(row: Row, data: Row) {
-    for (const [key, value] of Object.entries(data)) {
-      if (value === undefined) continue;
-      if (value && typeof value === 'object' && 'increment' in value) {
-        row[key] += value.increment;
-      } else {
-        row[key] = value;
-      }
-    }
-  }
-
-  reservationById(id = RES_ID): Row {
-    return this.reservations.find((r) => r.id === id)!;
-  }
-
-  paymentOf(reservationId = RES_ID): Row {
-    return this.payments.find((p) => p.reservationId === reservationId)!;
-  }
-}
-
-// `providerPaymentId: { not: null }` (el reembolso busca un pago con id).
-function stripNot(where: Row, row: Row): Row {
-  const copy = { ...where };
-  const value = copy.providerPaymentId;
-  if (value && typeof value === 'object' && 'not' in value) {
-    delete copy.providerPaymentId;
-    if (row.providerPaymentId === value.not)
-      copy.providerPaymentId = '__never__';
-  }
-  return copy;
-}
 
 const reservation = (overrides: Row = {}): Row => ({
   id: RES_ID,
