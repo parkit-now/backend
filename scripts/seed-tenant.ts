@@ -2119,6 +2119,57 @@ async function main(): Promise<void> {
   await seedMercadoPagoAccount();
 
   await seedEntries();
+  await seedDriverVehicles();
+}
+
+// ---------------------------------------------------------------------------
+// Vehículos del conductor demo (driver@example.com, ver seed-auth). Globales,
+// por usuario: la app del conductor los lista y la reserva exige una patente
+// suya. Idempotente por (user_id, plate).
+// ---------------------------------------------------------------------------
+
+const DRIVER_VEHICLES = [
+  {
+    plate: 'AB123CD',
+    kind: 'car',
+    brand: 'Toyota',
+    model: 'Etios',
+    isPrimary: true,
+  },
+  {
+    plate: 'A123BCD',
+    kind: 'motorcycle',
+    brand: 'Honda',
+    model: 'Wave',
+    isPrimary: false,
+  },
+] as const;
+
+async function seedDriverVehicles(): Promise<void> {
+  const driver = await prisma.user.findUnique({
+    where: { email: 'driver@example.com' },
+    select: { id: true },
+  });
+  if (!driver) {
+    console.warn(
+      '⚠ driver@example.com no existe (correr seed-auth): sin vehículos.',
+    );
+    return;
+  }
+  let created = 0;
+  for (const vehicle of DRIVER_VEHICLES) {
+    const existing = await prisma.driverVehicle.findUnique({
+      where: { userId_plate: { userId: driver.id, plate: vehicle.plate } },
+    });
+    if (existing) continue;
+    await prisma.driverVehicle.create({
+      data: { userId: driver.id, ...vehicle },
+    });
+    created += 1;
+  }
+  console.log(
+    `✓ Vehículos del conductor demo: ${created} nuevos, ${DRIVER_VEHICLES.length - created} sin cambios.`,
+  );
 }
 
 /**

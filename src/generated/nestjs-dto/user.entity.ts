@@ -8,6 +8,7 @@ import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {MpOauthStateEntity} from './mp-oauth-state.entity'
 import {PaymentIntentEntity} from './payment-intent.entity'
 import {ReservationEntity} from './reservation.entity'
+import {DriverVehicleEntity} from './driver-vehicle.entity'
 
 
 export class UserEntity {
@@ -32,4 +33,5 @@ archivedLprDetectionEvents?: LprDetectionEventEntity[] ;
 mpOauthStates?: MpOauthStateEntity[] ;
 createdPaymentIntents?: PaymentIntentEntity[] ;
 reservations?: ReservationEntity[] ;
+driverVehicles?: DriverVehicleEntity[] ;
 }

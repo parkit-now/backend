@@ -1,0 +1,24 @@
+// Vehículo del conductor (migración 20261003010000, SCRUM-285).
+//
+// Global y no tenant-local: el vehículo es del conductor y lo usa en cualquier
+// playa; se lee siempre por `userId`. Patente normalizada y única por
+// conductor; un solo principal (índice único parcial, sólo en el SQL: Prisma
+// no expresa índices parciales). `kind` es car | suv_pickup | motorcycle (CHECK
+// en el SQL). Backend-only: RLS sin policies.
+
+model DriverVehicle {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plate     String   @db.VarChar(10)
+  kind      String   @db.VarChar(20)
+  brand     String?  @db.VarChar(60)
+  model     String?  @db.VarChar(60)
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, plate], map: "driver_vehicles_user_plate_key")
+  @@map("driver_vehicles")
+}
