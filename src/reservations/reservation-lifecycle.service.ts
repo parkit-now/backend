@@ -89,6 +89,18 @@ export type MarkPaidOutcome =
   /** La reserva ya no estaba esperando el pago: no se tocó. */
   | 'ignored';
 
+export type ConfirmRefundOutcome =
+  | 'refunded'
+  | 'partial'
+  /** Ya estaba confirmado (o no estaba pendiente): no se tocó. */
+  | 'ignored'
+  /** Nadie pidió el reembolso (se hizo desde el panel del proveedor). */
+  | 'ignored_unrequested';
+
+export type ConfirmRefundResult = TransitionResult & {
+  outcome: ConfirmRefundOutcome;
+};
+
 export type MarkPaidResult = TransitionResult & { outcome: MarkPaidOutcome };
 
 /**
@@ -342,6 +354,129 @@ export class ReservationLifecycleService {
       },
     });
     return { changed: updated.count > 0, reservation };
+  }
+
+  /**
+   * El proveedor confirmó (webhook o sweeper) un reembolso. De `pending` o
+   * `failed` pasa a `refunded` (si alcanza el total de la reserva) o `partial`,
+   * guarda el monto, limpia el error y deja la fila de pago en
+   * `refunded|partially_refunded`. Guardado por estado: un segundo aviso no
+   * cambia nada (`ignored`).
+   *
+   * Si nadie pidió el reembolso (`refundStatus = none`: el dueño devolvió desde
+   * el panel de Mercado Pago) la reserva no se toca: sólo se actualiza el
+   * estado del proveedor en la fila de pago (`ignored_unrequested`).
+   */
+  async confirmRefund(
+    reservationId: string,
+    refund: { refundedAmountArs: number; providerPaymentId?: string },
+    now = new Date(),
+  ): Promise<ConfirmRefundResult> {
+    const reservation = await this.load({ id: reservationId }, INSTANCE);
+    const { tenantId } = reservation;
+    const full = refund.refundedAmountArs >= Number(reservation.totalArs);
+    const paymentStatus = full
+      ? ReservationPaymentStatus.refunded
+      : ReservationPaymentStatus.partially_refunded;
+    const paymentWhere = {
+      reservationId,
+      tenantId,
+      ...(refund.providerPaymentId
+        ? { providerPaymentId: refund.providerPaymentId }
+        : { providerPaymentId: { not: null } }),
+    };
+
+    if (reservation.refundStatus === 'none') {
+      this.logger.warn(
+        `Refund of ${refund.refundedAmountArs} ARS for reservation ${reservationId} was not requested by Parkit (refunded from the provider panel?).`,
+      );
+      await this.prisma.reservationPayment.updateMany({
+        where: paymentWhere,
+        data: { providerStatus: paymentStatus },
+      });
+      return { changed: false, outcome: 'ignored_unrequested', reservation };
+    }
+
+    const refundStatus = full ? 'refunded' : 'partial';
+    const confirmed = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.reservation.updateMany({
+        where: {
+          id: reservationId,
+          tenantId,
+          refundStatus: { in: ['pending', 'failed'] },
+        },
+        data: {
+          refundStatus,
+          refundedAmountArs: refund.refundedAmountArs,
+          refundError: null,
+        },
+      });
+      if (updated.count === 0) return false;
+      await tx.reservationPayment.updateMany({
+        where: paymentWhere,
+        data: { status: paymentStatus, providerStatus: paymentStatus },
+      });
+      await this.audit(tx, {
+        action: AuditActions.RESERVATION_REFUND_CONFIRMED,
+        reservation,
+        actor: SYSTEM_ACTOR,
+        extra: {
+          refundArs: refund.refundedAmountArs,
+          refundStatus,
+          previousRefundStatus: reservation.refundStatus,
+        },
+      });
+      return true;
+    });
+    if (!confirmed) return { changed: false, outcome: 'ignored', reservation };
+    this.logger.log(
+      `Refund confirmed for reservation ${reservationId}: ${refundStatus} (${refund.refundedAmountArs} ARS) at ${now.toISOString()}`,
+    );
+    return {
+      changed: true,
+      outcome: refundStatus,
+      reservation: await this.reload(reservationId),
+    };
+  }
+
+  /**
+   * Deja `failed` un reembolso `pending` que el sistema no pudo confirmar (por
+   * ejemplo, el token del dueño venció o se revocó). Guardado por estado: si ya
+   * no está `pending` no hace nada. Lo audita (`warn`) como el sistema.
+   */
+  async markRefundFailedBySystem(
+    reservationId: string,
+    tenantId: string,
+    message: string,
+  ): Promise<TransitionResult> {
+    const reservation = await this.load(
+      { id: reservationId, tenantId },
+      INSTANCE,
+    );
+    const error = message.slice(0, MAX_REFUND_ERROR_LENGTH);
+    const changed = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.reservation.updateMany({
+        where: { id: reservationId, tenantId, refundStatus: 'pending' },
+        data: { refundStatus: 'failed', refundError: error },
+      });
+      if (updated.count === 0) return false;
+      await this.audit(tx, {
+        action: AuditActions.RESERVATION_REFUND_FAILED,
+        reservation,
+        actor: SYSTEM_ACTOR,
+        severity: 'warn',
+        extra: {
+          refundArs: Number(reservation.refundRequestedArs ?? 0),
+          refundStatus: 'failed',
+          refundError: error.slice(0, MAX_AUDIT_ERROR_LENGTH),
+        },
+      });
+      return true;
+    });
+    return {
+      changed,
+      reservation: changed ? await this.reload(reservationId) : reservation,
+    };
   }
 
   // ─── Acciones del dueño ─────────────────────────────────────────────────────
@@ -637,30 +772,59 @@ export class ReservationLifecycleService {
     return reservation;
   }
 
-  /** Marca aprobado el pago vivo de la reserva (también uno vencido por el sweeper). */
+  /**
+   * Marca aprobado el pago de la reserva (también uno vencido por el sweeper o
+   * rechazado: en Checkout Pro el comprador reintenta en la MISMA preferencia y
+   * el segundo pago puede salir aprobado después de un rechazo).
+   *
+   * Elige la fila cuyo `providerPaymentId` coincide con el que llega y, si no
+   * hay, la última de la reserva que todavía no está aprobada. Si la elegida no
+   * está viva (`created`), cancela antes cualquier otra `created` de la reserva
+   * en la misma transacción: el índice único parcial sólo admite una fila viva.
+   * Idempotente: si la fila ya está aprobada (o devuelta) no la toca.
+   */
   private async approvePayment(
     reservation: Reservation,
     payment: ProviderPaymentRef,
     now: Date,
   ): Promise<void> {
-    await this.prisma.reservationPayment.updateMany({
-      where: {
-        reservationId: reservation.id,
-        tenantId: reservation.tenantId,
-        status: {
-          in: [
-            ReservationPaymentStatus.created,
-            ReservationPaymentStatus.cancelled,
-          ],
+    const { id: reservationId, tenantId } = reservation;
+    await this.prisma.$transaction(async (tx) => {
+      const rows = await tx.reservationPayment.findMany({
+        where: { reservationId, tenantId },
+        orderBy: { createdAt: 'desc' },
+      });
+      const open: ReservationPaymentStatus[] = [
+        ReservationPaymentStatus.created,
+        ReservationPaymentStatus.cancelled,
+        ReservationPaymentStatus.rejected,
+      ];
+      const target =
+        rows.find(
+          (row) => row.providerPaymentId === payment.providerPaymentId,
+        ) ?? rows.find((row) => open.includes(row.status));
+      if (!target || !open.includes(target.status)) return;
+
+      if (target.status !== ReservationPaymentStatus.created) {
+        await tx.reservationPayment.updateMany({
+          where: {
+            reservationId,
+            tenantId,
+            status: ReservationPaymentStatus.created,
+          },
+          data: { status: ReservationPaymentStatus.cancelled },
+        });
+      }
+      await tx.reservationPayment.updateMany({
+        where: { id: target.id, status: { in: open } },
+        data: {
+          status: ReservationPaymentStatus.approved,
+          providerPaymentId: payment.providerPaymentId,
+          providerStatus: payment.providerStatus ?? 'approved',
+          providerStatusDetail: payment.providerStatusDetail,
+          approvedAt: now,
         },
-      },
-      data: {
-        status: ReservationPaymentStatus.approved,
-        providerPaymentId: payment.providerPaymentId,
-        providerStatus: payment.providerStatus ?? 'approved',
-        providerStatusDetail: payment.providerStatusDetail,
-        approvedAt: now,
-      },
+      });
     });
   }
 

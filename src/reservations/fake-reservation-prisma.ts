@@ -100,6 +100,15 @@ export class FakePrisma {
           .reverse()
           .find((p) => matches(p, stripNot(where, p))),
       ),
+    findMany: async ({ where, orderBy }: any) => {
+      const rows = this.payments
+        .filter((p) => matches(p, stripNot(where, p)))
+        .map((p) => ({ ...p }));
+      if (orderBy?.createdAt === 'desc') {
+        rows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      }
+      return rows;
+    },
     updateMany: async ({ where, data }: any) => {
       const hit = this.payments.filter((p) => matches(p, where));
       hit.forEach((p) => this.apply(p, data));
