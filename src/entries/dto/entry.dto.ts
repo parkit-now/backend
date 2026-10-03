@@ -1,4 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import type { VehicleCategory } from '../../vehicle-categories/vehicle-categories';
 
 export class EntryDto {
   @ApiProperty({ format: 'uuid' })
@@ -21,9 +23,31 @@ export class EntryDto {
     maxLength: 60,
     description:
       'Snapshot del nombre del tipo al momento del ingreso. Texto y no FK: un ' +
-      'ingreso histórico no debe cambiar si el dueño renombra o borra el tipo.',
+      'ingreso histórico no debe cambiar si el dueño renombra o borra el tipo. ' +
+      'Desde las categorías también se llena en los ingresos manuales.',
   })
   vehicleType: string | null;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    nullable: true,
+    description:
+      'Tipo de vehículo elegido al ingresar. Sin FK en la base: puede ' +
+      'apuntar a un tipo borrado (que sigue viajando por ' +
+      '/vehicle-types/changes como tombstone). null en ingresos anteriores o ' +
+      'de cajas viejas.',
+  })
+  vehicleTypeId: string | null;
+
+  @ApiPropertyOptional({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    nullable: true,
+    description:
+      'Categoría de la plataforma congelada al ingresar: si el dueño cambia ' +
+      'la categoría del tipo, los ingresos ya hechos conservan la que ' +
+      'guardaron. null en ingresos anteriores a las categorías o de cajas viejas.',
+  })
+  vehicleCategory: VehicleCategory | null;
 
   @ApiPropertyOptional({
     description: 'URL of the entry photo captured by the LPR camera',

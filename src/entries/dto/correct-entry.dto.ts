@@ -4,6 +4,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -13,6 +14,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PaymentLineDto } from '../../payment-transactions/dto/payment-line.dto';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import {
+  VEHICLE_CATEGORIES,
+  type VehicleCategory,
+} from '../../vehicle-categories/vehicle-categories';
 
 export class CorrectEntryDto {
   @ApiPropertyOptional({ example: 'ABC123', maxLength: 20 })
@@ -60,6 +66,28 @@ export class CorrectEntryDto {
   @IsString()
   @MaxLength(120)
   vehicleModel?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Corrige el tipo de vehículo. Si resuelve a un tipo del estacionamiento ' +
+      '(borrado o no) se actualizan `vehicleTypeId`, `vehicleType` y ' +
+      '`vehicleCategory`; si no, se ignora.',
+  })
+  @IsOptional()
+  @IsUUID()
+  vehicleTypeId?: string;
+
+  @ApiPropertyOptional({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    description:
+      'Corrige sólo la categoría. Sin `vehicleTypeId` válido el ingreso queda ' +
+      'con esa categoría, sin tipo (`vehicleTypeId = null`) y con el nombre ' +
+      '`vehicleType` que ya tenía.',
+  })
+  @IsOptional()
+  @IsIn(VEHICLE_CATEGORIES)
+  vehicleCategory?: VehicleCategory;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

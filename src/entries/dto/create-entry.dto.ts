@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -10,6 +11,11 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
+import {
+  VEHICLE_CATEGORIES,
+  type VehicleCategory,
+} from '../../vehicle-categories/vehicle-categories';
 
 export class CreateEntryDto {
   @ApiProperty({
@@ -61,6 +67,28 @@ export class CreateEntryDto {
   @IsString()
   @MaxLength(120)
   vehicleModel?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Tipo de vehículo elegido (`GET /tenants/:tenantId/vehicle-types`). ' +
+      'Opcional: las cajas viejas no lo mandan y el ingreso queda sin tipo. Si ' +
+      'es de otro estacionamiento o no existe se ignora, sin error. De ahí ' +
+      'salen el nombre (`vehicleType`) y la categoría que se guardan.',
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsUUID()
+  vehicleTypeId?: string;
+
+  @ApiPropertyOptional({
+    ...VEHICLE_CATEGORY_API_PROPERTY,
+    description:
+      'Categoría del vehículo. Sólo se usa si `vehicleTypeId` no resuelve a un ' +
+      'tipo del estacionamiento; si resuelve, manda la categoría del tipo.',
+  })
+  @IsOptional()
+  @IsIn(VEHICLE_CATEGORIES)
+  vehicleCategory?: VehicleCategory;
 
   @ApiPropertyOptional({
     description: 'ID of the selected rate.',

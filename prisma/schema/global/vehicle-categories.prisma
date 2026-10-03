@@ -21,6 +21,7 @@ model VehicleCategory {
   typeDefaults    VehicleTypeDefault[]
   catalogDefaults VehicleCatalogDefault[]
   vehicleTypes    VehicleType[]
+  entries         Entry[]
 
   @@map("vehicle_categories")
 }

@@ -16,6 +16,11 @@ import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
 import { calcStayPrice } from './pricing';
+import { isVehicleCategory } from '../vehicle-categories/vehicle-categories';
+import {
+  EMPTY_VEHICLE_SNAPSHOT,
+  resolveVehicleSnapshot,
+} from './vehicle-snapshot';
 import { PaymentLineDto } from '../payment-transactions/dto/payment-line.dto';
 import { inferPaymentMethodTypeFromName } from '../payment-transactions/payment-method-type';
 
@@ -40,6 +45,9 @@ type EntryAuditSnapshot = {
   amountPaid: number | null;
   vehicleBrand: string | null;
   vehicleModel: string | null;
+  vehicleType: string | null;
+  vehicleTypeId: string | null;
+  vehicleCategory: string | null;
   rateId: string | null;
   rateSnapshotName: string | null;
   rateSnapshotHourPriceArs: number | null;
@@ -116,6 +124,12 @@ function toDto(entry: PrismaEntry): EntryDto {
     manuallyInvoiced: entry.manuallyInvoiced,
     source: entry.source,
     vehicleType: entry.vehicleType,
+    vehicleTypeId: entry.vehicleTypeId,
+    // La columna es varchar con FK: siempre es una categoría de la lista, pero
+    // si una migración agrega una y este código es viejo, no se inventa nada.
+    vehicleCategory: isVehicleCategory(entry.vehicleCategory)
+      ? entry.vehicleCategory
+      : null,
     entryImageUrl: entry.entryImageUrl,
     entryCameraId: entry.entryCameraId,
     exitImageUrl: entry.exitImageUrl,
@@ -345,6 +359,9 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     amountPaid: toNumber(entry.amountPaid),
     vehicleBrand: entry.vehicleBrand,
     vehicleModel: entry.vehicleModel,
+    vehicleType: entry.vehicleType,
+    vehicleTypeId: entry.vehicleTypeId,
+    vehicleCategory: entry.vehicleCategory,
     rateId: entry.rateId,
     rateSnapshotName: entry.rateSnapshotName,
     rateSnapshotHourPriceArs: toNumber(entry.rateSnapshotHourPriceArs),
@@ -374,6 +391,9 @@ function diffSnapshots(
     'amountPaid',
     'vehicleBrand',
     'vehicleModel',
+    'vehicleType',
+    'vehicleTypeId',
+    'vehicleCategory',
     'rateId',
     'rateSnapshotName',
     'rateSnapshotHourPriceArs',
@@ -489,6 +509,16 @@ export class EntriesService {
         );
       }
 
+      // Una caja vieja no manda tipo ni categoría: el ingreso queda sin ellos,
+      // como hasta ahora. Nunca se rechaza por esto.
+      const vehicle =
+        data.vehicleTypeId || data.vehicleCategory
+          ? await resolveVehicleSnapshot(tx, tenantId, {
+              vehicleTypeId: data.vehicleTypeId,
+              vehicleCategory: data.vehicleCategory,
+            })
+          : EMPTY_VEHICLE_SNAPSHOT;
+
       return tx.entry.create({
         data: {
           id: data.id,
@@ -500,6 +530,9 @@ export class EntriesService {
           enteredAt: new Date(data.enteredAt),
           vehicleBrand: data.vehicleBrand,
           vehicleModel: data.vehicleModel,
+          vehicleType: vehicle.vehicleType,
+          vehicleTypeId: vehicle.vehicleTypeId,
+          vehicleCategory: vehicle.vehicleCategory,
           rateId: data.rateId,
           rateSnapshotName: data.rateSnapshotName,
           rateSnapshotHourPriceArs: data.rateSnapshotHourPriceArs,
@@ -890,6 +923,22 @@ export class EntriesService {
       if (data.vehicleModel !== undefined) {
         updateData.vehicleModel = data.vehicleModel || null;
       }
+      if (
+        data.vehicleTypeId !== undefined ||
+        data.vehicleCategory !== undefined
+      ) {
+        const vehicle = await resolveVehicleSnapshot(tx, tenantId, {
+          vehicleTypeId: data.vehicleTypeId,
+          vehicleCategory: data.vehicleCategory,
+        });
+        // Si sólo vino la categoría el tipo queda sin id, pero el nombre que
+        // el ingreso ya tenía se conserva: es un dato histórico, no se borra.
+        updateData.vehicleTypeId = vehicle.vehicleTypeId;
+        updateData.vehicleCategory = vehicle.vehicleCategory;
+        if (vehicle.vehicleType !== null) {
+          updateData.vehicleType = vehicle.vehicleType;
+        }
+      }
       if (data.rateId !== undefined) updateData.rateId = data.rateId || null;
       if (data.rateSnapshotName !== undefined) {
         updateData.rateSnapshotName = data.rateSnapshotName || null;
@@ -1067,14 +1116,25 @@ export class EntriesService {
         },
       });
 
-      // 3. Persist the stay. UUID is server-generated for LPR entries.
+      // 3. Tipo y categoría: por id si la cámara lo manda, si no por el nombre
+      //    del tipo contra los del estacionamiento. Lo que no resuelve queda
+      //    en null.
+      const vehicle = await resolveVehicleSnapshot(tx, tenantId, {
+        vehicleTypeId: data.vehicleTypeId,
+        vehicleCategory: data.vehicleCategory,
+        vehicleType: data.vehicleType,
+      });
+
+      // 4. Persist the stay. UUID is server-generated for LPR entries.
       return tx.entry.create({
         data: {
           id: crypto.randomUUID(),
           tenantId,
           plate,
           source: 'auto',
-          vehicleType: data.vehicleType ?? null,
+          vehicleType: vehicle.vehicleType,
+          vehicleTypeId: vehicle.vehicleTypeId,
+          vehicleCategory: vehicle.vehicleCategory,
           entryImageUrl: data.imageUrl ?? null,
           entryCameraId: data.cameraId ?? null,
           enteredAt: data.timestamp ? new Date(data.timestamp) : now,
