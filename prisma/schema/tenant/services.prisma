@@ -40,6 +40,10 @@ model Service {
   lateCancelRefundPct     Int      @default(0) @map("late_cancel_refund_pct")
   earlyArrivalMinutes     Int      @default(15) @map("early_arrival_minutes")
   graceMinutes            Int      @default(30) @map("grace_minutes")
+  // Tope de la llegada anticipada (migración 20261007120000): hasta cuántos
+  // minutos antes de `entryAt` el ingreso se vincula solo ("llegó antes", el
+  // extra se cobra como excedente). Antes de eso, estadía común.
+  earlyArrivalMaxMinutes  Int      @default(60) @map("early_arrival_max_minutes")
 
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id])

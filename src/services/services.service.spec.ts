@@ -19,6 +19,7 @@ const row = (overrides: object = {}) => ({
   lateCancelRefundPct: 0,
   earlyArrivalMinutes: 15,
   graceMinutes: 30,
+  earlyArrivalMaxMinutes: 60,
   ...overrides,
 });
 
@@ -113,6 +114,7 @@ describe('ServicesService', () => {
           lateCancelRefundPct: 0,
           earlyArrivalMinutes: 15,
           graceMinutes: 30,
+          earlyArrivalMaxMinutes: 60,
           readiness: { ready: true, missing: [] },
           upcomingPaidReservations: 3,
         },
@@ -232,6 +234,90 @@ describe('ServicesService', () => {
       expect(result).toMatchObject({
         acceptanceMode: 'manual',
         graceMinutes: 45,
+      });
+    });
+
+    describe('tope de llegada anticipada', () => {
+      it('guarda earlyArrivalMaxMinutes y lo devuelve', async () => {
+        mockTenant.service.updateMany.mockResolvedValue({ count: 1 });
+        mockTenant.service.findFirst.mockResolvedValue(row());
+        mockTenant.service.findFirstOrThrow.mockResolvedValue(
+          row({ earlyArrivalMaxMinutes: 45 }),
+        );
+
+        const result = await service.updateService(
+          ServiceCode.ADVANCE_RESERVATION,
+          { earlyArrivalMaxMinutes: 45 },
+        );
+
+        expect(mockTenant.service.updateMany).toHaveBeenCalledWith({
+          where: {
+            tenantId: 'tenant-1',
+            code: ServiceCode.ADVANCE_RESERVATION,
+          },
+          data: { version: { increment: 1 }, earlyArrivalMaxMinutes: 45 },
+        });
+        expect(result.earlyArrivalMaxMinutes).toBe(45);
+      });
+
+      it('sin fila devuelve el default de 60', async () => {
+        mockTenant.service.findMany.mockResolvedValue([]);
+        const catalog = await service.listServices();
+        expect(catalog[0].earlyArrivalMaxMinutes).toBe(60);
+      });
+
+      it('rechaza un tope menor que la llegada anticipada normal', async () => {
+        mockTenant.service.findFirst.mockResolvedValue(
+          row({ earlyArrivalMinutes: 30 }),
+        );
+
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(
+          service.updateService(ServiceCode.ADVANCE_RESERVATION, {
+            earlyArrivalMaxMinutes: 20,
+          }),
+        ).rejects.toMatchObject({
+          status: HttpStatus.BAD_REQUEST,
+          response: expect.objectContaining({
+            code: 'SERVICE_EARLY_ARRIVAL_MAX_BELOW_EARLY',
+          }) as unknown,
+        });
+        expect(mockTenant.service.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('valida contra el valor nuevo de la llegada anticipada normal', async () => {
+        mockTenant.service.findFirst.mockResolvedValue(row());
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(
+          service.updateService(ServiceCode.ADVANCE_RESERVATION, {
+            earlyArrivalMinutes: 90,
+          }),
+        ).rejects.toMatchObject({ status: HttpStatus.BAD_REQUEST });
+      });
+
+      it('no traba otros cambios en una playa que ya tenía más llegada anticipada que el tope', async () => {
+        mockTenant.service.updateMany.mockResolvedValue({ count: 1 });
+        const legacy = row({ earlyArrivalMinutes: 90 });
+        mockTenant.service.findFirst.mockResolvedValue(legacy);
+        mockTenant.service.findFirstOrThrow.mockResolvedValue(
+          row({ earlyArrivalMinutes: 90, graceMinutes: 20 }),
+        );
+
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(
+          service.updateService(ServiceCode.ADVANCE_RESERVATION, {
+            graceMinutes: 20,
+          }),
+        ).resolves.toMatchObject({ graceMinutes: 20 });
+      });
+
+      it('sólo ADVANCE_RESERVATION lo acepta', async () => {
+        // eslint-disable-next-line @typescript-eslint/await-thenable
+        await expect(
+          service.updateService('OTHER', {
+            earlyArrivalMaxMinutes: 30,
+          }),
+        ).rejects.toMatchObject({ status: HttpStatus.BAD_REQUEST });
       });
     });
 

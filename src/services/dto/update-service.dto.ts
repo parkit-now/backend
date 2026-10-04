@@ -131,4 +131,19 @@ export class UpdateServiceDto {
   @Min(0)
   @Max(180)
   graceMinutes?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Sólo ADVANCE_RESERVATION: hasta cuántos minutos antes de la hora de ' +
+      'ingreso un auto que llega se vincula a su reserva ("llegó antes"; el ' +
+      'extra se cobra como excedente). No puede ser menor que ' +
+      '`earlyArrivalMinutes` (SERVICE_EARLY_ARRIVAL_MAX_BELOW_EARLY).',
+    minimum: 0,
+    maximum: 1440,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  earlyArrivalMaxMinutes?: number;
 }

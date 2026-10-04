@@ -39,6 +39,7 @@ const RULE_FIELDS = [
   'lateCancelRefundPct',
   'earlyArrivalMinutes',
   'graceMinutes',
+  'earlyArrivalMaxMinutes',
 ] as const;
 
 type ServiceRow = Pick<
@@ -63,6 +64,7 @@ const DEFAULT_ROW: ServiceRow = {
   lateCancelRefundPct: 0,
   earlyArrivalMinutes: 15,
   graceMinutes: 30,
+  earlyArrivalMaxMinutes: 60,
 };
 
 export type UpdateServiceInput = {
@@ -129,6 +131,7 @@ function toCatalogItem(
     lateCancelRefundPct: r.lateCancelRefundPct,
     earlyArrivalMinutes: r.earlyArrivalMinutes,
     graceMinutes: r.graceMinutes,
+    earlyArrivalMaxMinutes: r.earlyArrivalMaxMinutes,
     readiness: readinessOf(r, ctx),
     upcomingPaidReservations: ctx.upcomingPaidReservations,
   };
@@ -283,6 +286,7 @@ export class ServicesService {
         Object.assign(merged, { [field]: data[field] });
       }
     }
+    this.assertEarlyArrivalMax(data, merged);
     const ctx = await this.loadContext(merged.reservationRateId);
 
     // Activar exige la readiness completa; desactivar siempre se permite.
@@ -482,6 +486,41 @@ export class ServicesService {
         `Reservable spots (${reservableSpots}) exceed the lot capacity (${capacity}).`,
         SERVICES_PATH,
         ErrorCodes.SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY,
+      );
+    }
+  }
+
+  /**
+   * El tope de la llegada anticipada no puede ser menor que la llegada
+   * anticipada normal: "hasta 30 min antes" con 45 de ventana normal no tiene
+   * sentido. Sólo se valida si el pedido toca alguno de los dos, para no
+   * trabar otros cambios en una playa que ya tenía una llegada anticipada
+   * mayor que el default del tope (el check-in usa el mayor de ambos).
+   */
+  private assertEarlyArrivalMax(
+    data: UpdateServiceInput,
+    merged: ServiceRow,
+  ): void {
+    if (
+      data.earlyArrivalMaxMinutes === undefined &&
+      data.earlyArrivalMinutes === undefined
+    ) {
+      return;
+    }
+    if (merged.earlyArrivalMaxMinutes < merged.earlyArrivalMinutes) {
+      throw new FormattedExceptionWithValidation(
+        'Bad Request',
+        HttpStatus.BAD_REQUEST,
+        `earlyArrivalMaxMinutes (${merged.earlyArrivalMaxMinutes}) must be at least earlyArrivalMinutes (${merged.earlyArrivalMinutes}).`,
+        SERVICES_PATH,
+        ErrorCodes.SERVICE_EARLY_ARRIVAL_MAX_BELOW_EARLY,
+        [
+          new ValidationErr(
+            'earlyArrivalMaxMinutes',
+            'must be greater than or equal to earlyArrivalMinutes',
+            'min',
+          ),
+        ],
       );
     }
   }

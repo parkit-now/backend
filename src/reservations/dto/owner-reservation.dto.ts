@@ -85,6 +85,14 @@ export class OwnerReservationPolicyDto {
 
   @ApiProperty()
   approvalWindowMinutes: number;
+
+  @ApiProperty({
+    description:
+      'Tope de la llegada anticipada al reservar: hasta cuántos minutos antes ' +
+      'de la hora de ingreso el auto se vincula ("llegó antes"). Las reservas ' +
+      'anteriores al tope muestran el default (60).',
+  })
+  earlyArrivalMaxMinutes: number;
 }
 
 export class OwnerReservationPaymentDto {
@@ -156,6 +164,21 @@ export class OwnerReservationStayDto {
     description: 'Prepago descontado en la caja (snapshot del ingreso).',
   })
   prepaidAmountArs: number | null;
+
+  @ApiProperty({
+    enum: ['early', 'on_time', 'late'],
+    description:
+      'Cómo llegó respecto de su ventana: early = antes de la llegada ' +
+      'anticipada (dentro del tope; el extra se cobra como excedente), late = ' +
+      'pasada la tolerancia.',
+  })
+  arrival: 'early' | 'on_time' | 'late';
+
+  @ApiProperty({ description: 'Minutos antes de la hora de ingreso (o 0).' })
+  minutesEarly: number;
+
+  @ApiProperty({ description: 'Minutos después de la hora de ingreso (o 0).' })
+  minutesLate: number;
 }
 
 export class OwnerReservationDto {
@@ -335,6 +358,43 @@ export class ReservationMatchDto {
   })
   arrivalUntil: string;
 
+  @ApiProperty({
+    format: 'date-time',
+    description:
+      'Desde cuándo el ingreso se vincula (entryAt − tope de llegada ' +
+      'anticipada). Entre esto y arrivalFrom es "llegó antes".',
+  })
+  linkableFrom: string;
+
+  @ApiProperty({
+    format: 'date-time',
+    description:
+      'Hasta cuándo el ingreso se vincula (exitAt). Entre arrivalUntil y esto ' +
+      'es "llegó tarde".',
+  })
+  linkableUntil: string;
+
+  @ApiProperty({
+    enum: ['early', 'on_time', 'late', 'too_early'],
+    description:
+      'Cómo llega el auto AHORA: early (antes de la ventana, dentro del tope: ' +
+      'se vincula y el extra se cobra al salir), on_time, late (pasada la ' +
+      'tolerancia, antes de exitAt: se vincula) o too_early (sólo en ' +
+      '`upcoming`: no se vincula).',
+  })
+  arrival: 'early' | 'on_time' | 'late' | 'too_early';
+
+  @ApiProperty({
+    description: 'Si el ingreso de ahora se vincularía a esta reserva.',
+  })
+  linkable: boolean;
+
+  @ApiProperty({ description: 'Minutos antes de la hora de ingreso (o 0).' })
+  minutesEarly: number;
+
+  @ApiProperty({ description: 'Minutos después de la hora de ingreso (o 0).' })
+  minutesLate: number;
+
   @ApiProperty({ description: 'Precio total de la reserva.' })
   totalArs: number;
 
@@ -351,8 +411,20 @@ export class ReservationMatchResponseDto {
     type: ReservationMatchDto,
     nullable: true,
     description:
-      'La reserva confirmada de esa patente dentro de su ventana de llegada, ' +
-      'o null.',
+      'La reserva de esa patente a la que se vincularía un ingreso ahora ' +
+      '(antes, a tiempo o tarde; ver `arrival`), o null.',
   })
   reservation: ReservationMatchDto | null;
+
+  @ApiProperty({
+    type: ReservationMatchDto,
+    nullable: true,
+    description:
+      'Sólo si `reservation` es null: la próxima reserva confirmada de esa ' +
+      'patente en las próximas 24 h a la que todavía es muy temprano para ' +
+      'vincular (`arrival: too_early`, `linkable: false`). La caja avisa ' +
+      '"tiene una reserva hoy a las HH:MM"; el ingreso queda como estadía ' +
+      'común.',
+  })
+  upcoming: ReservationMatchDto | null;
 }

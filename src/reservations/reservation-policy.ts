@@ -33,6 +33,13 @@ export type PolicySnapshot = {
   graceMinutes: number;
   acceptanceMode: AcceptanceMode;
   approvalWindowMinutes: number;
+  /**
+   * Tope de la llegada anticipada (fase 6c): hasta cuántos minutos antes de
+   * `entryAt` el ingreso se vincula solo ("llegó antes"). Las reservas
+   * anteriores no lo tienen en el jsonb: para vincular usan el valor vivo del
+   * servicio (ver `snapshotEarlyArrivalMax`); para mostrar, el default.
+   */
+  earlyArrivalMaxMinutes: number;
 };
 
 /** Defaults del producto, los mismos que las columnas de `services`. */
@@ -43,6 +50,7 @@ export const DEFAULT_POLICY_SNAPSHOT: PolicySnapshot = {
   graceMinutes: 30,
   acceptanceMode: 'auto',
   approvalWindowMinutes: 15,
+  earlyArrivalMaxMinutes: 60,
 };
 
 export function buildPolicySnapshot(service: {
@@ -52,6 +60,7 @@ export function buildPolicySnapshot(service: {
   graceMinutes: number;
   acceptanceMode: string;
   approvalWindowMinutes: number;
+  earlyArrivalMaxMinutes: number;
 }): PolicySnapshot {
   return {
     freeCancelMinutes: service.freeCancelMinutes,
@@ -60,6 +69,7 @@ export function buildPolicySnapshot(service: {
     graceMinutes: service.graceMinutes,
     acceptanceMode: service.acceptanceMode === 'manual' ? 'manual' : 'auto',
     approvalWindowMinutes: service.approvalWindowMinutes,
+    earlyArrivalMaxMinutes: service.earlyArrivalMaxMinutes,
   };
 }
 
@@ -93,7 +103,27 @@ export function readPolicySnapshot(raw: unknown): PolicySnapshot {
       'approvalWindowMinutes',
       DEFAULT_POLICY_SNAPSHOT.approvalWindowMinutes,
     ),
+    earlyArrivalMaxMinutes: num(
+      'earlyArrivalMaxMinutes',
+      DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes,
+    ),
   };
+}
+
+/**
+ * El tope de llegada anticipada guardado en el snapshot, o `null` si la
+ * reserva es anterior a la fase 6c y no lo tiene. Con `null`, el check-in usa
+ * el valor vivo del servicio: el dueño lo configuró pensando en todas sus
+ * reservas, y el default sólo existe para las playas que nunca lo tocaron.
+ */
+export function snapshotEarlyArrivalMax(raw: unknown): number | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const value = (raw as Record<string, unknown>).earlyArrivalMaxMinutes;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
 }
 
 /**

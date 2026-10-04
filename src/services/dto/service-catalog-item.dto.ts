@@ -118,6 +118,16 @@ export class ServiceCatalogItemDto {
   graceMinutes: number;
 
   @ApiProperty({
+    description:
+      'Tope de la llegada anticipada: hasta cuántos minutos antes de la hora ' +
+      'de ingreso el auto se vincula a su reserva ("llegó antes"). Antes de ' +
+      'eso entra como estadía común.',
+    minimum: 0,
+    maximum: 1440,
+  })
+  earlyArrivalMaxMinutes: number;
+
+  @ApiProperty({
     type: ReservationReadinessDto,
     description: 'Requisitos para activar las reservas (ADVANCE_RESERVATION).',
   })
