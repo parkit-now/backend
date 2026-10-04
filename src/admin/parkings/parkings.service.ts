@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import type { Prisma, Tenant, User } from '@prisma/client';
+import type { Tenant, User } from '@prisma/client';
 import { AuditActions, AuditService } from '../../audit/audit.service';
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../../entities/tenant-address';
 import { ErrorCodes } from '../../utils/exceptions/error-codes';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
+import { tenantSearchWhere } from '../../utils/search/tenant-search';
 import { resolvePagination } from '../../utils/pagination/pagination-query.dto';
 import { CreateParkingDto } from './dto/create-parking.dto';
 import { ListParkingsQueryDto } from './dto/list-parkings-query.dto';
@@ -28,7 +29,7 @@ export class ParkingsService {
 
   async list(query: ListParkingsQueryDto): Promise<PaginatedParkingsDto> {
     const { page, pageSize, skip, take } = resolvePagination(query);
-    const where = ParkingsService.searchWhere(query.search);
+    const where = tenantSearchWhere(query.search);
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.tenant.findMany({
@@ -147,17 +148,6 @@ export class ParkingsService {
       throw this.notFound(id);
     }
     return tenant;
-  }
-
-  private static searchWhere(search?: string): Prisma.TenantWhereInput {
-    const term = search?.trim();
-    if (!term) return {};
-    return {
-      OR: [
-        { name: { contains: term, mode: 'insensitive' } },
-        { address: { contains: term, mode: 'insensitive' } },
-      ],
-    };
   }
 
   private notFound(id: string): FormattedException {

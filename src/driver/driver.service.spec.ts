@@ -103,6 +103,79 @@ describe('DriverService', () => {
     mockTenantClient.reservation.findMany.mockResolvedValue([]);
   });
 
+  describe('searchByName', () => {
+    const far = {
+      ...tenant,
+      id: 'tenant-lejos',
+      name: 'Estacionamiento Lejano',
+      latitude: new Prisma.Decimal(-34.7),
+      longitude: new Prisma.Decimal(-58.6),
+    };
+    const noLocation = {
+      ...tenant,
+      id: 'tenant-sin-ubicacion',
+      name: 'Estacionamiento Sin Mapa',
+      latitude: null,
+      longitude: null,
+    };
+
+    it('busca sólo entre las activas, por nombre o dirección sin distinguir mayúsculas', async () => {
+      await service.searchByName({ q: 'once' }, NOW);
+
+      expect(prisma.tenant.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: 'active',
+            OR: [
+              { name: { contains: 'once', mode: 'insensitive' } },
+              { address: { contains: 'once', mode: 'insensitive' } },
+            ],
+          },
+        }),
+      );
+    });
+
+    it('sin coordenadas ordena como viene (por nombre) y la distancia es null', async () => {
+      prisma.tenant.findMany.mockResolvedValue([tenant, far]);
+
+      const result = await service.searchByName({ q: 'esta' }, NOW);
+
+      expect(result.map((p) => p.id)).toEqual(['tenant-once', 'tenant-lejos']);
+      expect(result.every((p) => p.distanceMeters === null)).toBe(true);
+      expect(result[0]).toMatchObject({ totalSpots: 20, openNow: true });
+    });
+
+    it('con coordenadas ordena por distancia, la informa y deja al final las playas sin ubicación', async () => {
+      prisma.tenant.findMany.mockResolvedValue([noLocation, far, tenant]);
+
+      const result = await service.searchByName(
+        { q: 'esta', latitude: -34.6037, longitude: -58.3816 },
+        NOW,
+      );
+
+      expect(result.map((p) => p.id)).toEqual([
+        'tenant-once',
+        'tenant-lejos',
+        'tenant-sin-ubicacion',
+      ]);
+      expect(result[0].distanceMeters).toBeGreaterThan(0);
+      expect(result[1].distanceMeters).toBeGreaterThan(
+        result[0].distanceMeters as number,
+      );
+      expect(result[2].distanceMeters).toBeNull();
+    });
+
+    it('devuelve como mucho 20 resultados', async () => {
+      prisma.tenant.findMany.mockResolvedValue(
+        Array.from({ length: 30 }, (_, i) => ({ ...tenant, id: `t-${i}` })),
+      );
+
+      const result = await service.searchByName({ q: 'esta' }, NOW);
+
+      expect(result).toHaveLength(20);
+    });
+  });
+
   describe('findNearby', () => {
     it('arma el contrato público con disponibilidad y precio de reserva', async () => {
       const [parking] = await service.findNearby(
