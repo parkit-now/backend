@@ -95,6 +95,7 @@ export class ServicesController {
       lateCancelRefundPct: dto.lateCancelRefundPct,
       earlyArrivalMinutes: dto.earlyArrivalMinutes,
       graceMinutes: dto.graceMinutes,
+      earlyArrivalMaxMinutes: dto.earlyArrivalMaxMinutes,
     });
   }
 

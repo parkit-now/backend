@@ -104,6 +104,9 @@ export const ErrorCodes = {
   ENTRY_ACTIVE_PAYMENT_LOCKED: 'ENTRY_ACTIVE_PAYMENT_LOCKED',
   ENTRY_CORRECTION_REASON_REQUIRED: 'ENTRY_CORRECTION_REASON_REQUIRED',
   ENTRY_EXIT_NOT_AFTER_ENTRY: 'ENTRY_EXIT_NOT_AFTER_ENTRY',
+  // Desvincular la reserva de un ingreso que ya salió: el cobro ya descontó el
+  // prepago y la reserva está completada.
+  ENTRY_RESERVATION_UNLINK_CLOSED: 'ENTRY_RESERVATION_UNLINK_CLOSED',
 
   // Cash sessions (turnos de caja)
   // La caja pedida no existe o es de otro estacionamiento (mismo code para
@@ -190,6 +193,10 @@ export const ErrorCodes = {
     'SERVICE_RESERVABLE_SPOTS_EXCEED_CAPACITY',
   // Activar las reservas sin cumplir los requisitos (el body trae `missing`).
   SERVICE_RESERVATION_NOT_READY: 'SERVICE_RESERVATION_NOT_READY',
+  // El tope de llegada anticipada (`earlyArrivalMaxMinutes`) es menor que la
+  // llegada anticipada normal (`earlyArrivalMinutes`).
+  SERVICE_EARLY_ARRIVAL_MAX_BELOW_EARLY:
+    'SERVICE_EARLY_ARRIVAL_MAX_BELOW_EARLY',
   // PUT de horarios de reservas con rangos inválidos o superpuestos.
   RESERVATION_HOURS_INVALID: 'RESERVATION_HOURS_INVALID',
   // PUT de horarios de reservas con rangos fuera del horario de apertura.

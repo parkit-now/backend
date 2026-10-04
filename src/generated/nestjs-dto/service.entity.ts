@@ -67,6 +67,11 @@ earlyArrivalMinutes: number ;
   format: `int32`,
 })
 graceMinutes: number ;
+@ApiProperty({
+  type: `integer`,
+  format: `int32`,
+})
+earlyArrivalMaxMinutes: number ;
 tenantId: string ;
 tenant?: TenantEntity ;
 }

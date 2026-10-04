@@ -60,6 +60,9 @@ export class ServiceDto {
   graceMinutes: number;
 
   @ApiProperty({ type: Number })
+  earlyArrivalMaxMinutes: number;
+
+  @ApiProperty({ type: Number })
   version: number;
 
   @ApiProperty({ type: Number })
