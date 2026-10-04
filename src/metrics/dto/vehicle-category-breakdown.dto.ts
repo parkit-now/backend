@@ -1,16 +1,19 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehicle-category.dto';
-import type { VehicleCategory } from '../../vehicle-categories/vehicle-categories';
+import {
+  VEHICLE_CATEGORIES,
+  type VehicleCategory,
+} from '../../vehicle-categories/vehicle-categories';
 
 /** One slice of the vehicle-category pie. */
 export class VehicleCategorySliceDto {
   @ApiProperty({
-    ...VEHICLE_CATEGORY_API_PROPERTY,
+    enum: [...VEHICLE_CATEGORIES, 'reservation_unused'],
+    enumName: 'VehicleCategorySliceKey',
     nullable: true,
     description:
-      'Platform vehicle category, as frozen on the stay at ingress. `null` is the "Sin dato" slice: stays that predate the categories, or that came from a till that does not send one.',
+      'Platform vehicle category, as frozen on the stay at ingress. `null` is the "Sin dato" slice: stays that predate the categories, or that came from a till that does not send one. `reservation_unused` ("Reservas sin uso") is the reservation money with no stay behind it (no-show, partial cancel): `stays` 0, only present when > 0, so the total matches `revenue/by-payment-method`.',
   })
-  category: VehicleCategory | null;
+  category: VehicleCategory | 'reservation_unused' | null;
 
   @ApiProperty({
     type: 'integer',
@@ -21,7 +24,8 @@ export class VehicleCategorySliceDto {
 
   @ApiProperty({
     type: Number,
-    description: 'Revenue of those stays (`entries.amountPaid`), in ARS.',
+    description:
+      'Revenue of those stays (`entries.amountPaid` plus the reservation prepayment), in ARS.',
     example: 12300,
   })
   revenue: number;

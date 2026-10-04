@@ -34,15 +34,23 @@ import {
   DriverNearbyParkingDto,
   DriverParkingDetailDto,
   DriverParkingDto,
+  DriverParkingSearchResultDto,
 } from './dto/driver-parking.dto';
 import {
   DEFAULT_RADIUS_METERS,
   NearbyParkingsQueryDto,
 } from './dto/nearby-parkings-query.dto';
+import {
+  SEARCH_MAX_RESULTS,
+  SEARCH_MIN_LENGTH,
+  SearchParkingsQueryDto,
+} from './dto/search-parkings-query.dto';
+import { tenantSearchWhere } from '../utils/search/tenant-search';
 import { CreateQuoteDto, QuoteDto } from './dto/quote.dto';
 import { DriverVehiclesService } from './driver-vehicles.service';
 
 const MAX_RESULTS = 50;
+const SEARCH_CANDIDATES = 200;
 
 const WINDOW_ERRORS: Record<WindowProblem, ErrorCode> = {
   exit_not_after_entry: ErrorCodes.RESERVATION_EXIT_NOT_AFTER_ENTRY,
@@ -156,6 +164,53 @@ export class DriverService {
       inRadius.map(async ({ tenant, distance }) => ({
         ...toParkingDto(tenant, await this.loadLotData(tenant, now), now),
         distanceMeters: Math.round(distance),
+      })),
+    );
+  }
+
+  /**
+   * Búsqueda por nombre o dirección (misma regla que el listado del admin).
+   * Sólo playas activas. Con coordenadas ordena por distancia (las playas sin
+   * ubicación van al final); sin ellas, por nombre.
+   */
+  async searchByName(
+    query: SearchParkingsQueryDto,
+    now = new Date(),
+  ): Promise<DriverParkingSearchResultDto[]> {
+    const term = query.q.trim();
+    if (term.length < SEARCH_MIN_LENGTH) return [];
+    const center =
+      query.latitude !== undefined && query.longitude !== undefined
+        ? { latitude: query.latitude, longitude: query.longitude }
+        : null;
+
+    const tenants = await this.prisma.tenant.findMany({
+      where: { status: BranchStatus.active, ...tenantSearchWhere(term) },
+      select: PUBLIC_TENANT_SELECT,
+      orderBy: { name: 'asc' },
+      // Tope de candidatos: el orden por distancia se resuelve en memoria.
+      take: SEARCH_CANDIDATES,
+    });
+
+    const ranked = tenants.map((tenant) => ({
+      tenant,
+      distance:
+        center && tenant.latitude !== null && tenant.longitude !== null
+          ? distanceMeters(center, coordinatesOf(tenant))
+          : null,
+    }));
+    if (center) {
+      ranked.sort((left, right) => {
+        if (left.distance === null) return right.distance === null ? 0 : 1;
+        if (right.distance === null) return -1;
+        return left.distance - right.distance;
+      });
+    }
+
+    return Promise.all(
+      ranked.slice(0, SEARCH_MAX_RESULTS).map(async ({ tenant, distance }) => ({
+        ...toParkingDto(tenant, await this.loadLotData(tenant, now), now),
+        distanceMeters: distance === null ? null : Math.round(distance),
       })),
     );
   }

@@ -25,9 +25,11 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DriverService } from './driver.service';
 import {
   DriverNearbyParkingDto,
+  DriverParkingSearchResultDto,
   DriverParkingDetailDto,
 } from './dto/driver-parking.dto';
 import { NearbyParkingsQueryDto } from './dto/nearby-parkings-query.dto';
+import { SearchParkingsQueryDto } from './dto/search-parkings-query.dto';
 import { CreateQuoteDto, QuoteDto } from './dto/quote.dto';
 
 // Cualquier usuario logueado (el conductor no es miembro de ninguna playa):
@@ -46,6 +48,18 @@ export class DriverController {
   @ApiOkResponse({ type: [DriverNearbyParkingDto] })
   findNearby(@Query() query: NearbyParkingsQueryDto) {
     return this.driverService.findNearby(query);
+  }
+
+  // Antes de `parkings/:parkingId`: si no, `search` se tomaría como un id.
+  @Get('parkings/search')
+  @ApiOperation({
+    summary: 'Search active parking lots by name or address',
+    description:
+      'Case-insensitive match on name or address, active lots only, at most 20. With `latitude` and `longitude` each item carries `distanceMeters` and the list is ordered by it; otherwise ordered by name and `distanceMeters` is null. Items have the same fields as `GET /driver/parkings`.',
+  })
+  @ApiOkResponse({ type: [DriverParkingSearchResultDto] })
+  search(@Query() query: SearchParkingsQueryDto) {
+    return this.driverService.searchByName(query);
   }
 
   @Get('parkings/:parkingId')

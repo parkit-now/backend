@@ -1,5 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+/**
+ * Name of the slice (and value of the `paymentMethod` revenue filter) that
+ * groups money paid online for reservations. It is its own bucket, never
+ * `unallocated`: those payments never went through the till.
+ */
+export const RESERVATION_PAYMENT_METHOD = 'Mercado Pago (reserva)';
+
 /** One slice of the payment-method pie. */
 export class PaymentMethodSliceDto {
   @ApiProperty({
@@ -8,6 +15,16 @@ export class PaymentMethodSliceDto {
     example: 'Efectivo',
   })
   name: string;
+
+  @ApiProperty({
+    enum: ['payment', 'reservation'],
+    description: [
+      '`payment`: a till payment method (from `payment_transactions`).',
+      '`reservation`: the single slice named `Mercado Pago (reserva)` — reservation prepayments paid online, recognised on an accrual basis (stay exit, no-show date, or cancellation date). Pass that name as the `paymentMethod` filter of the revenue endpoint to get only this money.',
+    ].join('\n'),
+    example: 'payment',
+  })
+  kind: 'payment' | 'reservation';
 
   @ApiProperty({
     type: Number,
@@ -53,14 +70,15 @@ export class PaymentMethodBreakdownDto {
   @ApiProperty({
     type: Number,
     description:
-      'Authoritative revenue for the window, summed from `entries.amountPaid`. This is the figure the KPI shows.',
+      'Authoritative revenue for the window: `entries.amountPaid` plus the reservation money (`Mercado Pago (reserva)` slice). This is the figure the KPI shows.',
     example: 29300,
   })
   total: number;
 
   @ApiProperty({
     type: Number,
-    description: 'Portion of `total` that has itemised transactions behind it.',
+    description:
+      'Portion of `total` that has itemised transactions behind it, including the reservation slice.',
     example: 25000,
   })
   allocated: number;

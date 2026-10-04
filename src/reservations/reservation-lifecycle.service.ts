@@ -896,6 +896,12 @@ export class ReservationLifecycleService {
             : AuditActions.RESERVATION_CANCELLED,
         reservation,
         actor,
+        // Cancelar desde el estacionamiento (dueño/operador/admin) es una
+        // acción a revisar; el rechazo manual y las del conductor/sistema no.
+        severity:
+          options.to === 'cancelled' && sideOf(actor) === 'owner'
+            ? 'warn'
+            : 'info',
         extra: {
           reason: options.reason ?? undefined,
           reasonCode: options.reasonCode,

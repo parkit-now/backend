@@ -1299,6 +1299,15 @@ describe('ReservationLifecycleService', () => {
       });
     });
 
+    it('cancelar desde el estacionamiento audita con severidad warn; el conductor info', async () => {
+      confirmedPaid();
+      await service.ownerCancel(TENANT, RES_ID, 'x', OWNER, NOW);
+      expect(db.audits[0]).toMatchObject({
+        action: 'reservation.cancelled',
+        severity: 'warn',
+      });
+    });
+
     it('driverCancel registra al conductor y su id en cancelled_by_user_id', async () => {
       confirmedPaid();
 
@@ -1307,6 +1316,7 @@ describe('ReservationLifecycleService', () => {
       expect(db.audits).toHaveLength(1);
       expect(db.audits[0]).toMatchObject({
         action: 'reservation.cancelled',
+        severity: 'info',
         actorUserId: USER,
         metadata: {
           actorRole: 'driver',

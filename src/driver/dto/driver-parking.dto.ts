@@ -158,3 +158,14 @@ export class DriverParkingDetailDto extends DriverParkingDto {
   })
   reservationMaxDaysAhead: number;
 }
+
+/** Resultado de la búsqueda por nombre: igual que el listado cercano. */
+export class DriverParkingSearchResultDto extends DriverParkingDto {
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Distancia en metros a las coordenadas enviadas. null si la búsqueda no trae coordenadas o la playa no tiene ubicación cargada.',
+  })
+  distanceMeters: number | null;
+}

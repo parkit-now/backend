@@ -22,10 +22,9 @@ export const AuditActions = {
   /** El dueño editó los precios de una tarifa y los aplicó a los autos adentro. */
   RATE_PRICES_PROPAGATED: 'rate.prices_propagated',
   ENTRY_UNDERCHARGED: 'entry.undercharged',
-  // La caja desvinculó la reserva de un ingreso abierto (fase 6c): el auto
-  // pasa a estadía común y se le cobra todo al salir, aunque haya pagado la
-  // reserva. `warn`: mueve plata del lado del conductor y el dueño lo tiene
-  // que poder ver.
+  // LEGACY: la caja podía desvincular la reserva de un ingreso abierto. La
+  // función se eliminó; se conserva la acción para mostrar eventos históricos
+  // ya guardados en `audit_log`. No se emite más.
   ENTRY_RESERVATION_UNLINKED: 'entry.reservation_unlinked',
   LPR_EVENT_REGISTERED: 'lpr_event.registered',
   LPR_EVENT_DISMISSED: 'lpr_event.dismissed',
