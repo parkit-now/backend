@@ -45,8 +45,8 @@ export class DriverReservationsController {
   @ApiOkResponse({
     type: CreateReservationResponseDto,
     description:
-      'Con returnUrl: { reservation, payment }. Sin returnUrl (sólo fuera de ' +
-      'producción, TODO fase 4): la reserva plana, como antes.',
+      '{ reservation, payment }: la reserva nace pending_payment y payment ' +
+      'trae el checkout. Sin returnUrl: 422 RESERVATION_CLIENT_OUTDATED.',
   })
   create(@CurrentUser() user: User, @Body() dto: CreateReservationDto) {
     return this.reservations.create(user, dto);

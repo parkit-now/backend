@@ -7,11 +7,7 @@ import { ReservationLifecycleService } from '../reservations/reservation-lifecyc
 import { DriverReservationsService } from './driver-reservations.service';
 import { DriverVehiclesService } from './driver-vehicles.service';
 import { DriverService } from './driver.service';
-import {
-  CreateReservationResponseDto,
-  DriverReservationDetailDto,
-  DriverReservationStateDto,
-} from './dto/reservation.dto';
+import { DriverReservationStateDto } from './dto/reservation.dto';
 
 const ar = (iso: string) => new Date(`${iso}-03:00`);
 const NOW = ar('2026-09-27T16:00:00');
@@ -56,6 +52,7 @@ const input = {
   vehiclePlate: 'AB123CD',
   entryAt: ar('2026-09-28T10:00:00').toISOString(),
   exitAt: ar('2026-09-28T12:00:00').toISOString(),
+  returnUrl: 'parkit://reservas',
 };
 
 const baseRow = () => ({
@@ -181,12 +178,16 @@ describe('DriverReservationsService', () => {
       });
       // Snapshot de la categoría del vehículo del conductor al reservar.
       expect(args.data).toMatchObject({ vehicleCategory: 'car' });
-      expect(result).toMatchObject({
+      expect(args.data).toMatchObject({ status: 'pending_payment' });
+      expect(result.reservation).toMatchObject({
         state: DriverReservationStateDto.active,
         cancellable: true,
         totalArs: 9000,
         code: 'R-00ABCD',
       });
+      expect(result.payment.checkoutUrl).toBe(
+        `https://fake.checkout/${RES_ID}`,
+      );
     });
 
     it('rechaza cuando el pico de reservas simultáneas llena el cupo', async () => {
@@ -240,12 +241,8 @@ describe('DriverReservationsService', () => {
 
     it('es idempotente: el mismo id devuelve la reserva existente', async () => {
       prisma.reservation.findUnique.mockResolvedValue(row());
-      const result = (await service.create(
-        USER,
-        input,
-        NOW,
-      )) as DriverReservationDetailDto;
-      expect(result.id).toBe(RES_ID);
+      const result = await service.create(USER, input, NOW);
+      expect(result.reservation.id).toBe(RES_ID);
       expect(driverService.quoteForReservation).not.toHaveBeenCalled();
       expect(tx.reservation.create).not.toHaveBeenCalled();
     });
@@ -402,11 +399,7 @@ describe('DriverReservationsService', () => {
     });
 
     it('nace pending_payment con retención de 10 min, snapshot de la política y checkout', async () => {
-      const result = (await service.create(
-        USER,
-        withReturn,
-        NOW,
-      )) as CreateReservationResponseDto;
+      const result = await service.create(USER, withReturn, NOW);
 
       const [args] = tx.reservation.create.mock.calls[0] as [
         { data: Record<string, unknown> },
@@ -507,11 +500,7 @@ describe('DriverReservationsService', () => {
           ],
         }),
       );
-      const result = (await service.create(
-        USER,
-        withReturn,
-        NOW,
-      )) as CreateReservationResponseDto;
+      const result = await service.create(USER, withReturn, NOW);
       expect(result.payment.checkoutUrl).toBe('https://fake.checkout/mismo');
       expect(gateway.checkouts).toHaveLength(0);
       expect(tx.reservation.create).not.toHaveBeenCalled();
@@ -521,22 +510,14 @@ describe('DriverReservationsService', () => {
       prisma.reservation.findUnique.mockResolvedValue(
         row({ status: ReservationStatus.confirmed }),
       );
-      const result = (await service.create(
-        USER,
-        withReturn,
-        NOW,
-      )) as CreateReservationResponseDto;
+      const result = await service.create(USER, withReturn, NOW);
       expect(result.payment.checkoutUrl).toBeNull();
       expect(gateway.checkouts).toHaveLength(0);
     });
 
     it('replay cuyo alta se cortó antes de guardar el pago crea el checkout', async () => {
       prisma.reservation.findUnique.mockResolvedValue(pending());
-      const result = (await service.create(
-        USER,
-        withReturn,
-        NOW,
-      )) as CreateReservationResponseDto;
+      const result = await service.create(USER, withReturn, NOW);
       expect(gateway.checkouts).toHaveLength(1);
       expect(result.payment.checkoutUrl).toBe(
         `https://fake.checkout/${RES_ID}`,
@@ -544,42 +525,27 @@ describe('DriverReservationsService', () => {
     });
   });
 
-  describe('compatibilidad sin returnUrl', () => {
+  describe('sin returnUrl (cliente viejo)', () => {
     const original = process.env.NODE_ENV;
     afterEach(() => {
       process.env.NODE_ENV = original;
     });
+    const withoutReturn = { ...input, returnUrl: undefined };
 
-    it('en producción responde 422 RESERVATION_CLIENT_OUTDATED sin tocar nada', async () => {
-      process.env.NODE_ENV = 'production';
-      await expectFailure(
-        service.create(USER, input, NOW),
-        HttpStatus.UNPROCESSABLE_ENTITY,
-        'RESERVATION_CLIENT_OUTDATED',
-      );
-      expect(prisma.reservation.findUnique).not.toHaveBeenCalled();
-      expect(tx.reservation.create).not.toHaveBeenCalled();
-    });
-
-    it('fuera de producción crea confirmed con snapshot, sin retención ni checkout, y responde plano', async () => {
-      process.env.NODE_ENV = 'test';
-      const result = (await service.create(
-        USER,
-        input,
-        NOW,
-      )) as DriverReservationDetailDto;
-      const [args] = tx.reservation.create.mock.calls[0] as [
-        { data: Record<string, unknown> },
-      ];
-      expect(args.data).toMatchObject({
-        status: 'confirmed',
-        holdExpiresAt: null,
-        policySnapshot: { acceptanceMode: 'auto' },
-      });
-      expect(gateway.checkouts).toHaveLength(0);
-      expect(result).not.toHaveProperty('reservation');
-      expect(result).toMatchObject({ id: RES_ID, state: 'active' });
-    });
+    it.each(['production', 'test', 'development'])(
+      'en %s responde 422 RESERVATION_CLIENT_OUTDATED sin tocar nada',
+      async (env) => {
+        process.env.NODE_ENV = env;
+        await expectFailure(
+          service.create(USER, withoutReturn, NOW),
+          HttpStatus.UNPROCESSABLE_ENTITY,
+          'RESERVATION_CLIENT_OUTDATED',
+        );
+        expect(prisma.reservation.findUnique).not.toHaveBeenCalled();
+        expect(tx.reservation.create).not.toHaveBeenCalled();
+        expect(gateway.checkouts).toHaveLength(0);
+      },
+    );
   });
 
   describe('paymentRetry', () => {

@@ -20,7 +20,6 @@ import {
   readPolicySnapshot,
   type PolicySnapshot,
 } from '../reservations/reservation-policy';
-import { isProduction } from '../utils/env';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { reservationState } from './driver-rules';
@@ -74,27 +73,16 @@ export class DriverReservationsService {
   ) {}
 
   /**
-   * Con `returnUrl` devuelve `{ reservation, payment }`. Sin él, fuera de
-   * producción, el camino viejo devuelve la reserva PLANA (la forma que espera
-   * mobile hoy).
+   * Devuelve `{ reservation, payment }`. Sin `returnUrl` (cliente viejo, que no
+   * sabe pagar) responde 422 `RESERVATION_CLIENT_OUTDATED` en cualquier entorno.
    */
   async create(
     user: User,
     dto: CreateReservationDto,
     now = new Date(),
-  ): Promise<CreateReservationResponseDto | DriverReservationDetailDto> {
-    if (dto.returnUrl && !isAllowedReturnUrl(dto.returnUrl)) {
-      throw new FormattedException(
-        'Bad Request',
-        HttpStatus.BAD_REQUEST,
-        'The returnUrl is not an allowed destination.',
-        RESERVATIONS_PATH,
-        ErrorCodes.RESERVATION_RETURN_URL_NOT_ALLOWED,
-      );
-    }
-    // TODO(fase-4): sacar el camino viejo cuando mobile mande `returnUrl`.
-    const legacy = !dto.returnUrl;
-    if (legacy && isProduction()) {
+  ): Promise<CreateReservationResponseDto> {
+    const returnUrl = dto.returnUrl;
+    if (!returnUrl) {
       throw new FormattedException(
         'Unprocessable Entity',
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -103,10 +91,19 @@ export class DriverReservationsService {
         ErrorCodes.RESERVATION_CLIENT_OUTDATED,
       );
     }
+    if (!isAllowedReturnUrl(returnUrl)) {
+      throw new FormattedException(
+        'Bad Request',
+        HttpStatus.BAD_REQUEST,
+        'The returnUrl is not an allowed destination.',
+        RESERVATIONS_PATH,
+        ErrorCodes.RESERVATION_RETURN_URL_NOT_ALLOWED,
+      );
+    }
 
     // Idempotencia: el mismo id devuelve la misma reserva.
     const existing = await this.findWithParking(dto.id);
-    if (existing) return this.replay(existing, user, dto, now);
+    if (existing) return this.replay(existing, user, dto, returnUrl, now);
 
     // La patente tiene que ser de un vehículo del conductor (SCRUM-285): es
     // la que la playa va a usar para reconocer la reserva en el ingreso.
@@ -136,9 +133,7 @@ export class DriverReservationsService {
       );
     const entryAt = new Date(quote.entryAt);
     const exitAt = new Date(quote.exitAt);
-    const holdExpiresAt = legacy
-      ? null
-      : new Date(now.getTime() + HOLD_MINUTES * 60_000);
+    const holdExpiresAt = new Date(now.getTime() + HOLD_MINUTES * 60_000);
 
     let created: ReservationWithParking;
     try {
@@ -173,9 +168,7 @@ export class DriverReservationsService {
             entryAt,
             exitAt,
             totalArs: quote.totalArs,
-            status: legacy
-              ? ReservationStatus.confirmed
-              : ReservationStatus.pending_payment,
+            status: ReservationStatus.pending_payment,
             holdExpiresAt,
             policySnapshot: policy,
             rateSnapshotName: quote.rate.name,
@@ -193,19 +186,12 @@ export class DriverReservationsService {
       // Carrera de reintentos: dos POST con el mismo id a la vez.
       if (isUniqueViolation(error)) {
         const raced = await this.findWithParking(dto.id);
-        if (raced) return this.replay(raced, user, dto, now);
+        if (raced) return this.replay(raced, user, dto, returnUrl, now);
       }
       throw error;
     }
 
-    if (legacy) return this.toDto(created, now);
-
-    const checkout = await this.obtainCheckout(
-      created,
-      dto.returnUrl as string,
-      now,
-      true,
-    );
+    const checkout = await this.obtainCheckout(created, returnUrl, now, true);
     return this.checkoutResponse(
       { ...created, payments: [checkout] },
       checkout.checkoutUrl,
@@ -432,16 +418,16 @@ export class DriverReservationsService {
   }
 
   /**
-   * Reintento con un id ya usado: sólo vale si es la misma reserva. Con
-   * `returnUrl` devuelve el mismo `checkoutUrl` mientras la retención siga
+   * Reintento con un id ya usado: sólo vale si es la misma reserva. Devuelve el mismo `checkoutUrl` mientras la retención siga
    * viva (y lo recrea si el alta anterior se cortó antes de guardarlo).
    */
   private async replay(
     existing: ReservationWithParking,
     user: User,
     dto: CreateReservationDto,
+    returnUrl: string,
     now: Date,
-  ): Promise<CreateReservationResponseDto | DriverReservationDetailDto> {
+  ): Promise<CreateReservationResponseDto> {
     if (existing.userId !== user.id || existing.tenantId !== dto.parkingId) {
       throw failure(
         HttpStatus.CONFLICT,
@@ -450,19 +436,12 @@ export class DriverReservationsService {
         ErrorCodes.RESERVATION_ID_CONFLICT,
       );
     }
-    if (!dto.returnUrl) return this.toDto(existing, now);
-
     const waiting =
       existing.status === ReservationStatus.pending_payment &&
       isHoldAlive(existing, now);
     if (!waiting) return this.checkoutResponse(existing, null, now);
 
-    const payment = await this.obtainCheckout(
-      existing,
-      dto.returnUrl,
-      now,
-      false,
-    );
+    const payment = await this.obtainCheckout(existing, returnUrl, now, false);
     return this.checkoutResponse(
       { ...existing, payments: [payment] },
       payment.checkoutUrl,

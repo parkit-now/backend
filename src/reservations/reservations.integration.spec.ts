@@ -4,7 +4,6 @@ import { PrismaService } from '../database/prisma.service';
 import { DriverReservationsService } from '../driver/driver-reservations.service';
 import type { DriverVehiclesService } from '../driver/driver-vehicles.service';
 import type { DriverService } from '../driver/driver.service';
-import type { CreateReservationResponseDto } from '../driver/dto/reservation.dto';
 import { FakePrisma } from './fake-reservation-prisma';
 import { FakeReservationPaymentGateway } from './payment-gateway/fake-reservation-payment.gateway';
 import { ReservationLifecycleService } from './reservation-lifecycle.service';
@@ -47,8 +46,7 @@ describe('reservas: recorrido completo (integración del módulo)', () => {
     returnUrl: 'parkit://reservas',
   };
 
-  const create = async () =>
-    (await driver.create(USER, input, NOW)) as CreateReservationResponseDto;
+  const create = () => driver.create(USER, input, NOW);
   const view = (now: Date) => driver.get(USER, RES, now);
 
   beforeEach(() => {
