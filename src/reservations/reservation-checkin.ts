@@ -1,52 +1,92 @@
 /**
- * Check-in de reservas en la caja (fase 6): qué reserva corresponde a un auto
- * que llega, cuánto pagó por adelantado y las dos transiciones que dispara la
- * caja (`confirmed → checked_in` al ingresar, `checked_in → completed` al
- * salir).
+ * Check-in de reservas en la caja (fase 6, ampliado en la 6c): qué reserva
+ * corresponde a un auto que llega, cuánto pagó por adelantado y las
+ * transiciones que dispara la caja (`confirmed → checked_in` al ingresar,
+ * `checked_in → completed` al salir y, al desvincular, la vuelta atrás).
  *
  * Las funciones de base reciben el cliente de la TRANSACCIÓN del ingreso o del
  * cierre: el vínculo y la estadía van juntos o no va ninguno. Por eso el
  * `tenantId` viaja explícito, igual que en `EntriesService` y en el ciclo de
  * vida.
+ *
+ * ## Rangos de llegada (fase 6c)
+ *
+ * Para una reserva de `entryAt` a `exitAt`, un auto que llega en `at` es:
+ *
+ *   too_early   at < entryAt − tope                  no se vincula (aviso)
+ *   early       entryAt − tope ≤ at < ventana.desde  se vincula, "llegó antes"
+ *   on_time     ventana.desde ≤ at ≤ ventana.hasta   se vincula, como en la fase 6
+ *   late        ventana.hasta < at ≤ exitAt          se vincula, "llegó tarde"
+ *   too_late    at > exitAt                          no se vincula
+ *
+ * con `ventana = [entryAt − earlyArrivalMinutes, entryAt + graceMinutes]` y
+ * `tope = max(earlyArrivalMaxMinutes, earlyArrivalMinutes)`. Las reglas salen
+ * del `policySnapshot` de la reserva; el tope, si la reserva es anterior a la
+ * 6c y no lo tiene, del valor vivo del servicio. El tiempo extra de una
+ * llegada anticipada no necesita nada especial: el cobro ya es
+ * `max(calcStayPrice(estadía real) − prepago, 0)`.
  */
 import {
   Prisma,
   ReservationPaymentStatus,
   ReservationStatus,
+  ServiceCode,
 } from '@prisma/client';
 import { normalizePlate } from '../driver/driver-rules';
-import { readPolicySnapshot } from './reservation-policy';
+import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
+import {
+  DEFAULT_POLICY_SNAPSHOT,
+  readPolicySnapshot,
+  snapshotEarlyArrivalMax,
+} from './reservation-policy';
 
 /**
- * Topes de `services.early_arrival_minutes` y `services.grace_minutes` (CHECK
- * de la migración 20261003120000). Acotan la búsqueda en la base; la ventana
- * exacta de cada reserva sale de su `policySnapshot`.
+ * Topes de `services.early_arrival_minutes`, `services.grace_minutes`
+ * (migración 20261003120000) y `services.early_arrival_max_minutes`
+ * (20261007120000). Acotan la búsqueda en la base; los rangos exactos de cada
+ * reserva salen de su `policySnapshot`.
  */
 export const MAX_EARLY_ARRIVAL_MINUTES = 120;
 export const MAX_GRACE_MINUTES = 180;
+export const MAX_EARLY_ARRIVAL_MAX_MINUTES = 1440;
 
 /**
  * Estados desde los que un ingreso puede vincularse.
  *
  * `no_show` entra a propósito: el sweeper lo pone apenas vence la tolerancia
- * sin ingreso, pero un ingreso hecho SIN CONEXIÓN dentro de la ventana recién
- * llega al servidor cuando la caja sincroniza. Si el auto entró a tiempo, la
- * reserva no fue un no-show. No mueve plata: el no-show no se reembolsa, así
- * que volver a `checked_in` sólo corrige el estado.
+ * sin ingreso, pero el auto puede llegar tarde (hasta `exitAt`) o haber
+ * entrado SIN CONEXIÓN a tiempo y recién sincronizar ahora. En los dos casos
+ * la reserva no fue un no-show. No mueve plata: el no-show no se reembolsa,
+ * así que volver a `checked_in` sólo corrige el estado.
  */
 export const LINKABLE_STATUSES: readonly ReservationStatus[] = [
   ReservationStatus.confirmed,
   ReservationStatus.no_show,
 ];
 
+/** Rangos en los que el ingreso se vincula. */
+export type ArrivalKind = 'early' | 'on_time' | 'late';
+/** Todos los rangos, incluidos los que no vinculan. */
+export type ArrivalClass = ArrivalKind | 'too_early' | 'too_late';
+
+const LINKABLE_ARRIVALS: readonly ArrivalClass[] = ['early', 'on_time', 'late'];
+
+export function isLinkableArrival(
+  arrival: ArrivalClass,
+): arrival is ArrivalKind {
+  return LINKABLE_ARRIVALS.includes(arrival);
+}
+
 type WindowSource = {
   entryAt: Date;
   policySnapshot: unknown;
 };
 
+type SlotSource = WindowSource & { exitAt: Date };
+
 /**
- * Ventana de llegada de una reserva: `[entryAt − earlyArrival, entryAt +
- * grace]`, con las reglas que tenía la playa al reservar.
+ * Ventana NORMAL de llegada de una reserva: `[entryAt − earlyArrival, entryAt
+ * + grace]`, con las reglas que tenía la playa al reservar.
  */
 export function arrivalWindow(reservation: WindowSource): {
   from: Date;
@@ -60,6 +100,90 @@ export function arrivalWindow(reservation: WindowSource): {
   };
 }
 
+/**
+ * Tope de la llegada anticipada de una reserva, en minutos: el de su foto o,
+ * si es anterior a la 6c, `fallbackMinutes` (el valor vivo del servicio).
+ * Nunca menor que la llegada anticipada normal.
+ */
+export function earlyArrivalMaxOf(
+  reservation: WindowSource,
+  fallbackMinutes: number,
+): number {
+  const policy = readPolicySnapshot(reservation.policySnapshot);
+  const max =
+    snapshotEarlyArrivalMax(reservation.policySnapshot) ?? fallbackMinutes;
+  return Math.max(max, policy.earlyArrivalMinutes);
+}
+
+/**
+ * Desde y hasta cuándo un ingreso se vincula a la reserva: desde el tope de
+ * llegada anticipada hasta `exitAt` (o el fin de la tolerancia, si una reserva
+ * corta termina antes).
+ */
+export function linkableWindow(
+  reservation: SlotSource,
+  fallbackEarlyMaxMinutes: number = DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes,
+): { from: Date; until: Date } {
+  const normal = arrivalWindow(reservation);
+  const earlyMax = earlyArrivalMaxOf(reservation, fallbackEarlyMaxMinutes);
+  return {
+    from: new Date(reservation.entryAt.getTime() - earlyMax * 60_000),
+    until: new Date(
+      Math.max(reservation.exitAt.getTime(), normal.until.getTime()),
+    ),
+  };
+}
+
+export type ArrivalClassification = {
+  arrival: ArrivalClass;
+  /** Minutos antes de `entryAt` (0 si llegó después). */
+  minutesEarly: number;
+  /** Minutos después de `entryAt` (0 si llegó antes). */
+  minutesLate: number;
+};
+
+function minutesAround(entryAt: Date, at: Date) {
+  const diff = Math.round((entryAt.getTime() - at.getTime()) / 60_000);
+  return { minutesEarly: Math.max(diff, 0), minutesLate: Math.max(-diff, 0) };
+}
+
+/** En qué rango cae un auto que llega en `at` (ver el encabezado). */
+export function classifyArrival(
+  reservation: SlotSource,
+  at: Date,
+  fallbackEarlyMaxMinutes: number = DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes,
+): ArrivalClassification {
+  const ms = at.getTime();
+  const normal = arrivalWindow(reservation);
+  const linkable = linkableWindow(reservation, fallbackEarlyMaxMinutes);
+  let arrival: ArrivalClass;
+  if (ms < linkable.from.getTime()) arrival = 'too_early';
+  else if (ms < normal.from.getTime()) arrival = 'early';
+  else if (ms <= normal.until.getTime()) arrival = 'on_time';
+  else if (ms <= linkable.until.getTime()) arrival = 'late';
+  else arrival = 'too_late';
+  return { arrival, ...minutesAround(reservation.entryAt, at) };
+}
+
+/**
+ * Cómo llegó un auto YA vinculado (para mostrarlo: "llegó antes", "llegó
+ * tarde"). No necesita el tope: si está vinculado, entró dentro de él.
+ */
+export function stayArrival(
+  reservation: WindowSource,
+  enteredAt: Date,
+): { arrival: ArrivalKind; minutesEarly: number; minutesLate: number } {
+  const normal = arrivalWindow(reservation);
+  const ms = enteredAt.getTime();
+  const arrival: ArrivalKind =
+    ms < normal.from.getTime()
+      ? 'early'
+      : ms > normal.until.getTime()
+        ? 'late'
+        : 'on_time';
+  return { arrival, ...minutesAround(reservation.entryAt, enteredAt) };
+}
+
 export function isWithinArrivalWindow(
   reservation: WindowSource,
   at: Date,
@@ -70,37 +194,63 @@ export function isWithinArrivalWindow(
 }
 
 /**
- * Rango de `entryAt` a buscar en la base para una llegada en `at`: cubre
- * cualquier ventana posible. El filtro fino lo hace `isWithinArrivalWindow`.
+ * Qué reservas buscar en la base para una llegada en `at`: cualquiera cuyo
+ * rango vinculable pueda incluirla. Empieza a lo sumo `MAX_EARLY_ARRIVAL_MAX`
+ * después de `at`, y termina (su `exitAt`, o su tolerancia) no antes de `at`.
+ * El filtro fino lo hace `classifyArrival`.
  */
-export function arrivalSearchRange(at: Date): { gte: Date; lte: Date } {
+export function arrivalSearchRange(at: Date): Prisma.ReservationWhereInput {
   return {
-    gte: new Date(at.getTime() - MAX_GRACE_MINUTES * 60_000),
-    lte: new Date(at.getTime() + MAX_EARLY_ARRIVAL_MINUTES * 60_000),
+    entryAt: {
+      lte: new Date(at.getTime() + MAX_EARLY_ARRIVAL_MAX_MINUTES * 60_000),
+    },
+    OR: [
+      { exitAt: { gte: at } },
+      { entryAt: { gte: new Date(at.getTime() - MAX_GRACE_MINUTES * 60_000) } },
+    ],
   };
 }
 
-type Candidate = WindowSource & { id: string; status: ReservationStatus };
+type Candidate = SlotSource & { id: string; status: ReservationStatus };
+
+const ARRIVAL_RANK: Record<ArrivalKind, number> = {
+  on_time: 0,
+  early: 1,
+  late: 1,
+};
 
 /**
- * La reserva que corresponde a un auto que llega en `at`, o `null`.
+ * La reserva que corresponde a un auto que llega en `at`, o `null`, con el
+ * rango en el que cayó.
  *
- * Sólo cuentan las vinculables (`LINKABLE_STATUSES`) dentro de su ventana. Si
- * la caja eligió una (`preferredId`, la del banner) y sigue siendo válida,
- * gana esa. Si no, la de `entryAt` más cercana a la llegada (dos reservas de
- * la misma patente el mismo día, una a la mañana y otra a la tarde), y a
- * igual distancia la `confirmed` antes que la `no_show`.
+ * Sólo cuentan las vinculables (`LINKABLE_STATUSES`) que caen en un rango que
+ * vincula (antes, a tiempo o tarde). Si la caja eligió una (`preferredId`, la
+ * del banner) y sigue siendo válida, gana esa. Si no, primero las que llegan a
+ * tiempo; después la de `entryAt` más cercana (dos reservas de la misma
+ * patente el mismo día, una a la mañana y otra a la tarde), y a igual
+ * distancia la `confirmed` antes que la `no_show`.
  */
 export function pickReservationForArrival<T extends Candidate>(
   candidates: readonly T[],
   at: Date,
   preferredId?: string | null,
-): T | null {
-  const eligible = candidates.filter(
-    (candidate) =>
-      LINKABLE_STATUSES.includes(candidate.status) &&
-      isWithinArrivalWindow(candidate, at),
-  );
+  fallbackEarlyMaxMinutes: number = DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes,
+):
+  | (T & { classification: ArrivalClassification & { arrival: ArrivalKind } })
+  | null {
+  const eligible = candidates
+    .filter((candidate) => LINKABLE_STATUSES.includes(candidate.status))
+    .map((candidate) => ({
+      ...candidate,
+      classification: classifyArrival(candidate, at, fallbackEarlyMaxMinutes),
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is T & {
+        classification: ArrivalClassification & { arrival: ArrivalKind };
+      } => isLinkableArrival(candidate.classification.arrival),
+    );
   if (eligible.length === 0) return null;
 
   if (preferredId) {
@@ -116,6 +266,8 @@ export function pickReservationForArrival<T extends Candidate>(
     candidate.status === ReservationStatus.confirmed ? 0 : 1;
   return [...eligible].sort(
     (left, right) =>
+      ARRIVAL_RANK[left.classification.arrival] -
+        ARRIVAL_RANK[right.classification.arrival] ||
       distance(left) - distance(right) ||
       rank(left) - rank(right) ||
       left.id.localeCompare(right.id),
@@ -167,10 +319,11 @@ export type ArrivalCandidate = Prisma.ReservationGetPayload<{
 }>;
 
 type ReservationDb = Pick<Prisma.TransactionClient, 'reservation'>;
+type ArrivalDb = Pick<Prisma.TransactionClient, 'reservation' | 'service'>;
 
 /**
- * `where` de las reservas vinculables de una patente cuya ventana puede
- * incluir `at`, o `null` si la patente no tiene nada utilizable.
+ * `where` de las reservas vinculables de una patente cuyo rango vinculable
+ * puede incluir `at`, o `null` si la patente no tiene nada utilizable.
  */
 export function arrivalCandidatesWhere(
   tenantId: string,
@@ -183,11 +336,11 @@ export function arrivalCandidatesWhere(
     tenantId,
     vehiclePlate: normalized,
     status: { in: [...LINKABLE_STATUSES] },
-    entryAt: arrivalSearchRange(at),
+    ...arrivalSearchRange(at),
   };
 }
 
-/** Las reservas vinculables de una patente cuya ventana puede incluir `at`. */
+/** Las reservas vinculables de una patente cuyo rango puede incluir `at`. */
 export async function findArrivalCandidates(
   db: ReservationDb,
   tenantId: string,
@@ -199,9 +352,74 @@ export async function findArrivalCandidates(
   return db.reservation.findMany({ where, select: ARRIVAL_SELECT });
 }
 
+/**
+ * El tope de llegada anticipada vivo del servicio, para las reservas que no
+ * lo tienen en su foto (anteriores a la 6c). Sólo consulta la base si alguna
+ * candidata lo necesita: lo normal es que no.
+ */
+export async function fallbackEarlyArrivalMax(
+  db: Pick<Prisma.TransactionClient, 'service'>,
+  tenantId: string,
+  candidates: readonly WindowSource[],
+): Promise<number> {
+  const needed = candidates.some(
+    (candidate) => snapshotEarlyArrivalMax(candidate.policySnapshot) === null,
+  );
+  if (!needed) return DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes;
+  const service = await db.service.findFirst({
+    where: { tenantId, code: ServiceCode.ADVANCE_RESERVATION },
+    select: { earlyArrivalMaxMinutes: true },
+  });
+  return (
+    service?.earlyArrivalMaxMinutes ??
+    DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes
+  );
+}
+
+/**
+ * La próxima reserva `confirmed` de HOY de esa patente a la que todavía es
+ * muy temprano para vincular: el aviso "Esta patente tiene una reserva hoy a
+ * las HH:MM" de la caja. "Hoy" es el día civil de Argentina, como en las
+ * métricas (los tenants no tienen zona horaria propia).
+ */
+export async function findUpcomingTodayReservation(
+  db: ArrivalDb,
+  tenantId: string,
+  plate: string,
+  now: Date,
+): Promise<
+  (ArrivalCandidate & { classification: ArrivalClassification }) | null
+> {
+  const normalized = normalizePlate(plate);
+  if (!normalized) return null;
+  const today = dayRangeIn(dayKeyIn(now, DEFAULT_TIME_ZONE), DEFAULT_TIME_ZONE);
+  const rows = await db.reservation.findMany({
+    where: {
+      tenantId,
+      vehiclePlate: normalized,
+      status: ReservationStatus.confirmed,
+      entryAt: { gt: now, lt: today.lt },
+    },
+    select: ARRIVAL_SELECT,
+    orderBy: { entryAt: 'asc' },
+  });
+  if (rows.length === 0) return null;
+  const fallback = await fallbackEarlyArrivalMax(db, tenantId, rows);
+  for (const row of rows) {
+    const classification = classifyArrival(row, now, fallback);
+    if (classification.arrival === 'too_early') {
+      return { ...row, classification };
+    }
+  }
+  return null;
+}
+
 export type ArrivalLink = {
   reservationId: string;
   prepaidAmountArs: number;
+  arrival: ArrivalKind;
+  minutesEarly: number;
+  minutesLate: number;
 };
 
 /**
@@ -212,9 +430,12 @@ export type ArrivalLink = {
  *
  * Idempotente por construcción: una reserva ya `checked_in` no es vinculable,
  * así que un segundo ingreso de la misma patente no la vuelve a tomar.
+ *
+ * Desde la 6c vincula también las llegadas anticipadas (hasta el tope) y las
+ * tardías (hasta `exitAt`); una `no_show` tardía vuelve a `checked_in`.
  */
 export async function claimReservationForArrival(
-  tx: ReservationDb,
+  tx: ArrivalDb,
   input: {
     tenantId: string;
     plate: string;
@@ -228,10 +449,17 @@ export async function claimReservationForArrival(
     input.plate,
     input.at,
   );
+  if (candidates.length === 0) return null;
+  const fallback = await fallbackEarlyArrivalMax(
+    tx,
+    input.tenantId,
+    candidates,
+  );
   const chosen = pickReservationForArrival(
     candidates,
     input.at,
     input.reservationId,
+    fallback,
   );
   if (!chosen) return null;
 
@@ -244,6 +472,9 @@ export async function claimReservationForArrival(
   return {
     reservationId: chosen.id,
     prepaidAmountArs: prepaidAmountOf(chosen),
+    arrival: chosen.classification.arrival,
+    minutesEarly: chosen.classification.minutesEarly,
+    minutesLate: chosen.classification.minutesLate,
   };
 }
 

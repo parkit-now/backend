@@ -27,7 +27,11 @@ function reservationRow(overrides: Record<string, unknown> = {}) {
     exitAt: at(180),
     totalArs: new Prisma.Decimal(4500),
     paidAt: at(-600),
-    policySnapshot: { earlyArrivalMinutes: 15, graceMinutes: 30 },
+    policySnapshot: {
+      earlyArrivalMinutes: 15,
+      graceMinutes: 30,
+      earlyArrivalMaxMinutes: 60,
+    },
     user: { name: 'Lucía' },
     payments: [{ amountArs: new Prisma.Decimal(4500) }],
     ...overrides,
@@ -54,6 +58,9 @@ function makeCreateService(rows: unknown[], claimed = 1) {
     reservation: {
       findMany: jest.fn().mockResolvedValue(rows),
       updateMany: jest.fn().mockResolvedValue({ count: claimed }),
+    },
+    service: {
+      findFirst: jest.fn().mockResolvedValue({ earlyArrivalMaxMinutes: 60 }),
     },
   };
   const prisma = {
@@ -131,18 +138,119 @@ describe('EntriesService · ingreso con reserva', () => {
     expect(createdData(tx)).toMatchObject({ reservationId: RESERVATION });
   });
 
-  it('fuera de la ventana no vincula ni toca la reserva', async () => {
+  it('antes del tope de llegada anticipada no vincula ni toca la reserva, aunque venga el reservationId', async () => {
     const { tx, subject } = makeCreateService([reservationRow()]);
 
     const dto = await subject.createEntry({
       id: ENTRY,
       plate: 'AB123CD',
-      enteredAt: at(45).toISOString(),
+      enteredAt: at(-90).toISOString(),
       reservationId: RESERVATION,
     });
 
     expect(tx.reservation.updateMany).not.toHaveBeenCalled();
     expect(dto).toMatchObject({ reservationId: null, prepaidAmountArs: null });
+  });
+
+  it('llegada anticipada dentro del tope (manual): vincula con el prepago', async () => {
+    const { tx, subject } = makeCreateService([reservationRow()]);
+
+    const dto = await subject.createEntry({
+      id: ENTRY,
+      plate: 'AB123CD',
+      enteredAt: at(-50).toISOString(),
+      reservationId: RESERVATION,
+    });
+
+    expect(tx.reservation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: RESERVATION,
+        tenantId: TENANT,
+        status: ReservationStatus.confirmed,
+      },
+      data: { status: ReservationStatus.checked_in },
+    });
+    expect(dto).toMatchObject({
+      reservationId: RESERVATION,
+      prepaidAmountArs: 4500,
+    });
+  });
+
+  it('llegada anticipada dentro del tope (LPR): la cámara también vincula', async () => {
+    const { tx, subject } = makeCreateService([reservationRow()]);
+
+    await subject.createStayFromLprEvent({
+      plate: 'AB123CD',
+      timestamp: at(-50).toISOString(),
+    });
+
+    expect(createdData(tx)).toMatchObject({
+      source: 'auto',
+      reservationId: RESERVATION,
+    });
+  });
+
+  it('LPR antes del tope: estadía común', async () => {
+    const { tx, subject } = makeCreateService([reservationRow()]);
+
+    await subject.createStayFromLprEvent({
+      plate: 'AB123CD',
+      timestamp: at(-90).toISOString(),
+    });
+
+    expect(createdData(tx)).toMatchObject({
+      reservationId: null,
+      prepaidAmountArs: null,
+    });
+    expect(tx.reservation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('tarde (pasada la tolerancia, antes de exitAt): vincula y revive la no_show', async () => {
+    const { tx, subject } = makeCreateService([
+      reservationRow({ status: ReservationStatus.no_show }),
+    ]);
+
+    await subject.createEntry({
+      id: ENTRY,
+      plate: 'AB123CD',
+      enteredAt: at(45).toISOString(),
+    });
+
+    expect(tx.reservation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: RESERVATION,
+        tenantId: TENANT,
+        status: ReservationStatus.no_show,
+      },
+      data: { status: ReservationStatus.checked_in },
+    });
+    expect(createdData(tx)).toMatchObject({ reservationId: RESERVATION });
+  });
+
+  it('LPR tarde también vincula', async () => {
+    const { tx, subject } = makeCreateService([reservationRow()]);
+
+    await subject.createStayFromLprEvent({
+      plate: 'AB123CD',
+      timestamp: at(100).toISOString(),
+    });
+
+    expect(createdData(tx)).toMatchObject({ reservationId: RESERVATION });
+  });
+
+  it('después de exitAt no vincula', async () => {
+    const { tx, subject } = makeCreateService([
+      reservationRow({ status: ReservationStatus.no_show }),
+    ]);
+
+    const dto = await subject.createEntry({
+      id: ENTRY,
+      plate: 'AB123CD',
+      enteredAt: at(200).toISOString(),
+    });
+
+    expect(tx.reservation.updateMany).not.toHaveBeenCalled();
+    expect(dto.reservationId).toBeNull();
   });
 
   it('un reservationId que ya no vale (otra reserva, carrera perdida) no rechaza el ingreso', async () => {
@@ -275,6 +383,26 @@ describe('EntriesService · salida con reserva', () => {
     expect(audit.data.action).toBe(AuditActions.ENTRY_UNDERCHARGED);
     expect(audit.data.metadata.suggestedAmount).toBe(1250);
     expect(audit.data.metadata.prepaidAmount).toBe(4500);
+  });
+
+  it('llegó 50 min antes: el extra se cobra como excedente (estadía real − prepago)', async () => {
+    const { tx, subject } = makeCloseService();
+    // Entró 50' antes de una reserva de 3 h ($4.500) y salió a la hora
+    // reservada: 3 h 50 min = $5.750, excedente $1.250.
+    tx.entry.findFirst.mockResolvedValue({ ...current, enteredAt: at(-50) });
+
+    await subject.closeEntry(
+      ENTRY,
+      1,
+      { leftAt: at(180).toISOString(), amountPaid: 1000 },
+      USER as never,
+      { role: 'operator' } as never,
+    );
+
+    const audit = tx.auditLog.create.mock.calls[0][0] as {
+      data: { metadata: { suggestedAmount: number } };
+    };
+    expect(audit.data.metadata.suggestedAmount).toBe(1250);
   });
 
   it('un ingreso sin reserva no toca reservas al cerrar', async () => {
