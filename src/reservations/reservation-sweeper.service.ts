@@ -34,6 +34,7 @@ export type SweepResult = {
   expired: number;
   rejected: number;
   noShow: number;
+  completed: number;
 };
 
 /**
@@ -47,7 +48,13 @@ export type SweepResult = {
  * 2. `pending_approval` con `approvalDeadlineAt` vencido pasa a `rejected`
  *    (`system`, `approval_timeout`) con reembolso total.
  * 3. `confirmed` con `entryAt + graceMinutes` (del snapshot de la reserva)
- *    vencido pasa a `no_show`.
+ *    vencido pasa a `no_show`. Sólo mira `confirmed`: una `checked_in` (el
+ *    auto ya entró, fase 6) nunca es no-show, aunque siga adentro pasada su
+ *    franja. Si un ingreso hecho sin conexión llega después del no-show, el
+ *    vínculo por patente la devuelve a `checked_in` (ver reservation-checkin).
+ * 4. `checked_in` cuyo ingreso de la caja ya cerró pasa a `completed`. Es la
+ *    red de seguridad: lo normal es que la complete el cierre de la estadía
+ *    en su misma transacción.
  *
  * Los reembolsos `failed` NO se reintentan solos: los reintenta el dueño.
  * Los `pending` los reconcilia `reconcileRefunds` (cada 15 min).
@@ -79,7 +86,12 @@ export class ReservationSweeperService {
 
   @Cron(CronExpression.EVERY_MINUTE, { name: 'reservations-sweeper' })
   async sweep(now = new Date()): Promise<SweepResult> {
-    const result: SweepResult = { expired: 0, rejected: 0, noShow: 0 };
+    const result: SweepResult = {
+      expired: 0,
+      rejected: 0,
+      noShow: 0,
+      completed: 0,
+    };
 
     const holds = await this.prisma.reservation.findMany({
       where: {
@@ -143,9 +155,29 @@ export class ReservationSweeperService {
       }
     }
 
-    if (result.expired + result.rejected + result.noShow > 0) {
+    const finished = await this.prisma.reservation.findMany({
+      where: {
+        status: ReservationStatus.checked_in,
+        entry: { is: { leftAt: { not: null } } },
+      },
+      select: { id: true, tenantId: true },
+      orderBy: { entryAt: 'asc' },
+      take: BATCH_SIZE,
+    });
+    for (const { id, tenantId } of finished) {
+      if (
+        await this.attempt(id, () => this.lifecycle.markCompleted(id, tenantId))
+      ) {
+        result.completed++;
+      }
+    }
+
+    if (
+      result.expired + result.rejected + result.noShow + result.completed >
+      0
+    ) {
       this.logger.log(
-        `Reservations sweep: ${result.expired} expired, ${result.rejected} rejected by timeout, ${result.noShow} no-show.`,
+        `Reservations sweep: ${result.expired} expired, ${result.rejected} rejected by timeout, ${result.noShow} no-show, ${result.completed} completed.`,
       );
     }
     return result;

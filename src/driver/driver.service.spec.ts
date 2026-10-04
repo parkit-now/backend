@@ -27,10 +27,11 @@ const USER = { id: 'user-1' } as User;
 const ar = (iso: string) => new Date(`${iso}-03:00`);
 const NOW = ar('2026-09-27T16:00:00');
 // Fila de reserva que retiene lugar (lo que devuelve `holdingWhere`).
-const held = (entryAt: Date) => ({
+const held = (entryAt: Date, policySnapshot: unknown = null) => ({
   entryAt,
   status: 'confirmed',
   holdExpiresAt: null,
+  policySnapshot,
 });
 
 const tenant = {
@@ -231,12 +232,15 @@ describe('DriverService', () => {
     });
   });
 
-  it('la tolerancia de la playa decide cuánto tiempo ocupa lugar una reserva', async () => {
+  it('la tolerancia de la reserva (su foto de reglas) decide cuánto tiempo ocupa lugar', async () => {
+    // La misma que usa el sweeper para el no-show: si el dueño cambia la
+    // tolerancia después, las reservas ya hechas conservan la suya.
     mockTenantClient.service.findFirst.mockResolvedValue(
-      reservationService({ graceMinutes: 120 }),
+      reservationService({ graceMinutes: 10 }),
     );
     mockTenantClient.reservation.findMany.mockResolvedValue([
-      held(ar('2026-09-27T14:30:00')), // vence 16:30 con 120 min: ocupa
+      // vence 16:30 con 120 min: ocupa
+      held(ar('2026-09-27T14:30:00'), { graceMinutes: 120 }),
     ]);
     const [parking] = await service.findNearby(
       { latitude: -34.6037, longitude: -58.3816, radiusMeters: 5000 },
@@ -257,6 +261,22 @@ describe('DriverService', () => {
     );
     // 20 de capacidad − 8 adentro − 2 reservas vigentes.
     expect(parking.availableSpots).toBe(10);
+  });
+
+  it('una reserva con el auto adentro (checked_in) no descuenta otra vez: lo cuenta el ingreso', async () => {
+    mockTenantClient.reservation.findMany.mockResolvedValue([
+      { ...held(ar('2026-09-27T15:40:00')), status: 'checked_in' },
+    ]);
+    const [parking] = await service.findNearby(
+      { latitude: -34.6037, longitude: -58.3816, radiusMeters: 5000 },
+      NOW,
+    );
+    // 20 de capacidad − 8 adentro (incluido el de la reserva) − 0.
+    expect(parking.availableSpots).toBe(12);
+    const args = mockTenantClient.reservation.findMany.mock.calls[0][0] as {
+      where: unknown;
+    };
+    expect(JSON.stringify(args.where)).toContain('"not":"checked_in"');
   });
 
   describe('quote', () => {

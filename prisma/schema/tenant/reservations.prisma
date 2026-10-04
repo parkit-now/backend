@@ -74,6 +74,8 @@ model Reservation {
   vehicleCategoryRef VehicleCategory? @relation(fields: [vehicleCategory], references: [code], onUpdate: Cascade, map: "reservations_vehicle_category_fkey")
 
   payments ReservationPayment[]
+  // Ingreso de la caja vinculado (migración 20261006120000).
+  entry    Entry?
 
   // Índices parciales sólo en SQL: `reservations_tenant_window_idx`
   // (cupo, WHERE status retiene lugar).

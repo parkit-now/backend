@@ -8,6 +8,7 @@ import {
   peakConcurrentReservations,
   type ReservationWindow,
 } from '../driver/driver-rules';
+import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import { HOLD_GRACE_MS } from './reservation-policy';
 
 /**
@@ -38,6 +39,34 @@ export function holdingWhere(now: Date): Prisma.ReservationWhereInput {
     ],
   };
 }
+
+/**
+ * `where` de las reservas de HOY que pueden retener un lugar ahora para
+ * "Libres ahora": las que cuentan contra el cupo menos las `checked_in`, cuyo
+ * auto ya cuenta como ingreso. El filtro fino (tolerancia vencida) es
+ * `countReservedHeld`, que necesita el `policySnapshot` de cada fila.
+ */
+export function reservedTodayWhere(
+  now: Date,
+  tz = DEFAULT_TIME_ZONE,
+): Prisma.ReservationWhereInput {
+  const today = dayRangeIn(dayKeyIn(now, tz), tz);
+  return {
+    AND: [
+      holdingWhere(now),
+      { status: { not: ReservationStatus.checked_in } },
+      { entryAt: { gte: today.gte, lt: today.lt } },
+    ],
+  };
+}
+
+/** Lo que `countReservedHeld` necesita de cada reserva. */
+export const RESERVED_HELD_SELECT = {
+  entryAt: true,
+  status: true,
+  holdExpiresAt: true,
+  policySnapshot: true,
+} satisfies Prisma.ReservationSelect;
 
 /**
  * Toma el lock de la playa y dice si la ventana todavía entra en el cupo.

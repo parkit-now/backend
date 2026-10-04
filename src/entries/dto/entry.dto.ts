@@ -69,6 +69,28 @@ export class EntryDto {
   })
   whitelistId: string | null;
 
+  @ApiPropertyOptional({
+    type: String,
+    format: 'uuid',
+    nullable: true,
+    description:
+      'Reserva con la que entró el auto. La vincula el backend al crear el ' +
+      'ingreso (por `reservationId` o por patente dentro de la ventana de ' +
+      'llegada). null en los ingresos sin reserva y en los anteriores. ' +
+      'Opcional en el contrato: un backend anterior a la fase 6 no lo manda.',
+  })
+  reservationId: string | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description:
+      'Lo que el conductor pagó por adelantado con la reserva (snapshot al ' +
+      'vincular). La caja cobra `max(estadía − prepagado, 0)`. null sin reserva.',
+    example: 4500,
+  })
+  prepaidAmountArs: number | null;
+
   @ApiPropertyOptional({ example: 'Rojo', maxLength: 50 })
   color: string | null;
 

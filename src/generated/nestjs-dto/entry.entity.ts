@@ -2,6 +2,7 @@
 import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {VehicleCategoryEntity} from './vehicle-category.entity'
+import {ReservationEntity} from './reservation.entity'
 import {WhitelistEntity} from './whitelist.entity'
 import {RateEntity} from './rate.entity'
 import {CashSessionEntity} from './cash-session.entity'
@@ -91,6 +92,13 @@ cashSessionId: string  | null;
   format: `int32`,
 })
 ticketNumber: number  | null;
+reservationId: string  | null;
+reservation?: ReservationEntity  | null;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+prepaidAmountArs: Prisma.Decimal  | null;
 whitelistId: string  | null;
 whitelist?: WhitelistEntity  | null;
 rate?: RateEntity  | null;

@@ -10,21 +10,44 @@ import {
   ListOwnerReservationsQueryDto,
   OwnerReservationDetailDto,
   OwnerReservationDto,
+  OwnerReservationStayDto,
   PaginatedOwnerReservationsDto,
+  ReservationMatchResponseDto,
 } from './dto/owner-reservation.dto';
+import {
+  ARRIVAL_SELECT,
+  arrivalCandidatesWhere,
+  arrivalWindow,
+  pickReservationForArrival,
+  prepaidAmountOf,
+  reservationCode,
+} from './reservation-checkin';
 import {
   ReservationLifecycleService,
   type ReservationActor,
 } from './reservation-lifecycle.service';
 import { readPolicySnapshot } from './reservation-policy';
 
+/** El ingreso de la caja vinculado (fase 6). */
+const STAY_SELECT = {
+  select: {
+    id: true,
+    enteredAt: true,
+    leftAt: true,
+    amountPaid: true,
+    prepaidAmountArs: true,
+  },
+} satisfies Prisma.EntryDefaultArgs;
+
 const WITH_DETAIL = {
   user: { select: { name: true } },
   payments: { orderBy: { createdAt: 'desc' } },
+  entry: STAY_SELECT,
 } satisfies Prisma.ReservationInclude;
 
 const WITH_DRIVER = {
   user: { select: { name: true } },
+  entry: STAY_SELECT,
 } satisfies Prisma.ReservationInclude;
 
 type ReservationWithDriver = Prisma.ReservationGetPayload<{
@@ -65,6 +88,44 @@ export class OwnerReservationsService {
       tenantPrisma.reservation.count({ where }),
     ]);
     return { items: rows.map(toDto), total, page, pageSize };
+  }
+
+  /**
+   * La reserva que corresponde a un auto que llega ahora con esa patente: la
+   * misma regla que aplica el ingreso al vincular (`claimReservationForArrival`),
+   * así que lo que muestra el banner es lo que se vincula.
+   */
+  async match(
+    tenantId: string,
+    plate: string,
+    now = new Date(),
+  ): Promise<ReservationMatchResponseDto> {
+    const where = arrivalCandidatesWhere(tenantId, plate, now);
+    if (!where) return { reservation: null };
+    const candidates = await this.prisma
+      .getTenantClient()
+      .reservation.findMany({ where, select: ARRIVAL_SELECT });
+    const chosen = pickReservationForArrival(candidates, now);
+    if (!chosen) return { reservation: null };
+    const window = arrivalWindow(chosen);
+    return {
+      reservation: {
+        id: chosen.id,
+        code: reservationCode(chosen.id),
+        status: chosen.status,
+        vehiclePlate: chosen.vehiclePlate,
+        vehicleCategory: isVehicleCategory(chosen.vehicleCategory)
+          ? chosen.vehicleCategory
+          : null,
+        driverName: chosen.user.name,
+        entryAt: chosen.entryAt.toISOString(),
+        exitAt: chosen.exitAt.toISOString(),
+        arrivalFrom: window.from.toISOString(),
+        arrivalUntil: window.until.toISOString(),
+        totalArs: Number(chosen.totalArs),
+        prepaidAmountArs: prepaidAmountOf(chosen),
+      },
+    };
   }
 
   async get(tenantId: string, reservationId: string) {
@@ -158,7 +219,7 @@ function toDto(row: ReservationWithDriver): OwnerReservationDto {
     value === null ? null : Number(value);
   return {
     id: row.id,
-    code: `R-${row.id.replace(/-/g, '').slice(-6).toUpperCase()}`,
+    code: reservationCode(row.id),
     status: row.status,
     vehiclePlate: row.vehiclePlate,
     vehicleCategory: isVehicleCategory(row.vehicleCategory)
@@ -180,6 +241,24 @@ function toDto(row: ReservationWithDriver): OwnerReservationDto {
     refundedAmountArs: num(row.refundedAmountArs),
     refundError: row.refundError,
     policy: readPolicySnapshot(row.policySnapshot),
+    stay: stayOf(row.entry),
+  };
+}
+
+function stayOf(
+  entry: ReservationWithDriver['entry'],
+): OwnerReservationStayDto | null {
+  if (!entry) return null;
+  return {
+    entryId: entry.id,
+    enteredAt: entry.enteredAt.toISOString(),
+    leftAt: entry.leftAt?.toISOString() ?? null,
+    excessChargedArs:
+      entry.leftAt && entry.amountPaid !== null
+        ? Number(entry.amountPaid)
+        : null,
+    prepaidAmountArs:
+      entry.prepaidAmountArs === null ? null : Number(entry.prepaidAmountArs),
   };
 }
 

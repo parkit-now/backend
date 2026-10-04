@@ -23,6 +23,7 @@ describe('OwnerReservationsController', () => {
     reject: jest.fn(),
     cancel: jest.fn(),
     retryRefund: jest.fn(),
+    match: jest.fn(),
   };
   let controller: OwnerReservationsController;
 
@@ -108,5 +109,17 @@ describe('OwnerReservationsController', () => {
     expect(
       Reflect.getMetadata(ENTITY_ROLE_KEY, OwnerReservationsController),
     ).toBeUndefined();
+  });
+
+  it('match delega con la patente y se declara antes de :reservationId', () => {
+    void controller.match(TENANT, { plate: 'AB123CD' });
+    expect(service.match).toHaveBeenCalledWith(TENANT, 'AB123CD');
+
+    // Nest registra las rutas en el orden de los métodos: si `get` quedara
+    // antes, GET /reservations/match caería en `:reservationId` (400 por UUID).
+    const methods = Object.getOwnPropertyNames(
+      OwnerReservationsController.prototype,
+    );
+    expect(methods.indexOf('match')).toBeLessThan(methods.indexOf('get'));
   });
 });

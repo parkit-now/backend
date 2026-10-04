@@ -739,6 +739,28 @@ export class ReservationLifecycleService {
     return updated.count > 0;
   }
 
+  /**
+   * Red de seguridad de la salida: una `checked_in` cuyo ingreso ya cerró pasa
+   * a `completed`. Lo normal es que lo haga el cierre de la estadía en su
+   * misma transacción (`completeReservationForExit`); esto cubre un cierre
+   * que entró por un backend que todavía no lo hacía (deploy en curso o
+   * rollback). Guardado por estado: idempotente.
+   */
+  async markCompleted(
+    reservationId: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const updated = await this.prisma.reservation.updateMany({
+      where: {
+        id: reservationId,
+        tenantId,
+        status: ReservationStatus.checked_in,
+      },
+      data: { status: ReservationStatus.completed },
+    });
+    return updated.count > 0;
+  }
+
   // ─── Internos ───────────────────────────────────────────────────────────────
 
   private async load(

@@ -101,4 +101,12 @@ vehicleModel?: string;
 @IsOptional()
 @IsInt()
 ticketNumber?: number;
+@ApiProperty({
+  type: `number`,
+  format: `double`,
+})
+@IsOptional()
+@IsDecimal()
+@Type(()=>String)
+prepaidAmountArs?: Prisma.Decimal;
 }

@@ -172,4 +172,79 @@ describe('OwnerReservationsService', () => {
       expect(tenantClient.reservation.findFirst).not.toHaveBeenCalled();
     });
   });
+
+  describe('match (banner de la caja)', () => {
+    const now = at('2026-09-28T09:52:00');
+    const confirmed = row({
+      status: 'confirmed',
+      vehicleCategory: 'car',
+      policySnapshot: { earlyArrivalMinutes: 15, graceMinutes: 30 },
+    });
+
+    it('devuelve la reserva confirmada dentro de la ventana con el prepago y la franja', async () => {
+      tenantClient.reservation.findMany.mockResolvedValue([confirmed]);
+
+      const { reservation } = await service.match(TENANT, 'ab 123 cd', now);
+
+      const args = tenantClient.reservation.findMany.mock.calls[0][0];
+      expect(args.where).toMatchObject({
+        tenantId: TENANT,
+        vehiclePlate: 'AB123CD',
+        status: { in: ['confirmed', 'no_show'] },
+      });
+      expect(reservation).toMatchObject({
+        id: RES,
+        code: 'R-00ABCD',
+        status: 'confirmed',
+        vehiclePlate: 'AB123CD',
+        vehicleCategory: 'car',
+        driverName: 'Ana Conductora',
+        totalArs: 9000,
+        prepaidAmountArs: 9000,
+        arrivalFrom: at('2026-09-28T09:45:00').toISOString(),
+        arrivalUntil: at('2026-09-28T10:30:00').toISOString(),
+      });
+    });
+
+    it('antes de la llegada anticipada no hay banner', async () => {
+      tenantClient.reservation.findMany.mockResolvedValue([confirmed]);
+      const { reservation } = await service.match(
+        TENANT,
+        'AB123CD',
+        at('2026-09-28T09:40:00'),
+      );
+      expect(reservation).toBeNull();
+    });
+
+    it('una patente vacía no consulta la base', async () => {
+      const { reservation } = await service.match(TENANT, '--', now);
+      expect(reservation).toBeNull();
+      expect(tenantClient.reservation.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  it('el listado incluye el ingreso vinculado (stay) con el excedente cobrado', async () => {
+    tenantClient.reservation.findMany.mockResolvedValue([
+      row({
+        status: 'completed',
+        entry: {
+          id: 'entry-1',
+          enteredAt: at('2026-09-28T09:52:00'),
+          leftAt: at('2026-09-28T12:40:00'),
+          amountPaid: new Prisma.Decimal(1000),
+          prepaidAmountArs: new Prisma.Decimal(9000),
+        },
+      }),
+    ]);
+
+    const page = await service.list({});
+
+    expect(page.items[0].stay).toEqual({
+      entryId: 'entry-1',
+      enteredAt: at('2026-09-28T09:52:00').toISOString(),
+      leftAt: at('2026-09-28T12:40:00').toISOString(),
+      excessChargedArs: 1000,
+      prepaidAmountArs: 9000,
+    });
+  });
 });

@@ -5,6 +5,7 @@ import {TenantEntity} from './tenant.entity'
 import {UserEntity} from './user.entity'
 import {VehicleCategoryEntity} from './vehicle-category.entity'
 import {ReservationPaymentEntity} from './reservation-payment.entity'
+import {EntryEntity} from './entry.entity'
 
 
 export class ReservationEntity {
@@ -114,4 +115,5 @@ user?: UserEntity ;
 cancelledByUser?: UserEntity  | null;
 vehicleCategoryRef?: VehicleCategoryEntity  | null;
 payments?: ReservationPaymentEntity[] ;
+entry?: EntryEntity  | null;
 }

@@ -1039,6 +1039,11 @@ describe('EntriesService', () => {
         },
         vehicleType: { findFirst: jest.fn().mockResolvedValue(vehicleType) },
         whitelist: { findFirst: jest.fn().mockResolvedValue(null) },
+        // Sin reservas para la patente: el ingreso queda sin vincular.
+        reservation: {
+          findMany: jest.fn().mockResolvedValue([]),
+          updateMany: jest.fn(),
+        },
       };
       const prisma = {
         $transaction: jest.fn((cb: (txArg: typeof tx) => unknown) => cb(tx)),

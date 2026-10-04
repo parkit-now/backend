@@ -28,6 +28,8 @@ import {
   ListOwnerReservationsQueryDto,
   OwnerReservationDetailDto,
   PaginatedOwnerReservationsDto,
+  ReservationMatchQueryDto,
+  ReservationMatchResponseDto,
   ReservationReasonDto,
 } from './dto/owner-reservation.dto';
 import { OwnerReservationsService } from './owner-reservations.service';
@@ -65,6 +67,20 @@ export class OwnerReservationsController {
   @ApiOkResponse({ type: PaginatedOwnerReservationsDto })
   list(@Query() query: ListOwnerReservationsQueryDto) {
     return this.reservations.list(query);
+  }
+
+  // Antes de `:reservationId`: si no, Nest matchea "match" como id.
+  @Get('match')
+  @ApiOperation({
+    summary:
+      'Confirmed reservation for a plate arriving now (desktop banner), or null',
+  })
+  @ApiOkResponse({ type: ReservationMatchResponseDto })
+  match(
+    @Param('tenantId', ParseUUIDPipe) tenantId: string,
+    @Query() query: ReservationMatchQueryDto,
+  ) {
+    return this.reservations.match(tenantId, query.plate);
   }
 
   @Get(':reservationId')

@@ -15,7 +15,11 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryDto } from './dto/entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
-import { calcStayPrice } from './pricing';
+import { calcAmountDue, calcStayPrice } from './pricing';
+import {
+  claimReservationForArrival,
+  completeReservationForExit,
+} from '../reservations/reservation-checkin';
 import { isVehicleCategory } from '../vehicle-categories/vehicle-categories';
 import {
   EMPTY_VEHICLE_SNAPSHOT,
@@ -57,6 +61,8 @@ type EntryAuditSnapshot = {
   cashSessionId: string | null;
   ticketNumber: number | null;
   manuallyInvoiced: boolean;
+  /** Prepago de la reserva vinculada: lo sugerido es el excedente. */
+  prepaidAmountArs: number | null;
   payments: PaymentSnapshot[];
 };
 type CorrectionEconomicImpact = {
@@ -135,6 +141,8 @@ function toDto(entry: PrismaEntry): EntryDto {
     exitImageUrl: entry.exitImageUrl,
     exitCameraId: entry.exitCameraId,
     whitelistId: entry.whitelistId,
+    reservationId: entry.reservationId,
+    prepaidAmountArs: toNumber(entry.prepaidAmountArs),
     version: entry.version,
     syncSeq: entry.syncSeq,
     updatedAt: entry.updatedAt,
@@ -163,16 +171,23 @@ function calcSuggestedAmount(input: {
   stayPrice: number | null;
   fractionPrice: number | null;
   mediaEstadiaPrice: number | null;
+  /**
+   * Prepago de la reserva vinculada. El operador cobra sólo el excedente, así
+   * que lo sugerido —y lo que mide el detector de subcobro— es eso: sin
+   * descontarlo, cada salida con reserva quedaría marcada como subcobro.
+   */
+  prepaidAmount?: number | null;
 }): number {
   const totalMinutes =
     (input.leftAt.getTime() - input.enteredAt.getTime()) / 60000;
 
-  return calcStayPrice(totalMinutes, {
+  const stay = calcStayPrice(totalMinutes, {
     hour: input.hourPrice ?? 0,
     fraction: input.fractionPrice ?? 0,
     mediaEstadia: input.mediaEstadiaPrice ?? 0,
     stay: input.stayPrice ?? 0,
   });
+  return calcAmountDue(stay, input.prepaidAmount);
 }
 
 function roundMoney(value: number): number {
@@ -373,6 +388,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
+    prepaidAmountArs: toNumber(entry.prepaidAmountArs),
     payments: activePayments(entry),
   };
 }
@@ -437,6 +453,7 @@ function snapshotSuggestedAmount(snapshot: EntryAuditSnapshot): number | null {
       stayPrice: snapshot.rateSnapshotStayPriceArs,
       fractionPrice: snapshot.rateSnapshotFractionPriceArs,
       mediaEstadiaPrice: snapshot.rateSnapshotMediaEstadiaPriceArs,
+      prepaidAmount: snapshot.prepaidAmountArs,
     }),
   );
 }
@@ -509,6 +526,18 @@ export class EntriesService {
         );
       }
 
+      // Reserva: la que eligió la caja (banner) o, si no vino o ya no vale, la
+      // de esta patente dentro de su ventana de llegada. Cubre los ingresos
+      // sin conexión, que llegan acá recién al sincronizar, con su
+      // `enteredAt` original. Nunca se rechaza el ingreso por esto.
+      const enteredAt = new Date(data.enteredAt);
+      const link = await claimReservationForArrival(tx, {
+        tenantId,
+        plate,
+        at: enteredAt,
+        reservationId: data.reservationId,
+      });
+
       // Una caja vieja no manda tipo ni categoría: el ingreso queda sin ellos,
       // como hasta ahora. Nunca se rechaza por esto.
       const vehicle =
@@ -527,7 +556,7 @@ export class EntriesService {
           color: data.color,
           cochera: data.cochera,
           notes: data.notes,
-          enteredAt: new Date(data.enteredAt),
+          enteredAt,
           vehicleBrand: data.vehicleBrand,
           vehicleModel: data.vehicleModel,
           vehicleType: vehicle.vehicleType,
@@ -542,6 +571,8 @@ export class EntriesService {
             data.rateSnapshotMediaEstadiaPriceArs,
           cashSessionId: data.cashSessionId,
           ticketNumber: data.ticketNumber,
+          reservationId: link?.reservationId ?? null,
+          prepaidAmountArs: link?.prepaidAmountArs ?? null,
         },
       });
     });
@@ -631,6 +662,11 @@ export class EntriesService {
         );
       }
 
+      // La salida cierra la reserva con la que entró el auto (fase 6).
+      if (current.reservationId) {
+        await completeReservationForExit(tx, tenantId, current.reservationId);
+      }
+
       // Create payment transaction records if payments were provided, and burn
       // the Mercado Pago intents that funded them — todo dentro de esta misma
       // transacción, ver `consumePaymentIntents`.
@@ -681,6 +717,7 @@ export class EntriesService {
           stayPrice: toNumber(current.rateSnapshotStayPriceArs),
           fractionPrice: toNumber(current.rateSnapshotFractionPriceArs),
           mediaEstadiaPrice: toNumber(current.rateSnapshotMediaEstadiaPriceArs),
+          prepaidAmount: toNumber(current.prepaidAmountArs),
         });
         if (
           suggestedAmount > 0 &&
@@ -702,6 +739,7 @@ export class EntriesService {
                 suggestedAmount: roundMoney(suggestedAmount),
                 chargedAmount: roundMoney(computedAmount),
                 delta: roundMoney(suggestedAmount - computedAmount),
+                prepaidAmount: toNumber(current.prepaidAmountArs),
                 actorRole: actorRole(membership),
                 rate: {
                   id: current.rateId,
@@ -1050,6 +1088,7 @@ export class EntriesService {
           stayPrice: toNumber(after.rateSnapshotStayPriceArs),
           fractionPrice: toNumber(after.rateSnapshotFractionPriceArs),
           mediaEstadiaPrice: toNumber(after.rateSnapshotMediaEstadiaPriceArs),
+          prepaidAmount: toNumber(after.prepaidAmountArs),
         });
         const chargedAmount = Number(after.amountPaid);
         if (
@@ -1125,7 +1164,16 @@ export class EntriesService {
         vehicleType: data.vehicleType,
       });
 
-      // 4. Persist the stay. UUID is server-generated for LPR entries.
+      // 4. Reserva de esta patente dentro de su ventana de llegada: el
+      //    check-in automático por cámara.
+      const enteredAt = data.timestamp ? new Date(data.timestamp) : now;
+      const link = await claimReservationForArrival(tx, {
+        tenantId,
+        plate,
+        at: enteredAt,
+      });
+
+      // 5. Persist the stay. UUID is server-generated for LPR entries.
       return tx.entry.create({
         data: {
           id: crypto.randomUUID(),
@@ -1137,8 +1185,10 @@ export class EntriesService {
           vehicleCategory: vehicle.vehicleCategory,
           entryImageUrl: data.imageUrl ?? null,
           entryCameraId: data.cameraId ?? null,
-          enteredAt: data.timestamp ? new Date(data.timestamp) : now,
+          enteredAt,
           whitelistId: whitelistEntry?.id ?? null,
+          reservationId: link?.reservationId ?? null,
+          prepaidAmountArs: link?.prepaidAmountArs ?? null,
         },
       });
     });

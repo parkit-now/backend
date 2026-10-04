@@ -1,13 +1,15 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { BranchStatus, Prisma, ServiceCode, type User } from '@prisma/client';
-import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import { readCapacity } from '../entities/entity-settings';
 import { calcStayPrice } from '../entries/pricing';
 import { effectiveReservationHours } from '../services/reservation-hours';
 import { computeReservationReadiness } from '../services/reservation-readiness';
 import { PrismaService } from '../database/prisma.service';
 import { prismaForTenant } from '../database/prisma-tenant';
-import { holdingWhere } from '../reservations/reservation-capacity';
+import {
+  RESERVED_HELD_SELECT,
+  reservedTodayWhere,
+} from '../reservations/reservation-capacity';
 import {
   buildPolicySnapshot,
   DEFAULT_POLICY_SNAPSHOT,
@@ -20,10 +22,10 @@ import {
   RESERVATION_MAX_DAYS_AHEAD,
   availableSpots,
   boundingBox,
+  countReservedHeld,
   distanceMeters,
   isOpenAt,
   isOpenThroughout,
-  reservationHoldsSpotNow,
   reservationWindowProblem,
   type ScheduleRange,
   type WindowProblem,
@@ -330,10 +332,6 @@ export class DriverService {
   private async loadLotData(tenant: PublicTenant, now: Date): Promise<LotData> {
     const tenantId = tenant.id;
     const tenantPrisma = prismaForTenant(this.prisma, tenantId);
-    const today = dayRangeIn(
-      dayKeyIn(now, DEFAULT_TIME_ZONE),
-      DEFAULT_TIME_ZONE,
-    );
     const [
       schedules,
       reservationService,
@@ -381,14 +379,11 @@ export class DriverService {
         select: { status: true },
       }),
       tenantPrisma.entry.count({ where: { leftAt: null } }),
-      // Reservas de hoy que retienen lugar (holdingWhere): las que todavía no
-      // vencieron lo ocupan (SCRUM-261, ver reservationHoldsSpotNow).
+      // Reservas de hoy que retienen lugar: las que todavía no vencieron lo
+      // ocupan (SCRUM-261) hasta que el auto entra (ver countReservedHeld).
       tenantPrisma.reservation.findMany({
-        where: {
-          ...holdingWhere(now),
-          entryAt: { gte: today.gte, lt: today.lt },
-        },
-        select: { entryAt: true, status: true, holdExpiresAt: true },
+        where: reservedTodayWhere(now),
+        select: RESERVED_HELD_SELECT,
       }),
     ]);
 
@@ -447,9 +442,7 @@ export class DriverService {
             }
           : null,
       occupied,
-      reservedToday: todays.filter((reservation) =>
-        reservationHoldsSpotNow(reservation, now, graceMinutes),
-      ).length,
+      reservedToday: countReservedHeld(todays, now),
     };
   }
 }

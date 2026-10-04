@@ -1198,6 +1198,21 @@ describe('ReservationLifecycleService', () => {
       expect(db.reservationById().status).toBe('no_show');
       expect(await service.markNoShow(RES_ID, TENANT, NOW)).toBe(false);
     });
+
+    it('markNoShow no toca una checked_in: el auto ya entró', async () => {
+      seed({ status: 'checked_in', entryAt: minutes(NOW, -60) });
+
+      expect(await service.markNoShow(RES_ID, TENANT, NOW)).toBe(false);
+      expect(db.reservationById().status).toBe('checked_in');
+    });
+
+    it('markCompleted pasa una checked_in a completed, una sola vez', async () => {
+      seed({ status: 'checked_in', entryAt: minutes(NOW, -60) });
+
+      expect(await service.markCompleted(RES_ID, TENANT)).toBe(true);
+      expect(db.reservationById().status).toBe('completed');
+      expect(await service.markCompleted(RES_ID, TENANT)).toBe(false);
+    });
   });
 
   describe('auditoría', () => {
