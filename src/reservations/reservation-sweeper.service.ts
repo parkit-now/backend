@@ -50,8 +50,9 @@ export type SweepResult = {
  * 3. `confirmed` con `entryAt + graceMinutes` (del snapshot de la reserva)
  *    vencido pasa a `no_show`. Sólo mira `confirmed`: una `checked_in` (el
  *    auto ya entró, fase 6) nunca es no-show, aunque siga adentro pasada su
- *    franja. Si un ingreso hecho sin conexión llega después del no-show, el
- *    vínculo por patente la devuelve a `checked_in` (ver reservation-checkin).
+ *    franja. Si un ingreso hecho sin conexión llega después del no-show, o
+ *    el auto llega tarde antes de `exitAt` (fase 6c), el vínculo por patente
+ *    la devuelve a `checked_in` (ver reservation-checkin).
  * 4. `checked_in` cuyo ingreso de la caja ya cerró pasa a `completed`. Es la
  *    red de seguridad: lo normal es que la complete el cierre de la estadía
  *    en su misma transacción.

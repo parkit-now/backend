@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -13,6 +15,7 @@ import {
 import type { User, UserMembership } from '@prisma/client';
 import {
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -23,6 +26,7 @@ import { TenantMembershipGuard } from '../auth/guards/tenant-membership.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentMembership } from '../auth/decorators/entity-role.decorator';
 import { TenantInterceptor } from '../database/tenant.interceptor';
+import { ProblemDetailsDto } from '../utils/exceptions/dto/problem-details.dto';
 import { CloseEntryDto } from './dto/close-entry.dto';
 import { CloseEntryResponseDto } from './dto/close-entry-response.dto';
 import { CorrectEntryDto } from './dto/correct-entry.dto';
@@ -96,6 +100,37 @@ export class EntriesController {
       entryId,
       query.expectedVersion,
       dto,
+      user,
+      membership,
+    );
+  }
+
+  // Dueño y operador (sin @EntityRole, como el resto de la caja).
+  @Post(':entryId/reservation/unlink')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Unlink the reservation from an open entry (it becomes a regular stay; ' +
+      'the reservation goes back to confirmed, or no_show past its window). ' +
+      'Idempotent; optimistic locking like the exit.',
+  })
+  @ApiOkResponse({ type: EntryDto })
+  @ApiConflictResponse({
+    type: ProblemDetailsDto,
+    description:
+      'CONFLICT: la versión no coincide (otra caja lo cambió). ' +
+      'ENTRY_RESERVATION_UNLINK_CLOSED: el auto ya salió.',
+  })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async unlinkReservation(
+    @Param('entryId', ParseUUIDPipe) entryId: string,
+    @Query() query: ExpectedVersionQueryDto,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
+  ) {
+    return this.entriesService.unlinkReservation(
+      entryId,
+      query.expectedVersion,
       user,
       membership,
     );

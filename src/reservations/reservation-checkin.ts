@@ -498,6 +498,63 @@ export async function completeReservationForExit(
   return completed.count > 0;
 }
 
+export type ReleasedReservation = {
+  reservationId: string;
+  previousStatus: ReservationStatus;
+  /** `null` si la reserva no estaba `checked_in` y no se tocó. */
+  newStatus: ReservationStatus | null;
+  entryAt: Date;
+};
+
+/**
+ * Desvincular (fase 6c): la reserva deja de estar usada por el ingreso.
+ *
+ * - Antes del fin de su ventana normal (`entryAt + grace`) vuelve a
+ *   `confirmed`: el conductor todavía puede llegar a tiempo.
+ * - Después, a `no_show`: es exactamente lo que haría el sweeper un minuto
+ *   más tarde con una `confirmed` vencida, sin el estado intermedio (que
+ *   retendría el lugar y le mostraría "Confirmada" al conductor). Sigue siendo
+ *   vinculable como llegada tardía hasta `exitAt`, igual que cualquier
+ *   `no_show`.
+ *
+ * Guardado por `checked_in`: si la reserva ya está en otro estado (la
+ * completó el sweeper, por ejemplo) no se toca y el ingreso se desvincula
+ * igual. No mueve plata: no hay reembolsos al desvincular.
+ */
+export async function releaseReservationFromEntry(
+  tx: ReservationDb,
+  tenantId: string,
+  reservationId: string,
+  now: Date,
+): Promise<ReleasedReservation | null> {
+  const reservation = await tx.reservation.findFirst({
+    where: { id: reservationId, tenantId },
+    select: { id: true, status: true, entryAt: true, policySnapshot: true },
+  });
+  if (!reservation) return null;
+  const released: ReleasedReservation = {
+    reservationId: reservation.id,
+    previousStatus: reservation.status,
+    newStatus: null,
+    entryAt: reservation.entryAt,
+  };
+  if (reservation.status !== ReservationStatus.checked_in) return released;
+
+  const target =
+    now.getTime() <= arrivalWindow(reservation).until.getTime()
+      ? ReservationStatus.confirmed
+      : ReservationStatus.no_show;
+  const updated = await tx.reservation.updateMany({
+    where: {
+      id: reservation.id,
+      tenantId,
+      status: ReservationStatus.checked_in,
+    },
+    data: { status: target },
+  });
+  return { ...released, newStatus: updated.count > 0 ? target : null };
+}
+
 /** Código corto que ve el operador y el conductor (R-XXXXXX). */
 export function reservationCode(id: string): string {
   return `R-${id.replace(/-/g, '').slice(-6).toUpperCase()}`;

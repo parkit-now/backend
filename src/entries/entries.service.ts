@@ -19,6 +19,8 @@ import { calcAmountDue, calcStayPrice } from './pricing';
 import {
   claimReservationForArrival,
   completeReservationForExit,
+  releaseReservationFromEntry,
+  reservationCode,
 } from '../reservations/reservation-checkin';
 import { isVehicleCategory } from '../vehicle-categories/vehicle-categories';
 import {
@@ -1123,6 +1125,119 @@ export class EntriesService {
     });
 
     return toDto(updated);
+  }
+
+  /**
+   * Desvincula la reserva de un ingreso ABIERTO (fase 6c, botón "Desvincular"
+   * de la caja): el ingreso pasa a estadía común (`reservationId` y
+   * `prepaidAmountArs` en null, se cobra todo al salir) y la reserva vuelve a
+   * `confirmed` o, pasada su ventana, a `no_show` (ver
+   * `releaseReservationFromEntry`). Queda en la auditoría con quién fue.
+   *
+   * Sólo online y con la versión que tiene la caja (`expectedVersion`), como
+   * el cierre y la corrección: incrementa la `version` y el trigger mueve el
+   * `sync_seq`, así que las otras cajas lo bajan por el feed. Una caja que
+   * tuviera un cierre encolado sin conexión para este ingreso recibe un 409
+   * al sincronizar y lo resuelve una persona, igual que con una corrección:
+   * nunca se pisa un cobro en silencio.
+   *
+   * Idempotente: un ingreso ya sin reserva se devuelve tal cual (sin mirar la
+   * versión), así un reintento del mismo clic no da error.
+   */
+  async unlinkReservation(
+    entryId: string,
+    expectedVersion: number,
+    user: User,
+    membership?: UserMembership | null,
+    now = new Date(),
+  ): Promise<EntryDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const instance = `/tenants/${tenantId}/entries/${entryId}/reservation/unlink`;
+
+    const entry = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.entry.findFirst({
+        where: { tenantId, id: entryId },
+      });
+      if (!current) {
+        throw new FormattedException(
+          'Not Found',
+          HttpStatus.NOT_FOUND,
+          `Entry ${entryId} not found in this entity.`,
+          instance,
+          ErrorCodes.NOT_FOUND,
+        );
+      }
+      if (!current.reservationId) return current;
+      if (current.leftAt) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'The stay already left; its reservation can no longer be unlinked.',
+          instance,
+          ErrorCodes.ENTRY_RESERVATION_UNLINK_CLOSED,
+        );
+      }
+
+      const unlinked = await tx.entry.updateMany({
+        where: {
+          tenantId,
+          id: entryId,
+          version: expectedVersion,
+          leftAt: null,
+          reservationId: current.reservationId,
+        },
+        data: {
+          reservationId: null,
+          prepaidAmountArs: null,
+          version: { increment: 1 },
+        },
+      });
+      if (unlinked.count === 0) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'Entry was closed or changed by another write. Refresh and retry.',
+          instance,
+          ErrorCodes.CONFLICT,
+        );
+      }
+
+      const released = await releaseReservationFromEntry(
+        tx,
+        tenantId,
+        current.reservationId,
+        now,
+      );
+
+      await tx.auditLog.create({
+        data: {
+          action: AuditActions.ENTRY_RESERVATION_UNLINKED,
+          entityType: 'entry',
+          entityId: entryId,
+          actorUserId: user.id,
+          tenantId,
+          severity: 'warn',
+          metadata: {
+            origin: 'cashier',
+            actorRole: actorRole(membership),
+            plate: current.plate,
+            enteredAt: current.enteredAt.toISOString(),
+            reservationId: current.reservationId,
+            reservationCode: reservationCode(current.reservationId),
+            reservationEntryAt: released?.entryAt.toISOString() ?? null,
+            prepaidAmount: toNumber(current.prepaidAmountArs),
+            previousReservationStatus: released?.previousStatus ?? null,
+            newReservationStatus: released?.newStatus ?? null,
+            cashSessionId: current.cashSessionId,
+            ticketNumber: current.ticketNumber,
+          },
+        },
+      });
+
+      return tx.entry.findUniqueOrThrow({ where: { id: entryId } });
+    });
+
+    return toDto(entry);
   }
 
   async createStayFromLprEvent(data: LprEntryDto): Promise<EntryDto> {
