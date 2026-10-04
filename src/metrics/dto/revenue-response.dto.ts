@@ -38,10 +38,21 @@ export class RevenueBucketDto {
   @ApiProperty({
     type: Number,
     description:
-      'Revenue attributed to this bucket, in ARS. Anchored on `leftAt`.',
+      'Revenue attributed to this bucket, in ARS: till revenue anchored on `leftAt` plus `reservationRevenue`.',
     example: 12300,
   })
   revenue: number;
+
+  @ApiProperty({
+    type: Number,
+    description: [
+      'Portion of `revenue` that comes from reservations paid online (Mercado Pago), in ARS. Accrual basis: the prepayment of a stay lands on its `leftAt`; a no-show lands on the reservation `entryAt`; a cancellation that kept part of the money lands on `cancelledAt`.',
+      '',
+      'With a `cashSessionId` only the prepayment of the stays that left under that drawer counts. With a `paymentMethod`, it counts only when the filter is `Mercado Pago (reserva)`.',
+    ].join('\n'),
+    example: 3000,
+  })
+  reservationRevenue: number;
 
   @ApiProperty({
     type: 'integer',

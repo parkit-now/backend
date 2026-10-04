@@ -1,11 +1,17 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { LprDetectionStatus, Prisma } from '@prisma/client';
+import {
+  LprDetectionStatus,
+  Prisma,
+  ReservationPaymentStatus,
+  ReservationStatus,
+} from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { readCapacity } from '../entities/entity-settings';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { calcStayPrice } from '../entries/pricing';
+import { prepaidAmountOf } from '../reservations/reservation-checkin';
 import { countReservedHeld } from '../driver/driver-rules';
 import {
   RESERVED_HELD_SELECT,
@@ -17,14 +23,21 @@ import {
   OccupancyDto,
   OccupancyResponseDto,
 } from './dto/occupancy-response.dto';
-import { PaymentMethodBreakdownDto } from './dto/payment-method-breakdown.dto';
+import {
+  PaymentMethodBreakdownDto,
+  PaymentMethodSliceDto,
+  RESERVATION_PAYMENT_METHOD,
+} from './dto/payment-method-breakdown.dto';
 import { RevenueQueryDto } from './dto/revenue-query.dto';
 import {
   TopPlatesQueryDto,
   type TopPlatesOrder,
 } from './dto/top-plates-query.dto';
 import { TopPlatesResponseDto } from './dto/top-plates-response.dto';
-import { VehicleCategoryBreakdownDto } from './dto/vehicle-category-breakdown.dto';
+import {
+  VehicleCategoryBreakdownDto,
+  VehicleCategorySliceDto,
+} from './dto/vehicle-category-breakdown.dto';
 import {
   isVehicleCategory,
   type VehicleCategory,
@@ -82,6 +95,8 @@ function byCountWithUnknownLast<T extends Record<K, number>, K extends string>(
 const CURRENCY = 'ARS';
 
 const REVENUE_INSTANCE = '/tenants/:tenantId/metrics/revenue';
+/** `category` of the by-vehicle-category slice for reservation money with no stay. */
+const RESERVATION_UNUSED_CATEGORY = 'reservation_unused' as const;
 const BREAKDOWN_INSTANCE =
   '/tenants/:tenantId/metrics/revenue/by-payment-method';
 const TOP_PLATES_INSTANCE = '/tenants/:tenantId/metrics/top-plates';
@@ -97,6 +112,31 @@ const MONTH_REMAINING_WEEKDAY_SAMPLES = 4;
 
 /** The part of a cash session that defines its window. */
 type SessionBounds = { id: string; openedAt: Date; closedAt: Date | null };
+
+/**
+ * One piece of reservation money recognised in the window (accrual basis).
+ *
+ * - `prepaid`: the Mercado Pago prepayment of a stay that came, dated at the
+ *   stay's `leftAt` (same instant as its `amountPaid`; at the till only
+ *   `max(stay - prepaid, 0)` is charged, so the two never overlap).
+ * - `no_show`: what the driver paid for a reservation that never became a
+ *   stay (net of refunds), dated at the reservation's `entryAt`.
+ * - `retained`: what the lot kept after a cancellation with a partial refund,
+ *   dated at `cancelledAt`.
+ */
+type ReservationRevenueRow = {
+  at: Date;
+  amount: number;
+  kind: 'prepaid' | 'no_show' | 'retained';
+};
+
+/** The filters of the revenue queries that also reach reservation money. */
+type ReservationRevenueFilter = {
+  paymentMethod?: string;
+  cashSessionId?: string;
+  vehicleType?: string;
+  vehicleCategory?: string;
+};
 
 /** Whole minutes a stay lasted. Defensive against a null or inverted exit. */
 function minutesBetween(enteredAt: Date, leftAt: Date | null): number {
@@ -323,9 +363,10 @@ export class MetricsService {
         ? 'paymentTransactions'
         : 'entries';
 
-    const [exits, arrivals] = await Promise.all([
+    const [exits, arrivals, reservationRows] = await Promise.all([
       this.loadExits(from, to, query),
       this.loadArrivals(from, to, query),
+      this.loadReservationRevenue(from, to, query),
     ]);
 
     const rows: RevenueBucketDto[] = buckets.map((bucket) => ({
@@ -333,6 +374,7 @@ export class MetricsService {
       from: bucket.gte,
       to: bucket.lt,
       revenue: 0,
+      reservationRevenue: 0,
       vehiclesIn: 0,
       vehiclesOut: 0,
     }));
@@ -355,6 +397,14 @@ export class MetricsService {
       const index = indexOfBucket(buckets, arrival);
       if (index !== -1) rows[index].vehiclesIn += 1;
     }
+    // Reservation money adds to the bucket of its own date, and is also
+    // reported apart so a client can tell it from till revenue.
+    for (const row of reservationRows) {
+      const index = indexOfBucket(buckets, row.at);
+      if (index === -1) continue;
+      rows[index].revenue += row.amount;
+      rows[index].reservationRevenue += row.amount;
+    }
 
     return {
       from,
@@ -368,12 +418,16 @@ export class MetricsService {
         from,
         to,
         revenue: roundMoney(rows.reduce((sum, r) => sum + r.revenue, 0)),
+        reservationRevenue: roundMoney(
+          rows.reduce((sum, r) => sum + r.reservationRevenue, 0),
+        ),
         vehiclesIn: arrivals.length,
         vehiclesOut: rows.reduce((sum, r) => sum + r.vehiclesOut, 0),
       },
       buckets: rows.map((row) => ({
         ...row,
         revenue: roundMoney(row.revenue),
+        reservationRevenue: roundMoney(row.reservationRevenue),
       })),
     };
   }
@@ -395,7 +449,7 @@ export class MetricsService {
     const { from, to } = await this.resolveWindow(query, BREAKDOWN_INSTANCE);
     const leftAt = { gte: from, lt: to };
 
-    const [authoritative, groups] = await Promise.all([
+    const [authoritative, groups, reservationRows] = await Promise.all([
       tenantPrisma.entry.aggregate({
         _sum: { amountPaid: true },
         where: {
@@ -424,17 +478,34 @@ export class MetricsService {
           },
         },
       }),
+      this.loadReservationRevenue(from, to, query),
     ]);
 
-    const total = roundMoney(Number(authoritative._sum.amountPaid ?? 0));
-    const methods = groups
-      .map((group) => ({
-        name: group.paymentMethodName,
-        amount: roundMoney(Number(group._sum.amount ?? 0)),
-        count: group._count._all,
-        share: null as number | null,
-      }))
-      .sort((a, b) => b.amount - a.amount);
+    const reservationAmount = roundMoney(
+      reservationRows.reduce((sum, row) => sum + row.amount, 0),
+    );
+    const total = roundMoney(
+      Number(authoritative._sum.amountPaid ?? 0) + reservationAmount,
+    );
+    const methods: PaymentMethodSliceDto[] = groups.map((group) => ({
+      name: group.paymentMethodName,
+      kind: 'payment',
+      amount: roundMoney(Number(group._sum.amount ?? 0)),
+      count: group._count._all,
+      share: null,
+    }));
+    // Reservation money has its own bucket: it is paid online, not at the
+    // till, and it must not read as `unallocated`.
+    if (reservationRows.length > 0) {
+      methods.push({
+        name: RESERVATION_PAYMENT_METHOD,
+        kind: 'reservation',
+        amount: reservationAmount,
+        count: reservationRows.length,
+        share: null,
+      });
+    }
+    methods.sort((a, b) => b.amount - a.amount);
 
     const allocated = roundMoney(
       methods.reduce((sum, method) => sum + method.amount, 0),
@@ -474,9 +545,15 @@ export class MetricsService {
       where: {
         leftAt: { gte: from, lt: to },
         ...vehicleWhere(query),
-        ...this.paymentsWhere({ cashSessionId: query.cashSessionId }),
+        ...(await this.staysOfSessionWhere(query.cashSessionId)),
       },
-      select: { plate: true, enteredAt: true, leftAt: true, amountPaid: true },
+      select: {
+        plate: true,
+        enteredAt: true,
+        leftAt: true,
+        amountPaid: true,
+        prepaidAmountArs: true,
+      },
     });
 
     const byPlate = new Map<
@@ -489,7 +566,8 @@ export class MetricsService {
         visits: 0,
         totalMinutes: 0,
       };
-      bucket.revenue += Number(stay.amountPaid ?? 0);
+      bucket.revenue +=
+        Number(stay.amountPaid ?? 0) + Number(stay.prepaidAmountArs ?? 0);
       bucket.visits += 1;
       bucket.totalMinutes += minutesBetween(stay.enteredAt, stay.leftAt);
       byPlate.set(stay.plate, bucket);
@@ -731,6 +809,194 @@ export class MetricsService {
     return entries.map((entry) => entry.enteredAt);
   }
 
+  /**
+   * Reservation money recognised in `[from, to)` — the single place that
+   * decides it (accrual basis, see `ReservationRevenueRow`).
+   *
+   * Filters: a `paymentMethod` other than the reservation bucket excludes it
+   * all; a `cashSessionId` keeps only the prepayment of the stays that left
+   * under that drawer (a no-show or a cancellation is no drawer event); the
+   * deprecated `vehicleType` (an entry text snapshot) cannot match a
+   * reservation that never became a stay, so it drops those too.
+   */
+  private async loadReservationRevenue(
+    from: Date,
+    to: Date,
+    filter: ReservationRevenueFilter,
+  ): Promise<ReservationRevenueRow[]> {
+    if (
+      filter.paymentMethod &&
+      filter.paymentMethod !== RESERVATION_PAYMENT_METHOD
+    ) {
+      return [];
+    }
+    const [prepaid, reservationOnly] = await Promise.all([
+      this.loadPrepaidRows(from, to, filter),
+      this.loadUnusedReservationRows(from, to, filter),
+    ]);
+    return [...prepaid, ...reservationOnly];
+  }
+
+  /**
+   * Reservation money that never became a stay (no-show, partial cancel), under
+   * the same filters as `loadReservationRevenue` so every chart agrees. A
+   * `paymentMethod` other than the reservation bucket, a cash session (a
+   * no-show is no drawer event) or the deprecated `vehicleType` drop it.
+   */
+  private async loadUnusedReservationRows(
+    from: Date,
+    to: Date,
+    filter: ReservationRevenueFilter,
+  ): Promise<ReservationRevenueRow[]> {
+    if (
+      (filter.paymentMethod &&
+        filter.paymentMethod !== RESERVATION_PAYMENT_METHOD) ||
+      filter.cashSessionId ||
+      filter.vehicleType
+    ) {
+      return [];
+    }
+    return this.loadReservationOnlyRows(from, to, filter.vehicleCategory);
+  }
+
+  /**
+   * SINGLE RULE (shared with web and desktop) for which stays' reservation
+   * prepayment belongs to a cash session: it is credited when the car EXITS, so
+   * it belongs to the session the car exited under.
+   *  1. The stay has payments: the exit session is the one its payments were
+   *     collected under (`payment_transactions.cashSessionId`).
+   *  2. No payments (a $0 exit, fully covered by the prepayment): fall back to
+   *     the shift window, `leftAt ∈ [openedAt, closedAt ?? now)`. A tenant has
+   *     at most one open session (`CashSessionsService.createSession`), so the
+   *     windows never overlap.
+   * Never `entries.cashSessionId`: it is the entry drawer and gets reassigned
+   * when a shift closes.
+   */
+  private prepaidSessionBranches(
+    session: SessionBounds,
+  ): Prisma.EntryWhereInput[] {
+    return [
+      this.paymentsWhere({ cashSessionId: session.id }),
+      {
+        paymentTransactions: {
+          none: {
+            tenantId: this.tenantContext.getTenantIdOrThrow(),
+            cashSessionId: { not: null },
+            ...LIVE_PAYMENT,
+          },
+        },
+        leftAt: { gte: session.openedAt, lt: session.closedAt ?? new Date() },
+      },
+    ];
+  }
+
+  /**
+   * Stays that belong to a cash session under the single rule of
+   * `prepaidSessionBranches` (live payments' session, else the shift window of
+   * `leftAt`), so a $0 exit covered by a reservation prepayment is not lost.
+   * No session: no filter.
+   */
+  private async staysOfSessionWhere(
+    cashSessionId?: string,
+  ): Promise<Prisma.EntryWhereInput> {
+    if (!cashSessionId) return {};
+    const session = await this.findCashSession(
+      cashSessionId,
+      BREAKDOWN_INSTANCE,
+    );
+    return { OR: this.prepaidSessionBranches(session) };
+  }
+
+  /** The prepayment of stays that left in the window (they came). */
+  private async loadPrepaidRows(
+    from: Date,
+    to: Date,
+    filter: ReservationRevenueFilter,
+  ): Promise<ReservationRevenueRow[]> {
+    const session = filter.cashSessionId
+      ? await this.findCashSession(filter.cashSessionId, BREAKDOWN_INSTANCE)
+      : null;
+    const entries = await this.prisma.getTenantClient().entry.findMany({
+      where: {
+        leftAt: { gte: from, lt: to },
+        prepaidAmountArs: { gt: 0 },
+        ...vehicleWhere(filter),
+        ...(session ? { OR: this.prepaidSessionBranches(session) } : {}),
+      },
+      select: { leftAt: true, prepaidAmountArs: true },
+    });
+    return entries.map((entry) => ({
+      at: entry.leftAt as Date,
+      amount: Number(entry.prepaidAmountArs ?? 0),
+      kind: 'prepaid' as const,
+    }));
+  }
+
+  /** Paid reservations that never became a stay: no-show and partial cancel. */
+  private async loadReservationOnlyRows(
+    from: Date,
+    to: Date,
+    vehicleCategory?: string,
+  ): Promise<ReservationRevenueRow[]> {
+    const range = { gte: from, lt: to };
+    const reservations = await this.prisma
+      .getTenantClient()
+      .reservation.findMany({
+        where: {
+          ...(vehicleCategory ? { vehicleCategory } : {}),
+          OR: [
+            // A late arrival still links an entry: that money is `prepaid`.
+            {
+              status: ReservationStatus.no_show,
+              entryAt: range,
+              entry: null,
+            },
+            { status: ReservationStatus.cancelled, cancelledAt: range },
+          ],
+        },
+        select: {
+          status: true,
+          entryAt: true,
+          cancelledAt: true,
+          totalArs: true,
+          paidAt: true,
+          refundStatus: true,
+          refundedAmountArs: true,
+          refundRequestedArs: true,
+          payments: {
+            where: { status: ReservationPaymentStatus.approved },
+            select: { amountArs: true },
+          },
+        },
+      });
+
+    const rows: ReservationRevenueRow[] = [];
+    for (const reservation of reservations) {
+      const paid = prepaidAmountOf(reservation);
+      // A refund still in flight is money already going back.
+      const refunded = Number(
+        (reservation.refundStatus === 'pending'
+          ? reservation.refundRequestedArs
+          : reservation.refundedAmountArs) ?? 0,
+      );
+      const kept = roundMoney(paid - refunded);
+      if (kept <= 0) continue;
+      const isNoShow = reservation.status === ReservationStatus.no_show;
+      rows.push({
+        at: (isNoShow ? reservation.entryAt : reservation.cancelledAt) as Date,
+        amount: kept,
+        kind: isNoShow ? 'no_show' : 'retained',
+      });
+    }
+    return rows;
+  }
+
+  /** Sum of the no-show and partial-cancel money in `[from, to)`. */
+  private async reservationOnlyTotal(from: Date, to: Date): Promise<number> {
+    const rows = await this.loadReservationOnlyRows(from, to);
+    return rows.reduce((sum, row) => sum + row.amount, 0);
+  }
+
   private badWindow(instance: string, detail: string): FormattedException {
     return new FormattedException(
       'Bad Request',
@@ -792,27 +1058,49 @@ export class MetricsService {
       VEHICLE_CATEGORY_INSTANCE,
     );
 
-    const groups = await tenantPrisma.entry.groupBy({
-      by: ['vehicleCategory'],
-      _count: { _all: true },
-      _sum: { amountPaid: true },
-      where: {
-        leftAt: { gte: from, lt: to },
-        ...vehicleWhere(query),
-        ...this.paymentsWhere({ cashSessionId: query.cashSessionId }),
-      },
-    });
+    const [groups, unusedRows] = await Promise.all([
+      tenantPrisma.entry.groupBy({
+        by: ['vehicleCategory'],
+        _count: { _all: true },
+        _sum: { amountPaid: true, prepaidAmountArs: true },
+        where: {
+          leftAt: { gte: from, lt: to },
+          ...vehicleWhere(query),
+          ...(await this.staysOfSessionWhere(query.cashSessionId)),
+        },
+      }),
+      this.loadUnusedReservationRows(from, to, query),
+    ]);
 
     const totalStays = groups.reduce((sum, g) => sum + g._count._all, 0);
     const categories = groups
       .map((group) => ({
         category: toVehicleCategory(group.vehicleCategory),
         stays: group._count._all,
-        revenue: roundMoney(Number(group._sum.amountPaid ?? 0)),
+        // Till revenue plus the reservation prepayment of those stays.
+        revenue: roundMoney(
+          Number(group._sum.amountPaid ?? 0) +
+            Number(group._sum.prepaidAmountArs ?? 0),
+        ),
         share:
           totalStays > 0 ? roundRatio(group._count._all / totalStays) : null,
       }))
       .sort(byCountWithUnknownLast((row) => row.category, 'stays'));
+
+    // Reservation money with no stay behind it (no-show, partial cancel) has no
+    // category of its own; it closes the gap with `revenue/by-payment-method`.
+    const unusedAmount = roundMoney(
+      unusedRows.reduce((sum, row) => sum + row.amount, 0),
+    );
+    const result: VehicleCategorySliceDto[] = [...categories];
+    if (unusedAmount > 0) {
+      result.push({
+        category: RESERVATION_UNUSED_CATEGORY,
+        stays: 0,
+        revenue: unusedAmount,
+        share: totalStays > 0 ? 0 : null,
+      });
+    }
 
     return {
       from,
@@ -820,9 +1108,9 @@ export class MetricsService {
       currency: CURRENCY,
       totalStays,
       totalRevenue: roundMoney(
-        categories.reduce((sum, row) => sum + row.revenue, 0),
+        result.reduce((sum, row) => sum + row.revenue, 0),
       ),
-      categories,
+      categories: result,
     };
   }
 
@@ -886,18 +1174,22 @@ export class MetricsService {
     const tenantPrisma = this.prisma.getTenantClient();
     const { gte, lt } = partialDayRangeIn(dayKey, tz, elapsedMs);
 
-    const [closed, vehiclesIn] = await Promise.all([
+    const [closed, reservationOnly, vehiclesIn] = await Promise.all([
       tenantPrisma.entry.aggregate({
-        _sum: { amountPaid: true },
+        _sum: { amountPaid: true, prepaidAmountArs: true },
         _count: true,
         where: { leftAt: { gte, lt } },
       }),
+      this.reservationOnlyTotal(gte, lt),
       tenantPrisma.entry.count({ where: { enteredAt: { gte, lt } } }),
     ]);
+    const reservationRevenue =
+      Number(closed._sum.prepaidAmountArs ?? 0) + reservationOnly;
 
     return {
       day: dayKey,
-      revenue: Number(closed._sum.amountPaid ?? 0),
+      revenue: Number(closed._sum.amountPaid ?? 0) + reservationRevenue,
+      reservationRevenue: roundMoney(reservationRevenue),
       vehiclesIn,
       vehiclesOut: closed._count,
     };
@@ -949,11 +1241,18 @@ export class MetricsService {
 
   private async fullDayRevenue(dayKey: DayKey, tz: string): Promise<number> {
     const { gte, lt } = partialDayRangeIn(dayKey, tz, Number.MAX_SAFE_INTEGER);
-    const result = await this.prisma.getTenantClient().entry.aggregate({
-      _sum: { amountPaid: true },
-      where: { leftAt: { gte, lt } },
-    });
-    return Number(result._sum.amountPaid ?? 0);
+    const [result, reservationOnly] = await Promise.all([
+      this.prisma.getTenantClient().entry.aggregate({
+        _sum: { amountPaid: true, prepaidAmountArs: true },
+        where: { leftAt: { gte, lt } },
+      }),
+      this.reservationOnlyTotal(gte, lt),
+    ]);
+    return (
+      Number(result._sum.amountPaid ?? 0) +
+      Number(result._sum.prepaidAmountArs ?? 0) +
+      reservationOnly
+    );
   }
 
   private async monthToDateRevenue(
@@ -963,11 +1262,18 @@ export class MetricsService {
   ): Promise<number> {
     const monthStart = `${dayKey.slice(0, 8)}01`;
     const from = partialDayRangeIn(monthStart, tz, 0).gte;
-    const result = await this.prisma.getTenantClient().entry.aggregate({
-      _sum: { amountPaid: true },
-      where: { leftAt: { gte: from, lt: asOf } },
-    });
-    return Number(result._sum.amountPaid ?? 0);
+    const [result, reservationOnly] = await Promise.all([
+      this.prisma.getTenantClient().entry.aggregate({
+        _sum: { amountPaid: true, prepaidAmountArs: true },
+        where: { leftAt: { gte: from, lt: asOf } },
+      }),
+      this.reservationOnlyTotal(from, asOf),
+    ]);
+    return (
+      Number(result._sum.amountPaid ?? 0) +
+      Number(result._sum.prepaidAmountArs ?? 0) +
+      reservationOnly
+    );
   }
 
   private async todayHistoricalForecast(

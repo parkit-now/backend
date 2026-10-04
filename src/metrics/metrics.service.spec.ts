@@ -412,11 +412,11 @@ describe('MetricsService', () => {
       expect(result.totals.vehiclesOut).toBe(1);
     });
 
-    it('passes the vehicle type filter through to both series', async () => {
+    it('passes the vehicle type filter through to every series', async () => {
       await service.getRevenue({ ...range, vehicleType: 'Moto' });
 
       const wheres = wheresOf(mockTenant.entry.findMany);
-      expect(wheres).toHaveLength(2); // exits + arrivals
+      expect(wheres).toHaveLength(3); // exits + arrivals + reservation prepaid
       for (const where of wheres) {
         // Matched verbatim against the snapshot, not resolved through the
         // tenant's live `vehicle_types` catalogue.
@@ -424,11 +424,11 @@ describe('MetricsService', () => {
       }
     });
 
-    it('passes the vehicle category filter through to both series', async () => {
+    it('passes the vehicle category filter through to every series', async () => {
       await service.getRevenue({ ...range, vehicleCategory: 'suv' });
 
       const wheres = wheresOf(mockTenant.entry.findMany);
-      expect(wheres).toHaveLength(2); // exits + arrivals
+      expect(wheres).toHaveLength(3); // exits + arrivals + reservation prepaid
       for (const where of wheres) {
         expect(where.vehicleCategory).toBe('suv');
         // The deprecated filter is not invented when it was not sent.
@@ -540,6 +540,46 @@ describe('MetricsService', () => {
       expect(shares).toBeCloseTo(1);
     });
 
+    it('adds a "reservation_unused" slice for no-show money so the total matches by-payment-method', async () => {
+      mockTenant.entry.groupBy.mockResolvedValue([
+        {
+          vehicleCategory: 'car',
+          _count: { _all: 2 },
+          _sum: {
+            amountPaid: new Prisma.Decimal(1000),
+            prepaidAmountArs: new Prisma.Decimal(500),
+          },
+        },
+      ]);
+      mockTenant.reservation.findMany.mockResolvedValue([
+        {
+          status: 'no_show',
+          entryAt: new Date('2026-08-08T12:00:00Z'),
+          cancelledAt: null,
+          totalArs: new Prisma.Decimal(5000),
+          paidAt: new Date('2026-08-06T12:00:00Z'),
+          refundStatus: 'none',
+          refundedAmountArs: null,
+          refundRequestedArs: null,
+          payments: [{ amountArs: new Prisma.Decimal(5000) }],
+        },
+      ]);
+
+      const result = await service.getVehicleCategoryBreakdown(range);
+
+      expect(result.totalStays).toBe(2);
+      expect(result.totalRevenue).toBe(6500);
+      expect(result.categories).toEqual([
+        { category: 'car', stays: 2, revenue: 1500, share: 1 },
+        { category: 'reservation_unused', stays: 0, revenue: 5000, share: 0 },
+      ]);
+    });
+
+    it('omits the slice when there is no unused reservation money', async () => {
+      const none = await service.getVehicleCategoryBreakdown(range);
+      expect(none.categories).toEqual([]);
+    });
+
     it('groups by the frozen category over the ended-in-window stays', async () => {
       await service.getVehicleCategoryBreakdown({
         ...range,
@@ -608,6 +648,7 @@ describe('MetricsService', () => {
       ]);
       expect(result.methods[0]).toEqual({
         name: 'Efectivo',
+        kind: 'payment',
         amount: 2200,
         count: 3,
         share: 0.7333,
@@ -793,6 +834,7 @@ describe('MetricsService', () => {
       expect(result.today).toEqual({
         day: today,
         revenue: 184500,
+        reservationRevenue: 0,
         vehiclesIn: 71,
         vehiclesOut: 63,
       });
@@ -1122,6 +1164,37 @@ describe('MetricsService', () => {
         expect(where.deletedAt).toBeNull();
       });
 
+      it('attributes reservation prepayment to the exit session: its payments, else the shift window', async () => {
+        await service.getRevenue({
+          cashSessionId: SESSION_ID,
+          granularity: 'hour',
+        });
+
+        const prepaidWhere = loose(mockTenant.entry.findMany)
+          .map((args) => args as { prepaidAmountArs?: unknown })
+          .find((where) => where.prepaidAmountArs) as {
+          OR: Record<string, unknown>[];
+          cashSessionId?: unknown;
+        };
+        // Never the entry drawer.
+        expect(prepaidWhere).not.toHaveProperty('cashSessionId');
+        expect(prepaidWhere.OR[0].paymentTransactions).toEqual(
+          COLLECTED_BY_SESSION,
+        );
+        // $0 exits have no payment: no live payment under any session, and
+        // `leftAt` inside the shift, end exclusive.
+        expect(prepaidWhere.OR[1]).toEqual({
+          paymentTransactions: {
+            none: {
+              tenantId: 'tenant-1',
+              cashSessionId: { not: null },
+              deletedAt: null,
+            },
+          },
+          leftAt: { gte: OPENED, lt: CLOSED },
+        });
+      });
+
       it('never matches the drawer a car entered under', async () => {
         await service.getTopPlates({ cashSessionId: SESSION_ID });
 
@@ -1129,7 +1202,38 @@ describe('MetricsService', () => {
         // `entries.cashSessionId` follows a car into every later shift while
         // it stays parked; only the transaction knows who took the money.
         expect(where).not.toHaveProperty('cashSessionId');
-        expect(where.paymentTransactions).toEqual(COLLECTED_BY_SESSION);
+        const branches = where.OR as Record<string, unknown>[];
+        expect(branches[0].paymentTransactions).toEqual(COLLECTED_BY_SESSION);
+      });
+
+      it('keeps a $0 exit covered by a prepayment in the category and top-plates stays', async () => {
+        const shiftWindowBranch = {
+          paymentTransactions: {
+            none: {
+              tenantId: 'tenant-1',
+              cashSessionId: { not: null },
+              deletedAt: null,
+            },
+          },
+          leftAt: { gte: OPENED, lt: CLOSED },
+        };
+
+        await service.getVehicleCategoryBreakdown({
+          cashSessionId: SESSION_ID,
+        });
+        await service.getTopPlates({ cashSessionId: SESSION_ID });
+
+        const groupWheres = loose(mockTenant.entry.groupBy);
+        const plateWheres = loose(mockTenant.entry.findMany).filter(
+          (where) => !where.prepaidAmountArs,
+        );
+        for (const where of [...groupWheres, ...plateWheres]) {
+          const branches = where.OR as Record<string, unknown>[];
+          expect(branches[0].paymentTransactions).toEqual(COLLECTED_BY_SESSION);
+          expect(branches[1]).toEqual(shiftWindowBranch);
+        }
+        expect(groupWheres.length).toBeGreaterThan(0);
+        expect(plateWheres.length).toBeGreaterThan(0);
       });
 
       it('matches method and session on the same transaction', async () => {
@@ -1170,6 +1274,174 @@ describe('MetricsService', () => {
           .find((args) => args._sum !== undefined);
         expect(totals?.where.paymentTransactions).toEqual(COLLECTED_BY_SESSION);
       });
+    });
+  });
+  describe('reservation revenue (accrual)', () => {
+    const range = {
+      from: '2026-08-07T00:00:00-03:00',
+      to: '2026-08-08T00:00:00-03:00',
+      tz: 'America/Argentina/Buenos_Aires',
+    };
+    const leftAt = new Date('2026-08-07T15:00:00Z');
+
+    /** Car entered 10 minutes, prepaid $3000 via MP, the till charged $0. */
+    const prepaidStay = () => {
+      mockTenant.entry.findMany
+        .mockResolvedValueOnce([
+          { id: 'e1', leftAt, amountPaid: new Prisma.Decimal(0) },
+        ]) // exits
+        .mockResolvedValueOnce([]) // arrivals
+        .mockResolvedValueOnce([
+          { leftAt, prepaidAmountArs: new Prisma.Decimal(3000) },
+        ]); // reservation prepaid
+    };
+
+    it('counts the prepayment of a stay charged $0 as revenue on its exit day', async () => {
+      prepaidStay();
+
+      const result = await service.getRevenue({ ...range, granularity: 'day' });
+
+      expect(result.totals.revenue).toBe(3000);
+      expect(result.totals.reservationRevenue).toBe(3000);
+      expect(result.totals.vehiclesOut).toBe(1);
+    });
+
+    it('recognises a no-show and a partially kept cancellation, net of refunds', async () => {
+      mockTenant.reservation.findMany.mockResolvedValue([
+        {
+          status: 'no_show',
+          entryAt: new Date('2026-08-07T12:00:00Z'),
+          cancelledAt: null,
+          totalArs: new Prisma.Decimal(5000),
+          paidAt: new Date('2026-08-06T12:00:00Z'),
+          refundStatus: 'none',
+          refundedAmountArs: null,
+          refundRequestedArs: null,
+          payments: [{ amountArs: new Prisma.Decimal(5000) }],
+        },
+        {
+          status: 'cancelled',
+          entryAt: new Date('2026-08-09T12:00:00Z'),
+          cancelledAt: new Date('2026-08-07T13:00:00Z'),
+          totalArs: new Prisma.Decimal(4000),
+          paidAt: new Date('2026-08-06T12:00:00Z'),
+          refundStatus: 'refunded',
+          refundedAmountArs: new Prisma.Decimal(3000),
+          refundRequestedArs: new Prisma.Decimal(3000),
+          payments: [{ amountArs: new Prisma.Decimal(4000) }],
+        },
+        {
+          // Fully refunded: nothing is kept.
+          status: 'cancelled',
+          entryAt: new Date('2026-08-09T12:00:00Z'),
+          cancelledAt: new Date('2026-08-07T13:00:00Z'),
+          totalArs: new Prisma.Decimal(4000),
+          paidAt: new Date('2026-08-06T12:00:00Z'),
+          refundStatus: 'refunded',
+          refundedAmountArs: new Prisma.Decimal(4000),
+          refundRequestedArs: new Prisma.Decimal(4000),
+          payments: [{ amountArs: new Prisma.Decimal(4000) }],
+        },
+      ]);
+
+      const result = await service.getRevenue({ ...range, granularity: 'day' });
+
+      expect(result.totals.reservationRevenue).toBe(6000);
+      expect(result.totals.revenue).toBe(6000);
+    });
+
+    it('puts the prepayment in its own bucket, not in unallocated', async () => {
+      mockTenant.entry.aggregate.mockResolvedValue({
+        _sum: { amountPaid: new Prisma.Decimal(1000) },
+      });
+      mockTenant.paymentTransaction.groupBy.mockResolvedValue([
+        {
+          paymentMethodName: 'Efectivo',
+          _sum: { amount: new Prisma.Decimal(1000) },
+          _count: { _all: 1 },
+        },
+      ]);
+      mockTenant.entry.findMany.mockResolvedValue([
+        { leftAt, prepaidAmountArs: new Prisma.Decimal(3000) },
+      ]);
+
+      const result = await service.getPaymentMethodBreakdown(range);
+
+      expect(result.total).toBe(4000);
+      expect(result.unallocated).toBe(0);
+      expect(result.methods[0]).toEqual({
+        name: 'Mercado Pago (reserva)',
+        kind: 'reservation',
+        amount: 3000,
+        count: 1,
+        share: 0.75,
+      });
+    });
+
+    it('includes reservation money only when filtering by its bucket', async () => {
+      mockTenant.entry.findMany.mockImplementation(
+        ({ where }: { where: { prepaidAmountArs?: unknown } }) =>
+          Promise.resolve(
+            where.prepaidAmountArs
+              ? [{ leftAt, prepaidAmountArs: new Prisma.Decimal(3000) }]
+              : [],
+          ),
+      );
+
+      const cash = await service.getRevenue({
+        ...range,
+        paymentMethod: 'Efectivo',
+      });
+      expect(cash.totals.reservationRevenue).toBe(0);
+
+      mockTenant.paymentTransaction.findMany.mockResolvedValue([]);
+      const reservation = await service.getRevenue({
+        ...range,
+        paymentMethod: 'Mercado Pago (reserva)',
+      });
+      expect(reservation.totals.reservationRevenue).toBe(3000);
+    });
+
+    it('adds the prepayment to the stay in plates and categories', async () => {
+      mockTenant.entry.findMany.mockResolvedValue([
+        {
+          plate: 'AB123CD',
+          enteredAt: new Date('2026-08-07T14:50:00Z'),
+          leftAt,
+          amountPaid: new Prisma.Decimal(0),
+          prepaidAmountArs: new Prisma.Decimal(3000),
+        },
+      ]);
+      const plates = await service.getTopPlates(range);
+      expect(plates.items[0].revenue).toBe(3000);
+
+      mockTenant.entry.groupBy.mockResolvedValue([
+        {
+          vehicleCategory: 'auto',
+          _count: { _all: 1 },
+          _sum: {
+            amountPaid: new Prisma.Decimal(0),
+            prepaidAmountArs: new Prisma.Decimal(3000),
+          },
+        },
+      ]);
+      const categories = await service.getVehicleCategoryBreakdown(range);
+      expect(categories.totalRevenue).toBe(3000);
+    });
+
+    it('summary day totals include the prepayment', async () => {
+      mockTenant.entry.aggregate.mockResolvedValue({
+        _sum: {
+          amountPaid: new Prisma.Decimal(0),
+          prepaidAmountArs: new Prisma.Decimal(3000),
+        },
+        _count: 1,
+      });
+
+      const result = await service.getSummary({});
+
+      expect(result.today.revenue).toBe(3000);
+      expect(result.today.reservationRevenue).toBe(3000);
     });
   });
 });

@@ -13,10 +13,18 @@ export class DayTotalsDto {
   @ApiProperty({
     type: Number,
     description:
-      'Sum of `amountPaid` over entries closed in the window, in ARS. Counts revenue at exit time, since payments carry no timestamp of their own.',
+      'Sum of `amountPaid` over entries closed in the window plus `reservationRevenue`, in ARS. Till revenue counts at exit time, since payments carry no timestamp of their own.',
     example: 184500,
   })
   revenue: number;
+
+  @ApiProperty({
+    type: Number,
+    description:
+      'Portion of `revenue` paid online for reservations (prepayment of stays that left in the window, no-shows and partially kept cancellations dated in the window), in ARS.',
+    example: 3000,
+  })
+  reservationRevenue: number;
 
   @ApiProperty({
     type: 'integer',

@@ -23,6 +23,8 @@ export class RevenueQueryDto extends MetricsWindowQueryDto {
       'Restrict to stays paid with this payment method (the snapshot name stored on the transaction, e.g. `Efectivo`).',
       '',
       'Setting it switches `revenue` to sum `payment_transactions` instead of `entries.amountPaid` — the transactions table is the only place the per-method split exists. The response reports this in `revenueSource`.',
+      '',
+      'Reservation money paid online is its own bucket, named `Mercado Pago (reserva)` (the same name `by-payment-method` reports). Pass exactly that value to get only reservation revenue; any other method excludes it.',
     ].join('\n'),
     example: 'Efectivo',
   })
