@@ -59,7 +59,11 @@ describe('OwnerReservationsService', () => {
       findFirst: jest.fn(),
     },
   };
-  const prisma = { getTenantClient: jest.fn(() => tenantClient) };
+  const prisma = {
+    getTenantClient: jest.fn(() => tenantClient),
+    reservation: { findMany: jest.fn() },
+    service: { findFirst: jest.fn() },
+  };
   const lifecycle = {
     accept: jest.fn(),
     reject: jest.fn(),
@@ -76,6 +80,8 @@ describe('OwnerReservationsService', () => {
     tenantClient.reservation.findFirst.mockResolvedValue(row());
     tenantClient.reservation.findMany.mockResolvedValue([row()]);
     tenantClient.reservation.count.mockResolvedValue(1);
+    prisma.reservation.findMany.mockResolvedValue([]);
+    prisma.service.findFirst.mockResolvedValue({ earlyArrivalMaxMinutes: 60 });
   });
 
   describe('list', () => {
@@ -175,16 +181,21 @@ describe('OwnerReservationsService', () => {
 
   describe('match (banner de la caja)', () => {
     const now = at('2026-09-28T09:52:00');
+    const POLICY = {
+      earlyArrivalMinutes: 15,
+      graceMinutes: 30,
+      earlyArrivalMaxMinutes: 60,
+    };
     const confirmed = row({
       status: 'confirmed',
       vehicleCategory: 'car',
-      policySnapshot: { earlyArrivalMinutes: 15, graceMinutes: 30 },
+      policySnapshot: POLICY,
     });
 
     it('devuelve la reserva confirmada dentro de la ventana con el prepago y la franja', async () => {
       tenantClient.reservation.findMany.mockResolvedValue([confirmed]);
 
-      const { reservation } = await service.match(TENANT, 'ab 123 cd', now);
+      const result = await service.match(TENANT, 'ab 123 cd', now);
 
       const args = tenantClient.reservation.findMany.mock.calls[0][0];
       expect(args.where).toMatchObject({
@@ -192,33 +203,120 @@ describe('OwnerReservationsService', () => {
         vehiclePlate: 'AB123CD',
         status: { in: ['confirmed', 'no_show'] },
       });
-      expect(reservation).toMatchObject({
+      expect(result.upcomingToday).toBeNull();
+      expect(result.reservation).toEqual({
         id: RES,
         code: 'R-00ABCD',
         status: 'confirmed',
         vehiclePlate: 'AB123CD',
         vehicleCategory: 'car',
         driverName: 'Ana Conductora',
+        entryAt: at('2026-09-28T10:00:00').toISOString(),
+        exitAt: at('2026-09-28T12:00:00').toISOString(),
         totalArs: 9000,
         prepaidAmountArs: 9000,
         arrivalFrom: at('2026-09-28T09:45:00').toISOString(),
         arrivalUntil: at('2026-09-28T10:30:00').toISOString(),
+        linkableFrom: at('2026-09-28T09:00:00').toISOString(),
+        linkableUntil: at('2026-09-28T12:00:00').toISOString(),
+        arrival: 'on_time',
+        linkable: true,
+        minutesEarly: 8,
+        minutesLate: 0,
       });
+      // La foto tiene el tope: no se lee el servicio.
+      expect(prisma.service.findFirst).not.toHaveBeenCalled();
     });
 
-    it('antes de la llegada anticipada no hay banner', async () => {
+    it('antes de la ventana pero dentro del tope: early, con los minutos', async () => {
       tenantClient.reservation.findMany.mockResolvedValue([confirmed]);
       const { reservation } = await service.match(
         TENANT,
         'AB123CD',
-        at('2026-09-28T09:40:00'),
+        at('2026-09-28T09:10:00'),
       );
-      expect(reservation).toBeNull();
+      expect(reservation).toMatchObject({
+        arrival: 'early',
+        linkable: true,
+        minutesEarly: 50,
+        minutesLate: 0,
+      });
+    });
+
+    it('pasada la tolerancia y antes de exitAt: late (también una no_show)', async () => {
+      tenantClient.reservation.findMany.mockResolvedValue([
+        { ...confirmed, status: 'no_show' },
+      ]);
+      const { reservation } = await service.match(
+        TENANT,
+        'AB123CD',
+        at('2026-09-28T11:00:00'),
+      );
+      expect(reservation).toMatchObject({
+        status: 'no_show',
+        arrival: 'late',
+        linkable: true,
+        minutesLate: 60,
+      });
+    });
+
+    it('después de exitAt no hay reserva ni aviso', async () => {
+      tenantClient.reservation.findMany.mockResolvedValue([confirmed]);
+      const result = await service.match(
+        TENANT,
+        'AB123CD',
+        at('2026-09-28T12:05:00'),
+      );
+      expect(result).toEqual({ reservation: null, upcomingToday: null });
+    });
+
+    it('antes del tope: no hay banner pero sí el aviso de la reserva de hoy', async () => {
+      tenantClient.reservation.findMany.mockResolvedValue([confirmed]);
+      prisma.reservation.findMany.mockResolvedValue([confirmed]);
+
+      const result = await service.match(
+        TENANT,
+        'AB123CD',
+        at('2026-09-28T08:30:00'),
+      );
+
+      expect(result.reservation).toBeNull();
+      expect(result.upcomingToday).toMatchObject({
+        id: RES,
+        entryAt: at('2026-09-28T10:00:00').toISOString(),
+        arrival: 'too_early',
+        linkable: false,
+        minutesEarly: 90,
+        linkableFrom: at('2026-09-28T09:00:00').toISOString(),
+      });
+    });
+
+    it('una reserva vieja sin tope en la foto usa el del servicio', async () => {
+      const legacy = row({
+        status: 'confirmed',
+        policySnapshot: { earlyArrivalMinutes: 15, graceMinutes: 30 },
+      });
+      tenantClient.reservation.findMany.mockResolvedValue([legacy]);
+      prisma.service.findFirst.mockResolvedValue({
+        earlyArrivalMaxMinutes: 120,
+      });
+
+      const { reservation } = await service.match(
+        TENANT,
+        'AB123CD',
+        at('2026-09-28T08:30:00'),
+      );
+
+      expect(reservation).toMatchObject({ arrival: 'early', minutesEarly: 90 });
+      expect(prisma.service.findFirst).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, code: 'ADVANCE_RESERVATION' },
+        select: { earlyArrivalMaxMinutes: true },
+      });
     });
 
     it('una patente vacía no consulta la base', async () => {
-      const { reservation } = await service.match(TENANT, '--', now);
-      expect(reservation).toBeNull();
+      const result = await service.match(TENANT, '--', now);
+      expect(result).toEqual({ reservation: null, upcomingToday: null });
       expect(tenantClient.reservation.findMany).not.toHaveBeenCalled();
     });
   });
@@ -245,6 +343,31 @@ describe('OwnerReservationsService', () => {
       leftAt: at('2026-09-28T12:40:00').toISOString(),
       excessChargedArs: 1000,
       prepaidAmountArs: 9000,
+      arrival: 'on_time',
+      minutesEarly: 8,
+      minutesLate: 0,
+    });
+  });
+
+  it('el stay marca la llegada anticipada (para el chip "llegó antes")', async () => {
+    tenantClient.reservation.findMany.mockResolvedValue([
+      row({
+        status: 'checked_in',
+        entry: {
+          id: 'entry-1',
+          enteredAt: at('2026-09-28T09:10:00'),
+          leftAt: null,
+          amountPaid: null,
+          prepaidAmountArs: new Prisma.Decimal(9000),
+        },
+      }),
+    ]);
+
+    const page = await service.list({});
+
+    expect(page.items[0].stay).toMatchObject({
+      arrival: 'early',
+      minutesEarly: 50,
     });
   });
 });

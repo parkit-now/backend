@@ -12,21 +12,31 @@ import {
   OwnerReservationDto,
   OwnerReservationStayDto,
   PaginatedOwnerReservationsDto,
+  ReservationMatchDto,
   ReservationMatchResponseDto,
 } from './dto/owner-reservation.dto';
 import {
   ARRIVAL_SELECT,
   arrivalCandidatesWhere,
   arrivalWindow,
+  fallbackEarlyArrivalMax,
+  findUpcomingTodayReservation,
+  linkableWindow,
   pickReservationForArrival,
   prepaidAmountOf,
   reservationCode,
+  stayArrival,
+  type ArrivalCandidate,
+  type ArrivalClassification,
 } from './reservation-checkin';
 import {
   ReservationLifecycleService,
   type ReservationActor,
 } from './reservation-lifecycle.service';
-import { readPolicySnapshot } from './reservation-policy';
+import {
+  DEFAULT_POLICY_SNAPSHOT,
+  readPolicySnapshot,
+} from './reservation-policy';
 
 /** El ingreso de la caja vinculado (fase 6). */
 const STAY_SELECT = {
@@ -93,7 +103,16 @@ export class OwnerReservationsService {
   /**
    * La reserva que corresponde a un auto que llega ahora con esa patente: la
    * misma regla que aplica el ingreso al vincular (`claimReservationForArrival`),
-   * así que lo que muestra el banner es lo que se vincula.
+   * así que lo que muestra el banner es lo que se vincula. Incluye las
+   * llegadas anticipadas (hasta el tope) y las tardías (hasta `exitAt`), con
+   * `arrival` para que la caja avise.
+   *
+   * Si no hay ninguna vinculable, `upcomingToday` trae la próxima reserva
+   * confirmada de HOY de esa patente (llegó demasiado temprano): la caja
+   * muestra "Esta patente tiene una reserva hoy a las HH:MM" y el ingreso
+   * queda como estadía común. Va en un campo aparte y no en `reservation`
+   * para que una caja vieja, que vincula todo lo que viene en `reservation`,
+   * no muestre un banner de algo que el backend no va a vincular.
    */
   async match(
     tenantId: string,
@@ -101,30 +120,44 @@ export class OwnerReservationsService {
     now = new Date(),
   ): Promise<ReservationMatchResponseDto> {
     const where = arrivalCandidatesWhere(tenantId, plate, now);
-    if (!where) return { reservation: null };
-    const candidates = await this.prisma
-      .getTenantClient()
-      .reservation.findMany({ where, select: ARRIVAL_SELECT });
-    const chosen = pickReservationForArrival(candidates, now);
-    if (!chosen) return { reservation: null };
-    const window = arrivalWindow(chosen);
+    if (!where) return { reservation: null, upcomingToday: null };
+    const db = this.prisma.getTenantClient();
+    const candidates = await db.reservation.findMany({
+      where,
+      select: ARRIVAL_SELECT,
+    });
+    const fallback =
+      candidates.length > 0
+        ? await fallbackEarlyArrivalMax(this.prisma, tenantId, candidates)
+        : DEFAULT_POLICY_SNAPSHOT.earlyArrivalMaxMinutes;
+    const chosen = pickReservationForArrival(candidates, now, null, fallback);
+    if (chosen) {
+      return {
+        reservation: toMatchDto(chosen, chosen.classification, fallback),
+        upcomingToday: null,
+      };
+    }
+    // El cliente base con `tenantId` explícito (el extendido no encaja en los
+    // tipos de transacción que comparten estas funciones con el ingreso).
+    const upcoming = await findUpcomingTodayReservation(
+      this.prisma,
+      tenantId,
+      plate,
+      now,
+    );
+    if (!upcoming) return { reservation: null, upcomingToday: null };
+    const upcomingFallback = await fallbackEarlyArrivalMax(
+      this.prisma,
+      tenantId,
+      [upcoming],
+    );
     return {
-      reservation: {
-        id: chosen.id,
-        code: reservationCode(chosen.id),
-        status: chosen.status,
-        vehiclePlate: chosen.vehiclePlate,
-        vehicleCategory: isVehicleCategory(chosen.vehicleCategory)
-          ? chosen.vehicleCategory
-          : null,
-        driverName: chosen.user.name,
-        entryAt: chosen.entryAt.toISOString(),
-        exitAt: chosen.exitAt.toISOString(),
-        arrivalFrom: window.from.toISOString(),
-        arrivalUntil: window.until.toISOString(),
-        totalArs: Number(chosen.totalArs),
-        prepaidAmountArs: prepaidAmountOf(chosen),
-      },
+      reservation: null,
+      upcomingToday: toMatchDto(
+        upcoming,
+        upcoming.classification,
+        upcomingFallback,
+      ),
     };
   }
 
@@ -194,6 +227,41 @@ export class OwnerReservationsService {
   }
 }
 
+function toMatchDto(
+  row: ArrivalCandidate,
+  classification: ArrivalClassification,
+  fallbackEarlyMaxMinutes: number,
+): ReservationMatchDto {
+  const window = arrivalWindow(row);
+  const linkable = linkableWindow(row, fallbackEarlyMaxMinutes);
+  const isLinkable =
+    classification.arrival === 'early' ||
+    classification.arrival === 'on_time' ||
+    classification.arrival === 'late';
+  return {
+    id: row.id,
+    code: reservationCode(row.id),
+    status: row.status,
+    vehiclePlate: row.vehiclePlate,
+    vehicleCategory: isVehicleCategory(row.vehicleCategory)
+      ? row.vehicleCategory
+      : null,
+    driverName: row.user.name,
+    entryAt: row.entryAt.toISOString(),
+    exitAt: row.exitAt.toISOString(),
+    arrivalFrom: window.from.toISOString(),
+    arrivalUntil: window.until.toISOString(),
+    linkableFrom: linkable.from.toISOString(),
+    linkableUntil: linkable.until.toISOString(),
+    totalArs: Number(row.totalArs),
+    prepaidAmountArs: prepaidAmountOf(row),
+    arrival: classification.arrival as ReservationMatchDto['arrival'],
+    linkable: isLinkable,
+    minutesEarly: classification.minutesEarly,
+    minutesLate: classification.minutesLate,
+  };
+}
+
 const instanceOf = (tenantId: string, reservationId: string) =>
   `/tenants/${tenantId}/reservations/${reservationId}`;
 
@@ -241,15 +309,17 @@ function toDto(row: ReservationWithDriver): OwnerReservationDto {
     refundedAmountArs: num(row.refundedAmountArs),
     refundError: row.refundError,
     policy: readPolicySnapshot(row.policySnapshot),
-    stay: stayOf(row.entry),
+    stay: stayOf(row, row.entry),
   };
 }
 
 function stayOf(
+  reservation: { entryAt: Date; policySnapshot: unknown },
   entry: ReservationWithDriver['entry'],
 ): OwnerReservationStayDto | null {
   if (!entry) return null;
   return {
+    ...stayArrival(reservation, entry.enteredAt),
     entryId: entry.id,
     enteredAt: entry.enteredAt.toISOString(),
     leftAt: entry.leftAt?.toISOString() ?? null,
