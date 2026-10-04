@@ -104,9 +104,6 @@ export const ErrorCodes = {
   ENTRY_ACTIVE_PAYMENT_LOCKED: 'ENTRY_ACTIVE_PAYMENT_LOCKED',
   ENTRY_CORRECTION_REASON_REQUIRED: 'ENTRY_CORRECTION_REASON_REQUIRED',
   ENTRY_EXIT_NOT_AFTER_ENTRY: 'ENTRY_EXIT_NOT_AFTER_ENTRY',
-  // Desvincular la reserva de un ingreso que ya salió: el cobro ya descontó el
-  // prepago y la reserva está completada.
-  ENTRY_RESERVATION_UNLINK_CLOSED: 'ENTRY_RESERVATION_UNLINK_CLOSED',
 
   // Cash sessions (turnos de caja)
   // La caja pedida no existe o es de otro estacionamiento (mismo code para
