@@ -380,7 +380,7 @@ export class ReservationMatchDto {
       'Cómo llega el auto AHORA: early (antes de la ventana, dentro del tope: ' +
       'se vincula y el extra se cobra al salir), on_time, late (pasada la ' +
       'tolerancia, antes de exitAt: se vincula) o too_early (sólo en ' +
-      '`upcomingToday`: no se vincula).',
+      '`upcoming`: no se vincula).',
   })
   arrival: 'early' | 'on_time' | 'late' | 'too_early';
 
@@ -420,10 +420,11 @@ export class ReservationMatchResponseDto {
     type: ReservationMatchDto,
     nullable: true,
     description:
-      'Sólo si `reservation` es null: la próxima reserva confirmada de HOY ' +
-      'de esa patente a la que todavía es muy temprano para vincular ' +
-      '(`arrival: too_early`, `linkable: false`). La caja avisa "tiene una ' +
-      'reserva hoy a las HH:MM"; el ingreso queda como estadía común.',
+      'Sólo si `reservation` es null: la próxima reserva confirmada de esa ' +
+      'patente en las próximas 24 h a la que todavía es muy temprano para ' +
+      'vincular (`arrival: too_early`, `linkable: false`). La caja avisa ' +
+      '"tiene una reserva hoy a las HH:MM"; el ingreso queda como estadía ' +
+      'común.',
   })
-  upcomingToday: ReservationMatchDto | null;
+  upcoming: ReservationMatchDto | null;
 }

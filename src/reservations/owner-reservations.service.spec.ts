@@ -203,7 +203,7 @@ describe('OwnerReservationsService', () => {
         vehiclePlate: 'AB123CD',
         status: { in: ['confirmed', 'no_show'] },
       });
-      expect(result.upcomingToday).toBeNull();
+      expect(result.upcoming).toBeNull();
       expect(result.reservation).toEqual({
         id: RES,
         code: 'R-00ABCD',
@@ -267,7 +267,7 @@ describe('OwnerReservationsService', () => {
         'AB123CD',
         at('2026-09-28T12:05:00'),
       );
-      expect(result).toEqual({ reservation: null, upcomingToday: null });
+      expect(result).toEqual({ reservation: null, upcoming: null });
     });
 
     it('antes del tope: no hay banner pero sí el aviso de la reserva de hoy', async () => {
@@ -281,7 +281,7 @@ describe('OwnerReservationsService', () => {
       );
 
       expect(result.reservation).toBeNull();
-      expect(result.upcomingToday).toMatchObject({
+      expect(result.upcoming).toMatchObject({
         id: RES,
         entryAt: at('2026-09-28T10:00:00').toISOString(),
         arrival: 'too_early',
@@ -316,7 +316,7 @@ describe('OwnerReservationsService', () => {
 
     it('una patente vacía no consulta la base', async () => {
       const result = await service.match(TENANT, '--', now);
-      expect(result).toEqual({ reservation: null, upcomingToday: null });
+      expect(result).toEqual({ reservation: null, upcoming: null });
       expect(tenantClient.reservation.findMany).not.toHaveBeenCalled();
     });
   });

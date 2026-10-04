@@ -6,7 +6,7 @@ import {
   classifyArrival,
   completeReservationForExit,
   fallbackEarlyArrivalMax,
-  findUpcomingTodayReservation,
+  findUpcomingReservation,
   isWithinArrivalWindow,
   linkableWindow,
   pickReservationForArrival,
@@ -436,7 +436,7 @@ describe('fallbackEarlyArrivalMax', () => {
   });
 });
 
-describe('findUpcomingTodayReservation', () => {
+describe('findUpcomingReservation', () => {
   const row = (entryAt: Date, id = 'r-1') => ({
     ...candidate({
       id,
@@ -455,11 +455,11 @@ describe('findUpcomingTodayReservation', () => {
     service: { findFirst: jest.fn() },
   });
 
-  it('busca las confirmed de hoy (día civil de Argentina) posteriores a ahora', async () => {
-    // 2026-10-06 15:00 en Buenos Aires.
-    const now = new Date('2026-10-06T18:00:00.000Z');
+  it('busca las confirmed de las próximas 24 h (cruza la medianoche)', async () => {
+    // 2026-10-06 23:40 en Buenos Aires.
+    const now = new Date('2026-10-07T02:40:00.000Z');
     const db = makeDb([]);
-    await findUpcomingTodayReservation(db as never, TENANT, 'ab 123 cd', now);
+    await findUpcomingReservation(db as never, TENANT, 'ab 123 cd', now);
     expect(db.reservation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -468,7 +468,7 @@ describe('findUpcomingTodayReservation', () => {
           status: ReservationStatus.confirmed,
           entryAt: {
             gt: now,
-            lt: new Date('2026-10-07T03:00:00.000Z'),
+            lte: new Date('2026-10-08T02:40:00.000Z'),
           },
         },
         orderBy: { entryAt: 'asc' },
@@ -479,7 +479,7 @@ describe('findUpcomingTodayReservation', () => {
   it('devuelve la primera a la que todavía es muy temprano para vincular', async () => {
     const now = at(-90);
     const db = makeDb([row(ENTRY_AT)]);
-    const upcoming = await findUpcomingTodayReservation(
+    const upcoming = await findUpcomingReservation(
       db as never,
       TENANT,
       'AB123CD',
@@ -496,12 +496,7 @@ describe('findUpcomingTodayReservation', () => {
   it('si ya está dentro del tope no es aviso (la vincula el match)', async () => {
     const db = makeDb([row(ENTRY_AT)]);
     expect(
-      await findUpcomingTodayReservation(
-        db as never,
-        TENANT,
-        'AB123CD',
-        at(-30),
-      ),
+      await findUpcomingReservation(db as never, TENANT, 'AB123CD', at(-30)),
     ).toBeNull();
   });
 });

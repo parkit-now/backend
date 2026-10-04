@@ -33,7 +33,6 @@ import {
   ServiceCode,
 } from '@prisma/client';
 import { normalizePlate } from '../driver/driver-rules';
-import { DEFAULT_TIME_ZONE, dayKeyIn, dayRangeIn } from '../metrics/metrics-tz';
 import {
   DEFAULT_POLICY_SNAPSHOT,
   readPolicySnapshot,
@@ -376,13 +375,19 @@ export async function fallbackEarlyArrivalMax(
   );
 }
 
+/** Hasta dónde mira el aviso de "tiene una reserva más tarde". */
+export const UPCOMING_LOOKAHEAD_MINUTES = 24 * 60;
+
 /**
- * La próxima reserva `confirmed` de HOY de esa patente a la que todavía es
- * muy temprano para vincular: el aviso "Esta patente tiene una reserva hoy a
- * las HH:MM" de la caja. "Hoy" es el día civil de Argentina, como en las
- * métricas (los tenants no tienen zona horaria propia).
+ * La próxima reserva `confirmed` de esa patente a la que todavía es muy
+ * temprano para vincular, dentro de las próximas 24 h: el aviso "Esta patente
+ * tiene una reserva hoy (o mañana) a las HH:MM" de la caja.
+ *
+ * Son 24 h y no el día civil a propósito: una playa abierta de noche recibe a
+ * las 23:30 al que reservó para la 01:00, y "hoy" terminaría a medianoche
+ * justo cuando el aviso más sirve. El "hoy/mañana" lo pone la caja.
  */
-export async function findUpcomingTodayReservation(
+export async function findUpcomingReservation(
   db: ArrivalDb,
   tenantId: string,
   plate: string,
@@ -392,13 +397,15 @@ export async function findUpcomingTodayReservation(
 > {
   const normalized = normalizePlate(plate);
   if (!normalized) return null;
-  const today = dayRangeIn(dayKeyIn(now, DEFAULT_TIME_ZONE), DEFAULT_TIME_ZONE);
   const rows = await db.reservation.findMany({
     where: {
       tenantId,
       vehiclePlate: normalized,
       status: ReservationStatus.confirmed,
-      entryAt: { gt: now, lt: today.lt },
+      entryAt: {
+        gt: now,
+        lte: new Date(now.getTime() + UPCOMING_LOOKAHEAD_MINUTES * 60_000),
+      },
     },
     select: ARRIVAL_SELECT,
     orderBy: { entryAt: 'asc' },

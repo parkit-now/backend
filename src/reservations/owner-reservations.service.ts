@@ -20,7 +20,7 @@ import {
   arrivalCandidatesWhere,
   arrivalWindow,
   fallbackEarlyArrivalMax,
-  findUpcomingTodayReservation,
+  findUpcomingReservation,
   linkableWindow,
   pickReservationForArrival,
   prepaidAmountOf,
@@ -107,10 +107,10 @@ export class OwnerReservationsService {
    * llegadas anticipadas (hasta el tope) y las tardías (hasta `exitAt`), con
    * `arrival` para que la caja avise.
    *
-   * Si no hay ninguna vinculable, `upcomingToday` trae la próxima reserva
-   * confirmada de HOY de esa patente (llegó demasiado temprano): la caja
-   * muestra "Esta patente tiene una reserva hoy a las HH:MM" y el ingreso
-   * queda como estadía común. Va en un campo aparte y no en `reservation`
+   * Si no hay ninguna vinculable, `upcoming` trae la próxima reserva
+   * confirmada de esa patente en las próximas 24 h (llegó demasiado
+   * temprano): la caja muestra "Esta patente tiene una reserva hoy a las
+   * HH:MM" y el ingreso queda como estadía común. Va en un campo aparte y no en `reservation`
    * para que una caja vieja, que vincula todo lo que viene en `reservation`,
    * no muestre un banner de algo que el backend no va a vincular.
    */
@@ -120,7 +120,7 @@ export class OwnerReservationsService {
     now = new Date(),
   ): Promise<ReservationMatchResponseDto> {
     const where = arrivalCandidatesWhere(tenantId, plate, now);
-    if (!where) return { reservation: null, upcomingToday: null };
+    if (!where) return { reservation: null, upcoming: null };
     const db = this.prisma.getTenantClient();
     const candidates = await db.reservation.findMany({
       where,
@@ -134,18 +134,18 @@ export class OwnerReservationsService {
     if (chosen) {
       return {
         reservation: toMatchDto(chosen, chosen.classification, fallback),
-        upcomingToday: null,
+        upcoming: null,
       };
     }
     // El cliente base con `tenantId` explícito (el extendido no encaja en los
     // tipos de transacción que comparten estas funciones con el ingreso).
-    const upcoming = await findUpcomingTodayReservation(
+    const upcoming = await findUpcomingReservation(
       this.prisma,
       tenantId,
       plate,
       now,
     );
-    if (!upcoming) return { reservation: null, upcomingToday: null };
+    if (!upcoming) return { reservation: null, upcoming: null };
     const upcomingFallback = await fallbackEarlyArrivalMax(
       this.prisma,
       tenantId,
@@ -153,11 +153,7 @@ export class OwnerReservationsService {
     );
     return {
       reservation: null,
-      upcomingToday: toMatchDto(
-        upcoming,
-        upcoming.classification,
-        upcomingFallback,
-      ),
+      upcoming: toMatchDto(upcoming, upcoming.classification, upcomingFallback),
     };
   }
 
