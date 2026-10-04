@@ -85,6 +85,14 @@ export class OwnerReservationPolicyDto {
 
   @ApiProperty()
   approvalWindowMinutes: number;
+
+  @ApiProperty({
+    description:
+      'Tope de la llegada anticipada al reservar: hasta cuántos minutos antes ' +
+      'de la hora de ingreso el auto se vincula ("llegó antes"). Las reservas ' +
+      'anteriores al tope muestran el default (60).',
+  })
+  earlyArrivalMaxMinutes: number;
 }
 
 export class OwnerReservationPaymentDto {

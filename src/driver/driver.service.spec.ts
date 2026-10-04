@@ -65,6 +65,7 @@ const reservationService = (overrides: object = {}) => ({
   lateCancelRefundPct: 0,
   earlyArrivalMinutes: 15,
   graceMinutes: 30,
+  earlyArrivalMaxMinutes: 60,
   reservationRate: reservationRate(1800),
   ...overrides,
 });
@@ -292,6 +293,23 @@ describe('DriverService', () => {
         durationMinutes: 180,
         totalArs: 5400,
         rate: { name: 'RESERVAS', hourPriceArs: 1800 },
+      });
+    });
+
+    it('copia el tope de llegada anticipada al snapshot de la reserva', async () => {
+      mockTenantClient.service.findFirst.mockResolvedValue(
+        reservationService({ earlyArrivalMaxMinutes: 45 }),
+      );
+      const { policy } = await service.quoteForReservation(
+        'tenant-once',
+        window,
+        NOW,
+        'car',
+      );
+      expect(policy).toMatchObject({
+        earlyArrivalMinutes: 15,
+        graceMinutes: 30,
+        earlyArrivalMaxMinutes: 45,
       });
     });
 

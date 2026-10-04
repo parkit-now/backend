@@ -6,6 +6,7 @@ import {
   DEFAULT_POLICY_SNAPSHOT,
   HOLDING_STATUSES,
   readPolicySnapshot,
+  snapshotEarlyArrivalMax,
   type CancelBy,
   type CancelPreview,
   type PolicySnapshot,
@@ -291,6 +292,7 @@ describe('policy snapshot', () => {
         graceMinutes: 45,
         acceptanceMode: 'manual',
         approvalWindowMinutes: 30,
+        earlyArrivalMaxMinutes: 120,
       }),
     ).toEqual({
       freeCancelMinutes: 90,
@@ -299,7 +301,18 @@ describe('policy snapshot', () => {
       graceMinutes: 45,
       acceptanceMode: 'manual',
       approvalWindowMinutes: 30,
+      earlyArrivalMaxMinutes: 120,
     });
+  });
+
+  it('el tope de llegada anticipada sale del snapshot o es null en las reservas viejas', () => {
+    expect(snapshotEarlyArrivalMax({ earlyArrivalMaxMinutes: 45 })).toBe(45);
+    expect(snapshotEarlyArrivalMax({ earlyArrivalMaxMinutes: 0 })).toBe(0);
+    expect(snapshotEarlyArrivalMax({ earlyArrivalMinutes: 15 })).toBeNull();
+    expect(snapshotEarlyArrivalMax({ earlyArrivalMaxMinutes: -5 })).toBeNull();
+    expect(snapshotEarlyArrivalMax(null)).toBeNull();
+    // Para mostrar, la reserva vieja usa el default.
+    expect(readPolicySnapshot({}).earlyArrivalMaxMinutes).toBe(60);
   });
 
   it('una reserva vieja (snapshot NULL) cae en los defaults', () => {

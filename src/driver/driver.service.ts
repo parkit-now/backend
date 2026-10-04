@@ -93,6 +93,7 @@ type LotData = {
     earlyArrivalMinutes: number;
     graceMinutes: number;
     approvalWindowMinutes: number;
+    earlyArrivalMaxMinutes: number;
   } | null;
   occupied: number;
   /** Reservas de hoy que todavía ocupan lugar (ver reservationHoldsSpotNow). */
@@ -356,6 +357,7 @@ export class DriverService {
           lateCancelRefundPct: true,
           earlyArrivalMinutes: true,
           graceMinutes: true,
+          earlyArrivalMaxMinutes: true,
           reservationRate: {
             select: {
               name: true,
@@ -439,6 +441,7 @@ export class DriverService {
               approvalWindowMinutes:
                 reservationService.approvalWindowMinutes ??
                 DEFAULT_POLICY_SNAPSHOT.approvalWindowMinutes,
+              earlyArrivalMaxMinutes: reservationService.earlyArrivalMaxMinutes,
             }
           : null,
       occupied,

@@ -144,6 +144,13 @@ export class ReservationPolicyDto {
 
   @ApiProperty({ description: 'Minutos que tiene el dueño para aceptar.' })
   approvalWindowMinutes: number;
+
+  @ApiProperty({
+    description:
+      'Hasta cuántos minutos antes de la hora de ingreso se puede llegar con ' +
+      'la reserva (el tiempo extra se cobra en la caja).',
+  })
+  earlyArrivalMaxMinutes: number;
 }
 
 export class ReservationPaymentSummaryDto {
