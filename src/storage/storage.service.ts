@@ -7,6 +7,12 @@ import { FormattedException } from '../utils/exceptions/http-exception/formatted
 /** Private bucket holding onboarding application documents (binaries). */
 export const APPLICATION_DOCUMENTS_BUCKET = 'application-documents';
 
+/**
+ * Cuántos objetos entran en un `remove()`. El límite real del endpoint no está
+ * documentado; 100 es holgado y mantiene cada request chica.
+ */
+const REMOVE_BATCH_SIZE = 100;
+
 /** Private bucket holding LPR detection event photos (binaries). */
 export const LPR_DETECTION_IMAGES_BUCKET = 'lpr-detection-images';
 
@@ -123,5 +129,47 @@ export class StorageService implements OnModuleInit {
         ErrorCodes.STORAGE_REMOVE_FAILED,
       );
     }
+  }
+
+  /**
+   * Borra varios objetos por lote.
+   *
+   * La API de Supabase siempre recibió un array —`remove()` le pasa uno de un
+   * elemento—, así que esto no agrega capacidad nueva: deja de desperdiciar la
+   * que ya había. La retención de imágenes borraba de a uno y podía hacer
+   * hasta 1500 round-trips secuenciales por corrida; purgar un estacionamiento
+   * con 151 fotos habría hecho 151 más.
+   *
+   * Se parte en lotes de `REMOVE_BATCH_SIZE` porque un array sin tope arma una
+   * request que el endpoint rechaza cuando el estacionamiento tiene miles de
+   * fotos, y ese es justo el caso en el que más importa que funcione.
+   *
+   * Devuelve cuántos borró. Un `paths` vacío no llama a la red.
+   */
+  async removeMany(bucket: string, paths: string[]): Promise<number> {
+    let removed = 0;
+
+    for (let i = 0; i < paths.length; i += REMOVE_BATCH_SIZE) {
+      const batch = paths.slice(i, i + REMOVE_BATCH_SIZE);
+      const { error } = await this.client.storage.from(bucket).remove(batch);
+
+      if (error) {
+        this.logger.error(
+          `Failed to remove ${batch.length} objects from ${bucket}`,
+          error.message,
+        );
+        throw new FormattedException(
+          'Bad Gateway',
+          HttpStatus.BAD_GATEWAY,
+          error.message ?? 'Failed to remove objects',
+          `/${bucket}`,
+          ErrorCodes.STORAGE_REMOVE_FAILED,
+        );
+      }
+
+      removed += batch.length;
+    }
+
+    return removed;
   }
 }

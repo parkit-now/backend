@@ -71,7 +71,23 @@ model Tenant {
 
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
 
+  // Baja lógica (migración 20261008120000). Borrar un estacionamiento no es un
+  // DELETE: se marca, queda invisible para todos menos el admin global, y un
+  // job (`TenantPurgeService`) lo borra de verdad —Storage incluido— pasada la
+  // ventana de gracia. El CHECK `tenants_deletion_fields_consistent` obliga a
+  // que `deletedAt` y `purgeAfter` vayan los dos o ninguno.
+  /// NULL = vivo. Es el único campo que mira el backend para decidir si existe.
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  /// Desde cuándo la purga puede borrarlo. Separado de `deletedAt` porque la
+  /// ventana es por borrado (`graceDays`, 0..365), no una constante.
+  purgeAfter     DateTime? @map("purge_after") @db.Timestamptz(6)
+  /// Admin global que dio de baja. `SET NULL` si después se borra ese usuario:
+  /// la baja del estacionamiento no depende de que siga existiendo.
+  deletedById    String?   @map("deleted_by") @db.Uuid
+  deletedReason  String?   @map("deletion_reason")
+
   memberships          UserMembership[]
+  deletedBy            User?            @relation("TenantDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   entries              Entry[]
   rates                Rate[]
   schedules            Schedule[]

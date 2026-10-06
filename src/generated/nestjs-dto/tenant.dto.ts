@@ -73,4 +73,18 @@ geocodedAt: Date  | null;
   format: `date-time`,
 })
 createdAt: Date ;
+@ApiProperty({
+  description: `NULL = vivo. Es el único campo que mira el backend para decidir si existe.`,
+  type: `string`,
+  format: `date-time`,
+})
+deletedAt: Date  | null;
+@ApiProperty({
+  description: `Desde cuándo la purga puede borrarlo. Separado de \'deletedAt\' porque la
+ventana es por borrado (\'graceDays\', 0..365), no una constante.`,
+  type: `string`,
+  format: `date-time`,
+})
+purgeAfter: Date  | null;
+deletedReason: string  | null;
 }

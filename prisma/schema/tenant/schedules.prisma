@@ -17,7 +17,7 @@ model Schedule {
   updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   tenantId String @map("tenant_id") @db.Uuid
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId], map: "schedules_tenant_id_idx")
   @@index([tenantId, day], map: "schedules_tenant_day_idx")

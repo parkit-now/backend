@@ -58,4 +58,24 @@ export class ParkingDto {
     description: 'Creation timestamp.',
   })
   createdAt: Date;
+
+  @ApiProperty({
+    type: 'string',
+    format: 'date-time',
+    nullable: true,
+    description:
+      'Cuándo se dio de baja. `null` = vivo. Sólo lo ve el admin global: para ' +
+      'el resto del producto un estacionamiento con esto seteado no existe.',
+  })
+  deletedAt: Date | null;
+
+  @ApiProperty({
+    type: 'string',
+    format: 'date-time',
+    nullable: true,
+    description:
+      'Desde cuándo la purga puede borrarlo definitivamente. Hasta ese momento ' +
+      'se puede restaurar; después no queda nada que restaurar.',
+  })
+  purgeAfter: Date | null;
 }

@@ -48,6 +48,9 @@ model User {
   cancelledReservations      Reservation[] @relation("ReservationCancelledBy")
   // Vehículos que cargó como conductor (global/driver-vehicles.prisma).
   driverVehicles             DriverVehicle[]
+  // Estacionamientos que dio de baja como admin global
+  // (global/tenants.prisma). `SET NULL` al borrar: la baja sobrevive al admin.
+  deletedTenants             Tenant[] @relation("TenantDeletedBy")
 
   @@map("users")
 }

@@ -25,6 +25,7 @@ describe('LprEventsService', () => {
       updateMany: jest.fn(),
       findFirstOrThrow: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn(),
     },
   };
   const mockPrismaService = {
@@ -231,6 +232,40 @@ describe('LprEventsService', () => {
       const result = await service.upsert(dto, actor);
 
       expect(result.plateBbox).toBeNull();
+    });
+  });
+
+  describe('list', () => {
+    it('filters registered events by the visible entry IDs requested by the client', async () => {
+      const entryIds = [
+        '44444444-4444-7444-8444-444444444444',
+        '55555555-5555-7555-8555-555555555555',
+      ];
+      mockTenant.lprDetectionEvent.findMany.mockResolvedValue([]);
+      mockTenant.lprDetectionEvent.count.mockResolvedValue(0);
+
+      const result = await service.list({
+        status: LprDetectionStatus.registered,
+        entryIds,
+        // Explícito aunque el DTO lo defaultee: el literal tiene que tener la
+        // misma forma que lo que arma el ValidationPipe en runtime.
+        archived: false,
+        page: 1,
+        pageSize: 20,
+      });
+
+      const expectedWhere = {
+        status: LprDetectionStatus.registered,
+        entryId: { in: entryIds },
+        archivedAt: null,
+      };
+      expect(mockTenant.lprDetectionEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+      expect(mockTenant.lprDetectionEvent.count).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+      expect(result).toEqual({ items: [], total: 0, page: 1, pageSize: 20 });
     });
   });
 

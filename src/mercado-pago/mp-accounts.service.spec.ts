@@ -98,6 +98,11 @@ describe('MpAccountsService', () => {
     geocodingSource: 'manual',
     geocodedAt: null,
     createdAt: EPOCH,
+    // Baja lógica: estos fixtures son de estacionamientos vivos.
+    deletedAt: null,
+    purgeAfter: null,
+    deletedById: null,
+    deletedReason: null,
     ...overrides,
   });
 

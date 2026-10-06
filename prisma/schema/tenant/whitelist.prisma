@@ -13,7 +13,7 @@ model Whitelist {
   entries Entry[]
 
   tenantId String @map("tenant_id") @db.Uuid
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId], map: "whitelists_tenant_id_idx")
   @@index([tenantId, plate], map: "whitelists_tenant_plate_idx")

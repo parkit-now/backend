@@ -57,6 +57,13 @@ type Tier = 'registered' | 'noise' | 'archived';
  * `PrismaService` client directly instead of `getTenantClient()` — there is
  * no tenant in context in a cron job. Every query below filters by
  * `tenantId` explicitly to stay tenant-safe.
+ *
+ * LOS TRES TIERS SALTEAN LOS TENANTS DADOS DE BAJA (`deletedAt: null`), y eso
+ * NO es cosmético: durante la ventana de gracia un estacionamiento dado de baja
+ * todavía se puede restaurar. Si este job le fuera borrando las fotos mientras
+ * tanto, restaurarlo devolvería las filas pero no la evidencia, en silencio.
+ * Las imágenes de un tenant dado de baja las borra `TenantPurgeService`, todas
+ * juntas y recién cuando el borrado ya es irreversible.
  */
 @Injectable()
 export class LprImageRetentionService {
@@ -99,6 +106,7 @@ export class LprImageRetentionService {
     // tenants by their configured value so we run one query per distinct
     // cutoff instead of one per tenant.
     const tenants = await this.prisma.tenant.findMany({
+      where: { deletedAt: null },
       select: { id: true, lprImageRetentionDays: true },
     });
 
@@ -146,7 +154,7 @@ export class LprImageRetentionService {
       where: {
         imageStoragePath: { not: null },
         imageDeletedAt: null,
-        tenant: { cashSessions: { none: { closedAt: null } } },
+        tenant: { deletedAt: null, cashSessions: { none: { closedAt: null } } },
         OR: [
           { status: { in: NOISE_STATUSES }, updatedAt: { lt: noiseCutoff } },
           {
@@ -163,6 +171,7 @@ export class LprImageRetentionService {
   private findArchivedCandidates(): Promise<PurgeCandidate[]> {
     return this.prisma.lprDetectionEvent.findMany({
       where: {
+        tenant: { deletedAt: null },
         archivedAt: { not: null },
         imageStoragePath: { not: null },
         imageDeletedAt: null,
@@ -172,35 +181,88 @@ export class LprImageRetentionService {
     });
   }
 
+  /**
+   * Borra las fotos de un tier y marca sus filas.
+   *
+   * Va por lote (`removeMany`) y no de a una: con el tope de 500 por tier, de
+   * a una eran hasta 1500 round-trips HTTP secuenciales por corrida. Si el
+   * lote falla cae al camino de a uno, que es el que aguanta que UN objeto
+   * raro no se pueda borrar sin costarle el tier entero a los demás.
+   */
   private async purge(candidates: PurgeCandidate[], tier: Tier): Promise<void> {
+    if (candidates.length === 0) return;
+
+    try {
+      await this.storage.removeMany(
+        LPR_DETECTION_IMAGES_BUCKET,
+        candidates.map((candidate) => candidate.imageStoragePath!),
+      );
+    } catch (error) {
+      this.logger.error(
+        `Batch removal failed for tier ${tier} (${candidates.length} objects); falling back to one by one`,
+        error instanceof Error ? error.stack : error,
+      );
+      await this.purgeOneByOne(candidates, tier);
+      return;
+    }
+
+    for (const candidate of candidates) {
+      await this.markPurged(candidate, tier);
+    }
+  }
+
+  /** El camino de respaldo: aísla el objeto que no se pudo borrar. */
+  private async purgeOneByOne(
+    candidates: PurgeCandidate[],
+    tier: Tier,
+  ): Promise<void> {
     for (const candidate of candidates) {
       try {
         await this.storage.remove(
           LPR_DETECTION_IMAGES_BUCKET,
           candidate.imageStoragePath!,
         );
-        await this.prisma.lprDetectionEvent.updateMany({
-          where: { id: candidate.id, tenantId: candidate.tenantId },
-          data: {
-            imageDeletedAt: new Date(),
-            imageStoragePath: null,
-            imageUrl: null,
-          },
-        });
-        await this.audit.record({
-          action: AuditActions.LPR_EVENT_IMAGE_PURGED,
-          entityType: 'lpr_detection_event',
-          entityId: candidate.id,
-          tenantId: candidate.tenantId,
-          severity: 'info',
-          metadata: { tier },
-        });
       } catch (error) {
         this.logger.error(
           `Failed to purge image for LPR event ${candidate.id} (tenant ${candidate.tenantId}, tier ${tier})`,
           error instanceof Error ? error.stack : error,
         );
+        continue;
       }
+      await this.markPurged(candidate, tier);
+    }
+  }
+
+  /**
+   * La fila del evento NO se borra: sólo se limpian los campos de la imagen y
+   * se sella `imageDeletedAt`, para que el rastro de auditoría quede entero.
+   */
+  private async markPurged(
+    candidate: PurgeCandidate,
+    tier: Tier,
+  ): Promise<void> {
+    try {
+      await this.prisma.lprDetectionEvent.updateMany({
+        where: { id: candidate.id, tenantId: candidate.tenantId },
+        data: {
+          imageDeletedAt: new Date(),
+          imageStoragePath: null,
+          imageUrl: null,
+        },
+      });
+      await this.audit.record({
+        action: AuditActions.LPR_EVENT_IMAGE_PURGED,
+        entityType: 'lpr_detection_event',
+        entityId: candidate.id,
+        tenantId: candidate.tenantId,
+        severity: 'info',
+        metadata: { tier },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to mark LPR event ${candidate.id} as purged (tenant ${candidate.tenantId}, tier ${tier})`,
+        error instanceof Error ? error.stack : error,
+      );
     }
   }
 }

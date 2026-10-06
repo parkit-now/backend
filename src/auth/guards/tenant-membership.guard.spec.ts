@@ -1,9 +1,10 @@
-import { ExecutionContext } from '@nestjs/common';
+import { ExecutionContext, HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { MembershipRole } from '@prisma/client';
 import type { UserMembership } from '@prisma/client';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../database/prisma.service';
+import { ErrorCodes } from '../../utils/exceptions/error-codes';
 import { FormattedException } from '../../utils/exceptions/http-exception/formatted-exeption';
 import { PermissionsService } from '../permissions.service';
 import type { AuthenticatedRequest } from './jwt-auth.guard';
@@ -21,6 +22,26 @@ describe('TenantMembershipGuard', () => {
   const mockPrisma = {
     userMembership: { findUnique: jest.fn() },
   };
+
+  /**
+   * Lo que devuelve el `findUnique` del guard: la membresía CON el tenant
+   * colgado, porque la consulta lo trae en el mismo round-trip para poder
+   * mirarle el `deletedAt`.
+   */
+  function foundMembership(
+    overrides: {
+      role?: MembershipRole;
+      deletedAt?: Date | null;
+    } = {},
+  ) {
+    return {
+      userId: 'u-1',
+      tenantId: 't-1',
+      role: overrides.role ?? MembershipRole.operator,
+      createdAt: new Date('2026-05-01T00:00:00.000Z'),
+      tenant: { deletedAt: overrides.deletedAt ?? null },
+    };
+  }
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -50,13 +71,8 @@ describe('TenantMembershipGuard', () => {
   });
 
   it('allows a member and attaches the membership to the request', async () => {
-    const membership: UserMembership = {
-      userId: 'u-1',
-      tenantId: 't-1',
-      role: MembershipRole.operator,
-      createdAt: new Date(),
-    };
-    mockPrisma.userMembership.findUnique.mockResolvedValue(membership);
+    const found = foundMembership();
+    mockPrisma.userMembership.findUnique.mockResolvedValue(found);
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
     const req = makeRequest({
       user: { id: 'u-1', role: 'user' },
@@ -64,7 +80,61 @@ describe('TenantMembershipGuard', () => {
     });
 
     expect(await guard.canActivate(makeContext(req))).toBe(true);
-    expect(req.membership).toEqual(membership);
+    // El `tenant` que vino del include NO se adjunta: los consumidores
+    // (`@CurrentMembership()`) esperan un `UserMembership` pelado.
+    const expected: UserMembership = {
+      userId: found.userId,
+      tenantId: found.tenantId,
+      role: found.role,
+      createdAt: found.createdAt,
+    };
+    expect(req.membership).toEqual(expected);
+    expect(req.membership).not.toHaveProperty('tenant');
+  });
+
+  it('throws ENTITY_DELETED with 410 when the tenant was soft-deleted', async () => {
+    // 410 y no 404: el desktop offline-first distingue "existió y ya no" de un
+    // error de red para cerrar la sesión en vez de seguir reintentando.
+    mockPrisma.userMembership.findUnique.mockResolvedValue(
+      foundMembership({ deletedAt: new Date('2026-10-05T12:00:00.000Z') }),
+    );
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
+    const req = makeRequest({
+      user: { id: 'u-1', role: 'user' },
+      params: { tenantId: 't-1' },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(guard.canActivate(makeContext(req))).rejects.toMatchObject({
+      status: HttpStatus.GONE,
+      response: { code: ErrorCodes.ENTITY_DELETED },
+    });
+  });
+
+  it('a non-member of a deleted tenant still gets 403, not 410', async () => {
+    // El orden importa: si el chequeo de baja fuera primero, le confirmaría a
+    // un extraño que ese estacionamiento existió.
+    mockPrisma.userMembership.findUnique.mockResolvedValue(null);
+    const req = makeRequest({
+      user: { id: 'u-9', role: 'user' },
+      params: { tenantId: 't-1' },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(guard.canActivate(makeContext(req))).rejects.toMatchObject({
+      status: HttpStatus.FORBIDDEN,
+      response: { code: ErrorCodes.ENTITY_NO_ACCESS },
+    });
+  });
+
+  it('admins bypass the deleted check, which is what lets them restore', async () => {
+    const req = makeRequest({
+      user: { id: 'a', role: 'admin' },
+      params: { tenantId: 't-1' },
+    });
+
+    expect(await guard.canActivate(makeContext(req))).toBe(true);
+    expect(mockPrisma.userMembership.findUnique).not.toHaveBeenCalled();
   });
 
   it('throws ENTITY_NO_ACCESS when no membership exists', async () => {
@@ -80,12 +150,9 @@ describe('TenantMembershipGuard', () => {
   });
 
   it('lets an owner through an @EntityRole(owner) handler', async () => {
-    mockPrisma.userMembership.findUnique.mockResolvedValue({
-      userId: 'u-1',
-      tenantId: 't-1',
-      role: MembershipRole.owner,
-      createdAt: new Date(),
-    });
+    mockPrisma.userMembership.findUnique.mockResolvedValue(
+      foundMembership({ role: MembershipRole.owner }),
+    );
     jest
       .spyOn(reflector, 'getAllAndOverride')
       .mockReturnValue(MembershipRole.owner);
@@ -98,12 +165,9 @@ describe('TenantMembershipGuard', () => {
   });
 
   it('throws ENTITY_INSUFFICIENT_ROLE for an operator on an @EntityRole(owner) handler', async () => {
-    mockPrisma.userMembership.findUnique.mockResolvedValue({
-      userId: 'u-1',
-      tenantId: 't-1',
-      role: MembershipRole.operator,
-      createdAt: new Date(),
-    });
+    mockPrisma.userMembership.findUnique.mockResolvedValue(
+      foundMembership({ role: MembershipRole.operator }),
+    );
     jest
       .spyOn(reflector, 'getAllAndOverride')
       .mockReturnValue(MembershipRole.owner);

@@ -19,9 +19,13 @@ import type { AuthenticatedRequest } from './jwt-auth.guard';
  *   1. `admin` → bypass (full access to every tenant).
  *   2. otherwise require a `UserMembership` for `(userId, tenantId)`; 403 if
  *      missing (ENTITY_NO_ACCESS). Prevents IDOR via URL manipulation.
- *   3. the membership is attached to `request.membership` for downstream
+ *   3. if the tenant is soft-deleted, 410 Gone (ENTITY_DELETED) — checked
+ *      AFTER membership so a non-member still gets 403 and learns nothing.
+ *      Admins never reach this: they bypass above, which is what lets them
+ *      restore a deleted parking.
+ *   4. the membership is attached to `request.membership` for downstream
  *      decorators/services (`@CurrentMembership()`).
- *   4. if the handler declares `@EntityRole(...)` and the caller is not admin,
+ *   5. if the handler declares `@EntityRole(...)` and the caller is not admin,
  *      enforce the required entity role (owner-only management actions) via
  *      `PermissionsService`; 403 ENTITY_INSUFFICIENT_ROLE otherwise.
  */
@@ -63,6 +67,7 @@ export class TenantMembershipGuard implements CanActivate {
 
     const membership = await this.prisma.userMembership.findUnique({
       where: { userId_tenantId: { userId: user.id, tenantId } },
+      include: { tenant: { select: { deletedAt: true } } },
     });
 
     if (!membership) {
@@ -73,7 +78,27 @@ export class TenantMembershipGuard implements CanActivate {
       );
     }
 
-    request.membership = membership;
+    // Dado de baja: 410 Gone. Va DESPUÉS de la verificación de membresía para
+    // no filtrarle a un extraño que ese tenant existió — quien no es miembro
+    // sigue viendo 403, igual que antes.
+    if (membership.tenant.deletedAt) {
+      throw new FormattedException(
+        'Gone',
+        HttpStatus.GONE,
+        `Tenant ${tenantId} was deleted`,
+        request.url,
+        ErrorCodes.ENTITY_DELETED,
+      );
+    }
+
+    // Se adjunta el `UserMembership` pelado, sin el `tenant` que trajo el
+    // include: los consumidores (`@CurrentMembership()`) esperan esa forma.
+    request.membership = {
+      userId: membership.userId,
+      tenantId: membership.tenantId,
+      role: membership.role,
+      createdAt: membership.createdAt,
+    };
 
     // Owner-only (or otherwise role-gated) handlers.
     const requiredRole = this.reflector.getAllAndOverride<

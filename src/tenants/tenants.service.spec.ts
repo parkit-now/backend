@@ -44,7 +44,11 @@ describe('TenantsService', () => {
       },
     ]);
     expect(mockPrisma.userMembership.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'user-1' } }),
+      expect.objectContaining({
+        // `tenant: { deletedAt: null }`: un estacionamiento dado de baja
+        // desaparece del selector de sucursal.
+        where: { userId: 'user-1', tenant: { deletedAt: null } },
+      }),
     );
   });
 
@@ -54,7 +58,13 @@ describe('TenantsService', () => {
     await service.listMine(caller, 'owner');
 
     expect(mockPrisma.userMembership.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'user-1', role: 'owner' } }),
+      expect.objectContaining({
+        where: {
+          userId: 'user-1',
+          role: 'owner',
+          tenant: { deletedAt: null },
+        },
+      }),
     );
   });
 });
