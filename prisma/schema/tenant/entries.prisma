@@ -82,7 +82,7 @@ model Entry {
   paymentIntents      PaymentIntent[]
 
   tenantId String @map("tenant_id") @db.Uuid
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId], map: "entries_tenant_id_idx")
   @@index([tenantId, syncSeq], map: "entries_tenant_sync_seq_idx")

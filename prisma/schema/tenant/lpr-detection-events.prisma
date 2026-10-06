@@ -37,7 +37,7 @@ model LprDetectionEvent {
   entry          Entry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
   reviewedByUser User?  @relation(fields: [reviewedByUserId], references: [id], onDelete: SetNull)
   archivedByUser User?  @relation("ArchivedLprDetectionEvents", fields: [archivedByUserId], references: [id], onDelete: SetNull)
-  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId       String @map("tenant_id") @db.Uuid
 
   @@index([tenantId], map: "lpr_detection_events_tenant_id_idx")

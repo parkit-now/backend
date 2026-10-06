@@ -9,6 +9,7 @@ import {MpOauthStateEntity} from './mp-oauth-state.entity'
 import {PaymentIntentEntity} from './payment-intent.entity'
 import {ReservationEntity} from './reservation.entity'
 import {DriverVehicleEntity} from './driver-vehicle.entity'
+import {TenantEntity} from './tenant.entity'
 
 
 export class UserEntity {
@@ -35,4 +36,5 @@ createdPaymentIntents?: PaymentIntentEntity[] ;
 reservations?: ReservationEntity[] ;
 cancelledReservations?: ReservationEntity[] ;
 driverVehicles?: DriverVehicleEntity[] ;
+deletedTenants?: TenantEntity[] ;
 }

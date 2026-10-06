@@ -62,7 +62,11 @@ export class UsersService {
    */
   async getMe(user: User): Promise<MeResponseDto> {
     const memberships = await this.prisma.userMembership.findMany({
-      where: { userId: user.id },
+      // Los estacionamientos dados de baja no se devuelven. El desktop cachea
+      // esta respuesta para elegir sucursal y para operar offline: si siguiera
+      // apareciendo acá, el operador encolaría movimientos contra un tenant que
+      // el servidor ya rechaza con 410.
+      where: { userId: user.id, tenant: { deletedAt: null } },
       include: { tenant: { select: { id: true, name: true, address: true } } },
     });
     return {

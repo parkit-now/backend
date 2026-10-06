@@ -36,6 +36,11 @@ export const AuditActions = {
   PARKING_CREATED: 'parking.created',
   PARKING_UPDATED: 'parking.updated',
   PARKING_DELETED: 'parking.deleted',
+  /// Se revirtió la baja antes de la purga.
+  PARKING_RESTORED: 'parking.restored',
+  /// Borrado definitivo: base y bucket. Esta fila queda con `tenantId = NULL`
+  /// porque el tenant ya no existe, así que el nombre va en `metadata`.
+  PARKING_PURGED: 'parking.purged',
   // Admin · users
   USER_ROLE_UPDATED: 'user.role_updated',
   USER_DELETED: 'user.deleted',

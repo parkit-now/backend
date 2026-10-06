@@ -69,6 +69,17 @@ export const ErrorCodes = {
   // Caller is a member (e.g. operator) but lacks the required entity role
   // (e.g. owner) for an owner-only action.
   ENTITY_INSUFFICIENT_ROLE: 'ENTITY_INSUFFICIENT_ROLE',
+  // El estacionamiento fue dado de baja. Va con 410 Gone y no con 404: el
+  // cliente necesita distinguir "existió y ya no" de "nunca existió" o de un
+  // error de red. El desktop offline-first se apoya en esa diferencia para
+  // cerrar la sesión en vez de seguir reintentando contra un tenant muerto.
+  ENTITY_DELETED: 'ENTITY_DELETED',
+  // El admin tipeó un nombre que no coincide con el del estacionamiento. Es la
+  // confirmación de un borrado, así que no alcanza con un botón.
+  PARKING_CONFIRM_NAME_MISMATCH: 'PARKING_CONFIRM_NAME_MISMATCH',
+  // Ya estaba dado de baja (o, al restaurar, no lo estaba).
+  PARKING_ALREADY_DELETED: 'PARKING_ALREADY_DELETED',
+  PARKING_NOT_DELETED: 'PARKING_NOT_DELETED',
 
   // Vehicles
   VEHICLE_NOT_FOUND: 'VEHICLE_NOT_FOUND',

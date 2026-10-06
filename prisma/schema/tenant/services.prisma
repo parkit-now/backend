@@ -46,7 +46,7 @@ model Service {
   earlyArrivalMaxMinutes  Int      @default(60) @map("early_arrival_max_minutes")
 
   tenantId String @map("tenant_id") @db.Uuid
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, code], map: "services_tenant_code_unique")
   @@index([tenantId], map: "services_tenant_id_idx")

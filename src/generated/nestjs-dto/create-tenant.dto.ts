@@ -99,4 +99,24 @@ geocodingSource?: string;
 @IsOptional()
 @IsRFC3339()
 geocodedAt?: Date;
+@ApiProperty({
+  description: `NULL = vivo. Es el único campo que mira el backend para decidir si existe.`,
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+deletedAt?: Date;
+@ApiProperty({
+  description: `Desde cuándo la purga puede borrarlo. Separado de \'deletedAt\' porque la
+ventana es por borrado (\'graceDays\', 0..365), no una constante.`,
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+purgeAfter?: Date;
+@IsOptional()
+@IsString()
+deletedReason?: string;
 }

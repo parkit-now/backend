@@ -31,7 +31,7 @@ model PaymentTransaction {
   cashSession   CashSession? @relation(fields: [cashSessionId], references: [id])
 
   tenantId String @map("tenant_id") @db.Uuid
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([entryId], map: "payment_transactions_entry_id_idx")
   @@index([tenantId], map: "payment_transactions_tenant_id_idx")

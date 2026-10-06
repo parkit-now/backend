@@ -45,6 +45,11 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
     entryCameraId: null,
     entryCameraLabel: null,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    // Baja lógica: estos fixtures son de estacionamientos vivos.
+    deletedAt: null,
+    purgeAfter: null,
+    deletedById: null,
+    deletedReason: null,
     ...overrides,
   };
 }

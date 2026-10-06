@@ -37,7 +37,7 @@ describe('LprImageRetentionService', () => {
     },
   };
   const mockAuditService = { record: jest.fn() };
-  const mockStorageService = { remove: jest.fn() };
+  const mockStorageService = { remove: jest.fn(), removeMany: jest.fn() };
   const mockConfigService = { get: jest.fn() };
 
   const prisma = mockPrisma as unknown as PrismaService;
@@ -112,6 +112,7 @@ describe('LprImageRetentionService', () => {
     await makeService().run();
 
     expect(mockStorageService.remove.mock.calls).toHaveLength(0);
+    expect(mockStorageService.removeMany.mock.calls).toHaveLength(0);
     expect(mockPrisma.lprDetectionEvent.updateMany.mock.calls).toHaveLength(0);
     expect(mockAuditService.record.mock.calls).toHaveLength(0);
   });
@@ -122,9 +123,11 @@ describe('LprImageRetentionService', () => {
 
     await makeService().run();
 
-    expect(mockStorageService.remove.mock.calls).toEqual([
-      [LPR_DETECTION_IMAGES_BUCKET, `${tenantId}/registered-1.jpg`],
+    // Por lote: de a una eran hasta 1500 round-trips secuenciales por corrida.
+    expect(mockStorageService.removeMany.mock.calls).toEqual([
+      [LPR_DETECTION_IMAGES_BUCKET, [`${tenantId}/registered-1.jpg`]],
     ]);
+    expect(mockStorageService.remove.mock.calls).toHaveLength(0);
 
     const updateArg = mockPrisma.lprDetectionEvent.updateMany.mock
       .calls[0][0] as {
@@ -152,9 +155,13 @@ describe('LprImageRetentionService', () => {
     expect(auditArg.metadata).toEqual({ tier: 'registered' });
   });
 
-  it('keeps purging remaining candidates when one storage removal fails', async () => {
+  it('si el lote falla, cae al borrado de a uno y aísla al objeto malo', async () => {
+    // Es lo que evita que UN objeto raro le cueste el tier entero al resto.
     mockConfigService.get.mockReturnValue('false');
     stubTiers({ registered: [candidate('bad-1'), candidate('good-1')] });
+    mockStorageService.removeMany.mockRejectedValue(
+      new Error('storage unavailable'),
+    );
     mockStorageService.remove
       .mockRejectedValueOnce(new Error('storage unavailable'))
       .mockResolvedValueOnce(undefined);
@@ -246,6 +253,7 @@ describe('LprImageRetentionService', () => {
     ]);
     expect(where.OR[1].status).toBe(LprDetectionStatus.pending);
     expect(where.tenant).toEqual({
+      deletedAt: null,
       cashSessions: { none: { closedAt: null } },
     });
   });
@@ -261,11 +269,31 @@ describe('LprImageRetentionService', () => {
     );
   });
 
+  it('no toca a los estacionamientos dados de baja, en ninguno de los tres tiers', async () => {
+    // Carga estructural, no cosmética: durante la ventana de gracia la baja
+    // todavía se puede revertir. Si este job le fuera borrando las fotos, al
+    // restaurar volverían las filas pero no la evidencia, y en silencio. Las
+    // imágenes de un tenant dado de baja las borra `TenantPurgeService`, todas
+    // juntas y recién cuando el borrado ya es irreversible.
+    mockConfigService.get.mockReturnValue('true');
+    await makeService().run();
+
+    expect(mockPrisma.tenant.findMany).toHaveBeenCalledWith({
+      where: { deletedAt: null },
+      select: { id: true, lprImageRetentionDays: true },
+    });
+    for (const tier of ['noise', 'archived'] as const) {
+      const where = tierCall(tier).where as { tenant: { deletedAt: unknown } };
+      expect(where.tenant.deletedAt).toBeNull();
+    }
+  });
+
   it('filters archived candidates without any time floor', async () => {
     mockConfigService.get.mockReturnValue('true');
     await makeService().run();
 
     expect(tierCall('archived').where).toEqual({
+      tenant: { deletedAt: null },
       archivedAt: { not: null },
       imageStoragePath: { not: null },
       imageDeletedAt: null,
