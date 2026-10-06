@@ -29,6 +29,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { StaffModule } from './staff/staff.module';
 import { MpWebhookModule } from './mercado-pago/mp-webhook.module';
 import { ReservationsModule } from './reservations/reservations.module';
+import { LprIgnoredPlatesModule } from './lpr-ignored-plates/lpr-ignored-plates.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { ReservationsModule } from './reservations/reservations.module';
     MetricsModule,
     StaffModule,
     ReservationsModule,
+    LprIgnoredPlatesModule,
   ],
 })
 export class AppModule {}
