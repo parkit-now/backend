@@ -1,0 +1,18 @@
+model LprIgnoredPlate {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plate      String    @db.VarChar(20)
+  notes      String?   @db.VarChar(500)
+  active     Boolean   @default(true)
+  validFrom  DateTime? @map("valid_from") @db.Date
+  validUntil DateTime? @map("valid_until") @db.Date
+  version    Int       @default(1)
+  syncSeq    Int       @default(dbgenerated("nextval('lpr_ignored_plates_sync_seq')")) @map("sync_seq")
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, syncSeq], map: "lpr_ignored_plates_tenant_sync_seq_idx")
+  @@map("lpr_ignored_plates")
+}
