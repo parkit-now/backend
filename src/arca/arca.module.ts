@@ -30,6 +30,13 @@ import { InvoicesService } from './invoices.service';
     ArcaAccountsService,
     ArcaMaintenanceService,
   ],
-  exports: [ArcaConfigService, ArcaCryptoService, InvoicesService],
+  // `ArcaAccountsService` sale para que el borrado de estacionamiento pueda
+  // desvincular ARCA (`ParkingDeletionService`).
+  exports: [
+    ArcaConfigService,
+    ArcaCryptoService,
+    InvoicesService,
+    ArcaAccountsService,
+  ],
 })
 export class ArcaModule {}

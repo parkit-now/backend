@@ -29,7 +29,7 @@ model Rate {
   reservationServices Service[]
 
   tenantId String @map("tenant_id") @db.Uuid
-  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Destino de FKs compuestas (services.reservation_rate_id): impide apuntar a
   // la tarifa de otro tenant.

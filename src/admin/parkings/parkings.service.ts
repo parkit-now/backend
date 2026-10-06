@@ -29,7 +29,13 @@ export class ParkingsService {
 
   async list(query: ListParkingsQueryDto): Promise<PaginatedParkingsDto> {
     const { page, pageSize, skip, take } = resolvePagination(query);
-    const where = tenantSearchWhere(query.search);
+    // El inventario oculta los dados de baja salvo que lo pidan explícitamente:
+    // es el único listado del producto que puede mostrarlos, porque es desde
+    // donde se restauran.
+    const where = {
+      ...tenantSearchWhere(query.search),
+      ...(query.includeDeleted ? {} : { deletedAt: null }),
+    };
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.tenant.findMany({
@@ -125,23 +131,6 @@ export class ParkingsService {
     return toParkingDto(tenant);
   }
 
-  async remove(admin: User, id: string): Promise<void> {
-    const tenant = await this.ensureExists(id);
-
-    // FK cascades drop the dependent rows (memberships, rates, entries,
-    // payment methods); audit_log.tenant_id is ON DELETE SET NULL, so the audit
-    // entry must NOT reference the tenant being removed — keep it as metadata.
-    await this.prisma.tenant.delete({ where: { id } });
-
-    await this.audit.record({
-      action: AuditActions.PARKING_DELETED,
-      entityType: 'tenant',
-      entityId: id,
-      actorUserId: admin.id,
-      metadata: { name: tenant.name },
-    });
-  }
-
   private async ensureExists(id: string): Promise<Tenant> {
     const tenant = await this.prisma.tenant.findUnique({ where: { id } });
     if (!tenant) {
@@ -162,7 +151,7 @@ export class ParkingsService {
 }
 
 /** Maps a `Tenant` row to the public `ParkingDto` (drops internal `settings`). */
-function toParkingDto(tenant: Tenant): ParkingDto {
+export function toParkingDto(tenant: Tenant): ParkingDto {
   return {
     id: tenant.id,
     name: tenant.name,
@@ -174,5 +163,7 @@ function toParkingDto(tenant: Tenant): ParkingDto {
     location: toEntityAddressDto(tenant),
     status: tenant.status,
     createdAt: tenant.createdAt,
+    deletedAt: tenant.deletedAt,
+    purgeAfter: tenant.purgeAfter,
   };
 }

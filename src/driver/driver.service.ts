@@ -144,6 +144,7 @@ export class DriverService {
 
     const tenants = await this.prisma.tenant.findMany({
       where: {
+        deletedAt: null,
         status: BranchStatus.active,
         latitude: { gte: box.minLat, lte: box.maxLat },
         longitude: { gte: box.minLng, lte: box.maxLng },
@@ -185,7 +186,11 @@ export class DriverService {
         : null;
 
     const tenants = await this.prisma.tenant.findMany({
-      where: { status: BranchStatus.active, ...tenantSearchWhere(term) },
+      where: {
+        deletedAt: null,
+        status: BranchStatus.active,
+        ...tenantSearchWhere(term),
+      },
       select: PUBLIC_TENANT_SELECT,
       orderBy: { name: 'asc' },
       // Tope de candidatos: el orden por distancia se resuelve en memoria.
@@ -362,11 +367,15 @@ export class DriverService {
     };
   }
 
-  /** Activa y con ubicación publicada; si no, para el conductor no existe. */
+  /** Viva, activa y con ubicación publicada; si no, para el conductor no existe. */
   private async findPublicTenant(parkingId: string): Promise<PublicTenant> {
     const tenant = await this.prisma.tenant.findFirst({
       where: {
         id: parkingId,
+        // Sin esto, un conductor podría RESERVAR Y PAGAR en una playa dada de
+        // baja: es el único camino del producto donde entra plata de alguien
+        // que no es miembro del tenant, así que el filtro no es cosmético.
+        deletedAt: null,
         status: BranchStatus.active,
         latitude: { not: null },
         longitude: { not: null },

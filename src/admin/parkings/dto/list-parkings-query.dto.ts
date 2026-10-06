@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationQueryDto } from '../../../utils/pagination/pagination-query.dto';
 
 /** Query for the admin parking-lot list: free-text search + pagination. */
@@ -14,4 +15,16 @@ export class ListParkingsQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(255)
   search?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Incluir los estacionamientos dados de baja, para poder restaurarlos. ' +
+      'Por defecto `false`: el inventario muestra sólo los vivos.',
+    example: true,
+  })
+  // Llega por query string, así que es el texto 'true'/'false' y no un boolean.
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsOptional()
+  @IsBoolean()
+  includeDeleted?: boolean;
 }

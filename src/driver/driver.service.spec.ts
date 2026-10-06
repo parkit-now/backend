@@ -119,12 +119,13 @@ describe('DriverService', () => {
       longitude: null,
     };
 
-    it('busca sólo entre las activas, por nombre o dirección sin distinguir mayúsculas', async () => {
+    it('busca sólo entre las vivas y activas, por nombre o dirección sin distinguir mayúsculas', async () => {
       await service.searchByName({ q: 'once' }, NOW);
 
       expect(prisma.tenant.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
+            deletedAt: null,
             status: 'active',
             OR: [
               { name: { contains: 'once', mode: 'insensitive' } },

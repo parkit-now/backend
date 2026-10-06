@@ -19,7 +19,14 @@ export class TenantsService {
     role?: MembershipRole,
   ): Promise<EntitySummaryDto[]> {
     const memberships = await this.prisma.userMembership.findMany({
-      where: { userId: user.id, ...(role ? { role } : {}) },
+      // `tenant.deletedAt: null` — un estacionamiento dado de baja desaparece
+      // del selector de sucursal. La membresía sigue existiendo (se purga con
+      // el tenant), pero no se ofrece.
+      where: {
+        userId: user.id,
+        ...(role ? { role } : {}),
+        tenant: { deletedAt: null },
+      },
       include: { tenant: true },
       orderBy: { tenant: { name: 'asc' } },
     });

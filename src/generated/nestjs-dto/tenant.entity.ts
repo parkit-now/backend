@@ -2,6 +2,7 @@
 import {Prisma,BranchStatus} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {UserMembershipEntity} from './user-membership.entity'
+import {UserEntity} from './user.entity'
 import {EntryEntity} from './entry.entity'
 import {RateEntity} from './rate.entity'
 import {ScheduleEntity} from './schedule.entity'
@@ -97,7 +98,27 @@ geocodedAt: Date  | null;
   format: `date-time`,
 })
 createdAt: Date ;
+@ApiProperty({
+  description: `NULL = vivo. Es el único campo que mira el backend para decidir si existe.`,
+  type: `string`,
+  format: `date-time`,
+})
+deletedAt: Date  | null;
+@ApiProperty({
+  description: `Desde cuándo la purga puede borrarlo. Separado de \'deletedAt\' porque la
+ventana es por borrado (\'graceDays\', 0..365), no una constante.`,
+  type: `string`,
+  format: `date-time`,
+})
+purgeAfter: Date  | null;
+@ApiProperty({
+  description: `Admin global que dio de baja. \'SET NULL\' si después se borra ese usuario:
+la baja del estacionamiento no depende de que siga existiendo.`,
+})
+deletedById: string  | null;
+deletedReason: string  | null;
 memberships?: UserMembershipEntity[] ;
+deletedBy?: UserEntity  | null;
 entries?: EntryEntity[] ;
 rates?: RateEntity[] ;
 schedules?: ScheduleEntity[] ;
