@@ -360,6 +360,7 @@ export class LprEventsService {
     const { page, pageSize, skip, take } = resolvePagination(query);
     const where: Prisma.LprDetectionEventWhereInput = {
       ...(query.status ? { status: query.status } : {}),
+      ...(query.entryIds?.length ? { entryId: { in: query.entryIds } } : {}),
       archivedAt: query.archived ? { not: null } : null,
       ...(query.firstSeenFrom || query.firstSeenTo
         ? {
