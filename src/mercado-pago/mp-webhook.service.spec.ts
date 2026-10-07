@@ -54,6 +54,8 @@ describe('MpWebhookService', () => {
     status: PaymentIntentStatus.pending,
     amount: new Prisma.Decimal('1500.00'),
     mpOrderId: ORDER,
+    mpPaymentReferenceId: null,
+    payerCuit: null,
     mpStatus: 'created',
     mpStatusDetail: 'created',
     expiresAt: EPOCH,

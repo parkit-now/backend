@@ -566,7 +566,42 @@ describe('MpApiClient', () => {
         transactionAmount: 1500,
         transactionAmountRefunded: 750,
         collectorId: '446566691',
+        payerIdentification: null,
       });
+    });
+
+    it('lee reference_id sin confundir PAY, y solo extrae la identificacion del pagador', async () => {
+      fetchMock.mockResolvedValueOnce(
+        respond(200, {
+          id: 'order',
+          transactions: {
+            payments: [
+              { id: 'PAYabc', reference_id: '123', status: 'processed' },
+            ],
+          },
+        }),
+      );
+      const order = await client.getOrder(TOKEN, 'order');
+      expect(order.payments).toEqual([
+        { referenceId: '123', status: 'processed' },
+      ]);
+      fetchMock.mockResolvedValueOnce(
+        respond(200, {
+          id: 123,
+          payer: {
+            identification: { type: 'CUIT', number: '20427205208' },
+            email: 'private@example.test',
+            first_name: 'Private',
+            phone: 'private',
+          },
+        }),
+      );
+      const result = await client.getPayment(TOKEN, '123');
+      expect(result.payerIdentification).toEqual({
+        type: 'CUIT',
+        number: '20427205208',
+      });
+      expect(JSON.stringify(result)).not.toContain('private');
     });
 
     it('getPayment: un 404 da 502 MP_PAYMENT_READ_FAILED', async () => {

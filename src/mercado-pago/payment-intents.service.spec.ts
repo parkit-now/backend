@@ -67,6 +67,8 @@ describe('PaymentIntentsService', () => {
     status: PaymentIntentStatus.created,
     amount: new Prisma.Decimal('1500.00'),
     mpOrderId: null,
+    mpPaymentReferenceId: null,
+    payerCuit: null,
     mpStatus: null,
     mpStatusDetail: null,
     expiresAt: new Date(Date.now() + 300_000),

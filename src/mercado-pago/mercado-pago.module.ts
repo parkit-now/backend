@@ -11,6 +11,8 @@ import { MpSignatureService } from './mp-signature.service';
 import { MpTokenService } from './mp-token.service';
 import { PaymentIntentsController } from './payment-intents.controller';
 import { PaymentIntentsService } from './payment-intents.service';
+import { MpInvoiceReceiverController } from './mp-invoice-receiver.controller';
+import { MpInvoiceReceiverService } from './mp-invoice-receiver.service';
 
 /**
  * Integración con Mercado Pago: configuración validada al boot, cifrado de
@@ -62,6 +64,7 @@ import { PaymentIntentsService } from './payment-intents.service';
     MpAccountsController,
     MpOauthController,
     PaymentIntentsController,
+    MpInvoiceReceiverController,
   ],
   providers: [
     MpConfigService,
@@ -71,6 +74,7 @@ import { PaymentIntentsService } from './payment-intents.service';
     MpTokenService,
     MpAccountsService,
     PaymentIntentsService,
+    MpInvoiceReceiverService,
   ],
   exports: [
     MpConfigService,

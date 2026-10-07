@@ -49,6 +49,14 @@ que resuelve el re-POST idempotente.`,
 })
 mpOrderId: string  | null;
 @ApiProperty({
+  description: `Referencia del pago verificado, no el identificador PAY de la orden.`,
+})
+mpPaymentReferenceId: string  | null;
+@ApiProperty({
+  description: `CUIT del pagador verificado contra el pago, editable como receptor en UI.`,
+})
+payerCuit: string  | null;
+@ApiProperty({
   description: `El \'status\' CRUDO de Mercado Pago (\'created\', \'processed\', \'canceled\',
 \'refunded\', \'expired\'). \'String\' y no enum a propósito: MP puede sumar un
 valor mañana y eso no puede tirar abajo el webhook. Diagnóstico, no
