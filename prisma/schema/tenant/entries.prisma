@@ -33,6 +33,7 @@ model Entry {
   version   Int      @default(1)
   syncSeq   Int      @default(dbgenerated("nextval('entries_sync_seq')")) @map("sync_seq")
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   // Snapshot de tarifa — se congela al ingresar.
   //

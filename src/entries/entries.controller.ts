@@ -24,6 +24,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentMembership } from '../auth/decorators/entity-role.decorator';
 import { TenantInterceptor } from '../database/tenant.interceptor';
 import { CloseEntryDto } from './dto/close-entry.dto';
+import { DeleteEntryDto } from './dto/delete-entry.dto';
+import { DeleteEntryResponseDto } from './dto/delete-entry-response.dto';
 import { CloseEntryResponseDto } from './dto/close-entry-response.dto';
 import { CorrectEntryDto } from './dto/correct-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
@@ -76,6 +78,19 @@ export class EntriesController {
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   async create(@Body() dto: CreateEntryDto) {
     return this.entriesService.createEntry(dto);
+  }
+
+  @Post(':entryId/delete')
+  @ApiOperation({ summary: 'Soft-delete a stay and its payments (owner only)' })
+  @ApiOkResponse({ type: DeleteEntryResponseDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async deleteEntry(
+    @Param('entryId', ParseUUIDPipe) entryId: string,
+    @Body() dto: DeleteEntryDto,
+    @CurrentUser() user: User,
+    @CurrentMembership() membership: UserMembership | null | undefined,
+  ) {
+    return this.entriesService.deleteEntry(entryId, dto, user, membership);
   }
 
   @Patch(':entryId/correction')

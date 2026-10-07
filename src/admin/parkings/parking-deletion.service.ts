@@ -99,7 +99,9 @@ export class ParkingDeletionService {
       arcaAccount,
     ] = await Promise.all([
       this.prisma.userMembership.count({ where: { tenantId: id } }),
-      this.prisma.entry.count({ where: { tenantId: id, leftAt: null } }),
+      this.prisma.entry.count({
+        where: { tenantId: id, leftAt: null, deletedAt: null },
+      }),
       this.prisma.entry.count({ where: { tenantId: id } }),
       this.prisma.cashSession.count({
         where: { tenantId: id, closedAt: null },

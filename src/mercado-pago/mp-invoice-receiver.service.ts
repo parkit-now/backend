@@ -27,7 +27,7 @@ export class MpInvoiceReceiverService {
   ): Promise<InvoiceReceiverSuggestionDto> {
     const tenantId = this.context.getTenantIdOrThrow();
     const entry = await this.prisma.getTenantClient().entry.findFirst({
-      where: { id: entryId },
+      where: { id: entryId, deletedAt: null },
       select: { id: true },
     });
     if (!entry) throw this.notFound(ErrorCodes.NOT_FOUND);

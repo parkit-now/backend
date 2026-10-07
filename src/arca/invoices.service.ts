@@ -354,7 +354,7 @@ export class InvoicesService {
     }
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const entry = await tx.entry.findFirst({
-      where: { tenantId, id: entryId },
+      where: { tenantId, id: entryId, deletedAt: null },
       select: { leftAt: true, amountPaid: true },
     });
     if (!entry) {
@@ -680,6 +680,11 @@ export class InvoicesService {
 
     const prepared = await this.prisma.$transaction(async (tx) => {
       await lockEntryInvoice(tx, tenantId, current.entryId);
+      const activeEntry = await tx.entry.findFirst({
+        where: { tenantId, id: current.entryId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!activeEntry) throw this.notInvoiceable(current.entryId);
       let fresh = await tx.invoice.findFirstOrThrow({
         where: { id: invoiceId, tenantId },
       });

@@ -56,6 +56,13 @@ exitImageUrl?: string;
 @IsOptional()
 @IsString()
 exitCameraId?: string;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+@IsOptional()
+@IsRFC3339()
+deletedAt?: Date;
 @IsOptional()
 @IsString()
 rateSnapshotName?: string;

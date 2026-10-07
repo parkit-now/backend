@@ -217,7 +217,12 @@ export class CashSessionsService {
 
       // Find active entries (still in the lot) sorted by enteredAt for renumbering
       const activeEntries = await tx.entry.findMany({
-        where: { tenantId, cashSessionId: sessionId, leftAt: null },
+        where: {
+          tenantId,
+          cashSessionId: sessionId,
+          leftAt: null,
+          deletedAt: null,
+        },
         orderBy: [{ enteredAt: 'asc' }],
         select: { id: true },
       });
@@ -225,7 +230,12 @@ export class CashSessionsService {
       if (!openNextSession) {
         if (activeEntries.length > 0) {
           await tx.entry.updateMany({
-            where: { tenantId, cashSessionId: sessionId, leftAt: null },
+            where: {
+              tenantId,
+              cashSessionId: sessionId,
+              leftAt: null,
+              deletedAt: null,
+            },
             data: { cashSessionId: null, ticketNumber: null },
           });
         }

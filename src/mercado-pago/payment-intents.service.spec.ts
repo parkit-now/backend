@@ -19,6 +19,8 @@ describe('PaymentIntentsService', () => {
   let service: PaymentIntentsService;
 
   const prisma = {
+    $queryRaw: jest.fn(),
+    $transaction: jest.fn(),
     paymentIntent: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -110,6 +112,10 @@ describe('PaymentIntentsService', () => {
 
     // Defaults del camino feliz; cada test sobreescribe sólo lo suyo.
     prisma.paymentIntent.findUnique.mockResolvedValue(null);
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
     prisma.paymentIntent.updateMany.mockResolvedValue({ count: 1 });
     prisma.paymentIntent.count.mockResolvedValue(0);
     prisma.entry.findFirst.mockResolvedValue(openEntry);
@@ -133,6 +139,24 @@ describe('PaymentIntentsService', () => {
   });
 
   describe('create', () => {
+    it('no crea QR si el ingreso fue eliminado mientras preparaba el cobro', async () => {
+      prisma.entry.findFirst
+        .mockResolvedValueOnce(openEntry)
+        .mockResolvedValueOnce(null);
+      const problem = await problemOf(
+        service.create(TENANT, user, {
+          id: INTENT,
+          entryId: ENTRY,
+          amount: 1500,
+        }),
+      );
+      expect(problem).toMatchObject({
+        code: ErrorCodes.PAYMENT_INTENT_ENTRY_CLOSED,
+      });
+      expect(prisma.paymentIntent.create).not.toHaveBeenCalled();
+      expect(mpApi.createOrder).not.toHaveBeenCalled();
+    });
+
     it('persiste la fila ANTES de llamar a MP, guarda el mpOrderId y queda pending', async () => {
       prisma.paymentIntent.findFirst.mockResolvedValue(
         makeIntent({

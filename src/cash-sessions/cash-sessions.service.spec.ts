@@ -331,7 +331,12 @@ describe('CashSessionsService.closeSession', () => {
 
     expect(tx.entry.update).not.toHaveBeenCalled();
     expect(tx.entry.updateMany).toHaveBeenCalledWith({
-      where: { tenantId: TENANT, cashSessionId: SESSION, leftAt: null },
+      where: {
+        tenantId: TENANT,
+        cashSessionId: SESSION,
+        leftAt: null,
+        deletedAt: null,
+      },
       data: { cashSessionId: null, ticketNumber: null },
     });
   });

@@ -205,6 +205,7 @@ function setup(
       {
         id: ENTRY,
         tenantId: TENANT,
+        deletedAt: null,
         amountPaid: 1210,
         version: 1,
         paymentTransactions: [],

@@ -104,6 +104,7 @@ describe('EntriesService', () => {
       // Lo que este test cuida de verdad: el aislamiento por tenant.
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
       expect(mockTenant.entry.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null },
         orderBy: [{ enteredAt: 'desc' }],
       });
     });

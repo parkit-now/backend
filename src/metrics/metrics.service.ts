@@ -454,6 +454,7 @@ export class MetricsService {
         _sum: { amountPaid: true },
         where: {
           leftAt,
+          deletedAt: null,
           ...vehicleWhere(query),
           // With a session: the stays it collected. A close writes all of its
           // payments under one session, so their `amountPaid` equals the
@@ -474,6 +475,7 @@ export class MetricsService {
             // relation filter, and without it the range cannot use the index.
             tenantId: this.tenantContext.getTenantIdOrThrow(),
             leftAt,
+            deletedAt: null,
             ...vehicleWhere(query),
           },
         },
@@ -544,6 +546,7 @@ export class MetricsService {
     const stays = await tenantPrisma.entry.findMany({
       where: {
         leftAt: { gte: from, lt: to },
+        deletedAt: null,
         ...vehicleWhere(query),
         ...(await this.staysOfSessionWhere(query.cashSessionId)),
       },
@@ -676,7 +679,10 @@ export class MetricsService {
     const paid = await this.prisma.getTenantClient().entry.aggregate({
       _min: { leftAt: true },
       _max: { leftAt: true },
-      where: this.paymentsWhere({ cashSessionId: session.id }),
+      where: {
+        deletedAt: null,
+        ...this.paymentsWhere({ cashSessionId: session.id }),
+      },
     });
     const firstPaid = paid._min?.leftAt ?? null;
     const lastPaid = paid._max?.leftAt ?? null;
@@ -746,7 +752,7 @@ export class MetricsService {
 
     if (!query.paymentMethod && !query.cashSessionId) {
       const entries = await tenantPrisma.entry.findMany({
-        where: { leftAt, ...vehicleWhere(query) },
+        where: { leftAt, deletedAt: null, ...vehicleWhere(query) },
         select: { id: true, leftAt: true, amountPaid: true },
       });
       return entries.map((entry) => ({
@@ -772,6 +778,7 @@ export class MetricsService {
           // `entries`. Restating the tenant here keeps the index in play.
           tenantId: this.tenantContext.getTenantIdOrThrow(),
           leftAt,
+          deletedAt: null,
           ...vehicleWhere(query),
         },
       },
@@ -798,6 +805,7 @@ export class MetricsService {
     const entries = await tenantPrisma.entry.findMany({
       where: {
         enteredAt: { gte: from, lt: to },
+        deletedAt: null,
         ...vehicleWhere(query),
         // With a method or session filter, "vehicles in" means the stays that
         // ended up paying that way — otherwise the two series would answer
@@ -919,6 +927,7 @@ export class MetricsService {
     const entries = await this.prisma.getTenantClient().entry.findMany({
       where: {
         leftAt: { gte: from, lt: to },
+        deletedAt: null,
         prepaidAmountArs: { gt: 0 },
         ...vehicleWhere(filter),
         ...(session ? { OR: this.prepaidSessionBranches(session) } : {}),
@@ -1016,12 +1025,12 @@ export class MetricsService {
       tenantPrisma.entry.groupBy({
         by: ['vehicleType'],
         _count: { _all: true },
-        where: { leftAt: null },
+        where: { leftAt: null, deletedAt: null },
       }),
       tenantPrisma.entry.groupBy({
         by: ['vehicleCategory'],
         _count: { _all: true },
-        where: { leftAt: null },
+        where: { leftAt: null, deletedAt: null },
       }),
     ]);
 
@@ -1065,6 +1074,7 @@ export class MetricsService {
         _sum: { amountPaid: true, prepaidAmountArs: true },
         where: {
           leftAt: { gte: from, lt: to },
+          deletedAt: null,
           ...vehicleWhere(query),
           ...(await this.staysOfSessionWhere(query.cashSessionId)),
         },
@@ -1135,7 +1145,7 @@ export class MetricsService {
         where: { id: tenantId },
         select: { settings: true },
       }),
-      tenantPrisma.entry.count({ where: { leftAt: null } }),
+      tenantPrisma.entry.count({ where: { leftAt: null, deletedAt: null } }),
       // Reservas de hoy que retienen un lugar hasta que el auto entra. Con el
       // auto adentro (checked_in) lo cuenta su ingreso: así "Libres ahora"
       // baja en 1 y no en 2. Misma regla que la app del conductor.
@@ -1178,10 +1188,12 @@ export class MetricsService {
       tenantPrisma.entry.aggregate({
         _sum: { amountPaid: true, prepaidAmountArs: true },
         _count: true,
-        where: { leftAt: { gte, lt } },
+        where: { leftAt: { gte, lt }, deletedAt: null },
       }),
       this.reservationOnlyTotal(gte, lt),
-      tenantPrisma.entry.count({ where: { enteredAt: { gte, lt } } }),
+      tenantPrisma.entry.count({
+        where: { enteredAt: { gte, lt }, deletedAt: null },
+      }),
     ]);
     const reservationRevenue =
       Number(closed._sum.prepaidAmountArs ?? 0) + reservationOnly;
@@ -1212,7 +1224,7 @@ export class MetricsService {
     asOf: Date,
   ): Promise<{ value: number; count: number }> {
     const rows = await this.prisma.getTenantClient().entry.findMany({
-      where: { leftAt: null },
+      where: { leftAt: null, deletedAt: null },
       select: {
         enteredAt: true,
         rateSnapshotHourPriceArs: true,
@@ -1244,7 +1256,7 @@ export class MetricsService {
     const [result, reservationOnly] = await Promise.all([
       this.prisma.getTenantClient().entry.aggregate({
         _sum: { amountPaid: true, prepaidAmountArs: true },
-        where: { leftAt: { gte, lt } },
+        where: { leftAt: { gte, lt }, deletedAt: null },
       }),
       this.reservationOnlyTotal(gte, lt),
     ]);
@@ -1265,7 +1277,7 @@ export class MetricsService {
     const [result, reservationOnly] = await Promise.all([
       this.prisma.getTenantClient().entry.aggregate({
         _sum: { amountPaid: true, prepaidAmountArs: true },
-        where: { leftAt: { gte: from, lt: asOf } },
+        where: { leftAt: { gte: from, lt: asOf }, deletedAt: null },
       }),
       this.reservationOnlyTotal(from, asOf),
     ]);

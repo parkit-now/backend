@@ -127,7 +127,7 @@ export class RatesService {
 
     const groups = await tenantPrisma.entry.groupBy({
       by: ['rateId'],
-      where: { tenantId, leftAt: null },
+      where: { tenantId, leftAt: null, deletedAt: null },
       _count: { _all: true },
     });
 
@@ -254,7 +254,7 @@ export class RatesService {
     // `findMany` + `updateMany` por ids, y no un `updateMany` directo por
     // `rateId`: así el conjunto que se audita es EXACTAMENTE el que se escribió.
     const targets = await tx.entry.findMany({
-      where: { tenantId, rateId: rate.id, leftAt: null },
+      where: { tenantId, rateId: rate.id, leftAt: null, deletedAt: null },
       select: { id: true, plate: true, ticketNumber: true },
     });
 
