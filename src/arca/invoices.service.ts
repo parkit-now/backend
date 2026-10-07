@@ -5,7 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import type { ArcaAccount, Invoice, Prisma } from '@prisma/client';
+import { Prisma, type ArcaAccount, type Invoice } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
@@ -25,6 +25,8 @@ import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceDto } from './dto/invoice.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
+import { InvoicePreviewDto } from './dto/invoice-preview.dto';
+import { lockEntryInvoice } from './entry-invoice-lock';
 import type { InvoiceReceiverDto } from './dto/invoice-receiver.dto';
 import type { TaxpayerDto } from './dto/taxpayer.dto';
 import type {
@@ -261,6 +263,7 @@ export class InvoicesService {
     entryId: string,
     userId?: string,
     receiverCuit?: string,
+    expectedAmount?: number,
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const cuit = receiverCuit ? normalizeCuit(receiverCuit) : null;
@@ -279,55 +282,114 @@ export class InvoicesService {
       throw this.notLinked(entryId);
     }
 
-    let invoice = await this.prisma.invoice.findFirst({
-      where: { tenantId, entryId },
-      select: { id: true },
+    const invoice = await this.prisma.$transaction(async (tx) => {
+      await lockEntryInvoice(tx, tenantId, entryId);
+      const existing = await tx.invoice.findFirst({
+        where: { tenantId, entryId },
+      });
+      if (existing) return existing;
+      const amount = await this.resolveAmount(tx, entryId, null);
+      this.assertExpectedAmount(entryId, amount, expectedAmount);
+      return tx.invoice.create({
+        data: { tenantId, entryId, status: 'pending', impTotal: amount },
+      });
     });
 
-    if (!invoice) {
-      // Estadía cobrada antes de vincular ARCA, o con medios desmarcados de
-      // una playa que recién vinculó: se factura a pedido.
-      const entry = await this.prisma.entry.findFirst({
-        where: { tenantId, id: entryId },
-        select: { leftAt: true, amountPaid: true },
-      });
-      if (!entry) {
-        throw new FormattedException(
-          'Not Found',
-          HttpStatus.NOT_FOUND,
-          `Entry ${entryId} not found in this entity.`,
-          this.instance(entryId),
-          ErrorCodes.NOT_FOUND,
-        );
-      }
-      if (!entry.leftAt || !(Number(entry.amountPaid) > 0)) {
-        throw this.notInvoiceable(entryId);
-      }
-      invoice = await this.prisma.invoice.upsert({
-        where: { entryId },
-        create: {
-          tenantId,
-          entryId,
-          status: 'pending',
-          impTotal: Number(entry.amountPaid),
-        },
-        update: {},
-        select: { id: true },
-      });
+    return this.issue(invoice.id, userId, {
+      throwOnConflict: true,
+      receiverCuit: cuit,
+      expectedAmount,
+    });
+  }
+
+  async previewForEntry(entryId: string): Promise<InvoicePreviewDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
+      throw this.notLinked(entryId);
     }
-
-    // El receptor se fija ANTES de tomar la factura; una ya emitida o en
-    // curso no se toca (el `issue` de abajo devuelve el conflicto).
-    await this.prisma.invoice.updateMany({
-      where: {
-        id: invoice.id,
-        tenantId,
-        status: { in: ['pending', 'error', 'not_required'] },
-      },
-      data: receiverFields(cuit),
+    return this.prisma.$transaction(async (tx) => {
+      await lockEntryInvoice(tx, tenantId, entryId);
+      const invoice = await tx.invoice.findFirst({
+        where: { tenantId, entryId },
+      });
+      const amount = await this.resolveAmount(tx, entryId, invoice);
+      const conflict = invoice
+        ? this.conflictFor({ ...invoice, impTotal: new Prisma.Decimal(amount) })
+        : null;
+      if (conflict) throw conflict;
+      return { amount };
     });
+  }
 
-    return this.issue(invoice.id, userId, { throwOnConflict: true });
+  async updatePendingAmount(
+    tx: Prisma.TransactionClient,
+    entryId: string,
+    amount: number,
+  ): Promise<void> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    await tx.invoice.updateMany({
+      where: {
+        tenantId,
+        entryId,
+        status: { in: ['pending', 'error', 'not_required'] },
+        cbteNro: null,
+      },
+      data: { impTotal: amount },
+    });
+  }
+
+  private async resolveAmount(
+    tx: Prisma.TransactionClient,
+    entryId: string,
+    invoice: Invoice | null,
+  ): Promise<number> {
+    // An uncertain ARCA request must be reconciled using its original snapshot.
+    if (
+      invoice &&
+      (invoice.status === 'issued' ||
+        invoice.status === 'issuing' ||
+        invoice.cbteNro !== null)
+    ) {
+      return Number(invoice.impTotal);
+    }
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const entry = await tx.entry.findFirst({
+      where: { tenantId, id: entryId },
+      select: { leftAt: true, amountPaid: true },
+    });
+    if (!entry) {
+      throw new FormattedException(
+        'Not Found',
+        HttpStatus.NOT_FOUND,
+        `Entry ${entryId} not found in this entity.`,
+        this.instance(entryId),
+        ErrorCodes.NOT_FOUND,
+      );
+    }
+    const amount = Number(entry.amountPaid);
+    if (!entry.leftAt || !Number.isFinite(amount) || !(amount > 0)) {
+      throw this.notInvoiceable(entryId);
+    }
+    return Math.round(amount * 100) / 100;
+  }
+
+  private assertExpectedAmount(
+    entryId: string,
+    amount: number,
+    expected?: number,
+  ): void {
+    if (
+      expected !== undefined &&
+      Math.round(expected * 100) !== Math.round(amount * 100)
+    ) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'The invoice amount changed. Confirm the current amount before retrying.',
+        this.instance(entryId),
+        ErrorCodes.INVOICE_AMOUNT_CHANGED,
+      );
+    }
   }
 
   /**
@@ -583,7 +645,14 @@ export class InvoicesService {
     entryId: string,
   ): Promise<boolean> {
     const invoice = await tx.invoice.findFirst({
-      where: { tenantId, entryId, status: { in: ['issued', 'issuing'] } },
+      where: {
+        tenantId,
+        entryId,
+        OR: [
+          { status: { in: ['issued', 'issuing'] } },
+          { cbteNro: { not: null } },
+        ],
+      },
       select: { id: true },
     });
     return invoice !== null;
@@ -592,7 +661,11 @@ export class InvoicesService {
   private async issue(
     invoiceId: string,
     userId: string | undefined,
-    opts: { readonly throwOnConflict: boolean },
+    opts: {
+      readonly throwOnConflict: boolean;
+      readonly receiverCuit?: string | null;
+      readonly expectedAmount?: number;
+    },
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const current = await this.prisma.invoice.findFirstOrThrow({
@@ -605,23 +678,92 @@ export class InvoicesService {
       return toSummary(current);
     }
 
-    const conflict = this.conflictFor(current);
-    if (conflict) {
-      if (opts.throwOnConflict) throw conflict;
-      return toSummary(current);
-    }
+    const prepared = await this.prisma.$transaction(async (tx) => {
+      await lockEntryInvoice(tx, tenantId, current.entryId);
+      let fresh = await tx.invoice.findFirstOrThrow({
+        where: { id: invoiceId, tenantId },
+      });
+      // Resolve and validate under the same lock used by history corrections.
+      const amount = await this.resolveAmount(tx, fresh.entryId, fresh);
+      const conflict = this.conflictFor({
+        ...fresh,
+        impTotal: new Prisma.Decimal(amount),
+      });
+      if (conflict) {
+        if (opts.throwOnConflict) throw conflict;
+        return { invoice: fresh, claimed: false };
+      }
+      this.assertExpectedAmount(fresh.entryId, amount, opts.expectedAmount);
+      if (fresh.status !== 'issuing' && fresh.cbteNro === null) {
+        fresh = await tx.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            impTotal: amount,
+            ...(opts.receiverCuit !== undefined
+              ? receiverFields(opts.receiverCuit)
+              : {}),
+          },
+        });
+      }
 
-    // El tope es de consumidor final: con CUIT el receptor ya está identificado.
-    const total = Number(current.impTotal);
-    if (
-      total >= CONSUMIDOR_FINAL_ID_THRESHOLD &&
-      current.receptorDocTipo !== DOC_TIPO_CUIT
-    ) {
-      const updated = await this.markPending(
-        current,
-        ErrorCodes.INVOICE_RECEIVER_REQUIRED,
-      );
-      if (opts.throwOnConflict) {
+      const pendingCode =
+        amount >= CONSUMIDOR_FINAL_ID_THRESHOLD &&
+        fresh.receptorDocTipo !== DOC_TIPO_CUIT
+          ? ErrorCodes.INVOICE_RECEIVER_REQUIRED
+          : this.isCertExpired(account)
+            ? ErrorCodes.ARCA_CERT_EXPIRED
+            : null;
+      if (pendingCode) {
+        // Do not release an uncertain attempt: its reconciliation still owns the snapshot.
+        if (fresh.status !== 'issuing') {
+          fresh = await tx.invoice.update({
+            where: { id: invoiceId },
+            data: {
+              status: 'pending',
+              errorCode: pendingCode,
+              errorMessage: DEFAULT_MESSAGES[pendingCode] ?? null,
+            },
+          });
+        }
+        return { invoice: fresh, claimed: false, pendingCode };
+      }
+
+      const now = new Date();
+      const claimed = await tx.invoice.updateMany({
+        where: {
+          id: invoiceId,
+          tenantId,
+          OR: [
+            { status: { in: ['pending', 'error', 'not_required'] } },
+            {
+              status: 'issuing',
+              issuingStartedAt: {
+                lt: new Date(now.getTime() - STALE_ISSUING_MS),
+              },
+            },
+          ],
+        },
+        data: {
+          status: 'issuing',
+          issuingStartedAt: now,
+          attempts: { increment: 1 },
+          errorCode: null,
+          errorMessage: null,
+          issuedByUserId: userId ?? null,
+        },
+      });
+      fresh = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
+      if (claimed.count === 0) {
+        const raced = this.conflictFor(fresh);
+        if (raced && opts.throwOnConflict) throw raced;
+      }
+      return { invoice: fresh, claimed: claimed.count > 0 };
+    });
+    if (!prepared.claimed) {
+      if (
+        prepared.pendingCode === ErrorCodes.INVOICE_RECEIVER_REQUIRED &&
+        opts.throwOnConflict
+      ) {
         throw new FormattedException(
           'Unprocessable Entity',
           HttpStatus.UNPROCESSABLE_ENTITY,
@@ -630,51 +772,10 @@ export class InvoicesService {
           ErrorCodes.INVOICE_RECEIVER_REQUIRED,
         );
       }
-      return toSummary(updated);
+      return toSummary(prepared.invoice);
     }
 
-    if (this.isCertExpired(account)) {
-      return toSummary(
-        await this.markPending(current, ErrorCodes.ARCA_CERT_EXPIRED),
-      );
-    }
-
-    // Toma atómica. Un `issuing` viejo también se puede tomar: su emisión
-    // murió, y lo primero que se hace adentro es reconciliar su número.
-    const now = new Date();
-    const claimed = await this.prisma.invoice.updateMany({
-      where: {
-        id: invoiceId,
-        tenantId,
-        OR: [
-          { status: { in: ['pending', 'error', 'not_required'] } },
-          {
-            status: 'issuing',
-            issuingStartedAt: {
-              lt: new Date(now.getTime() - STALE_ISSUING_MS),
-            },
-          },
-        ],
-      },
-      data: {
-        status: 'issuing',
-        issuingStartedAt: now,
-        attempts: { increment: 1 },
-        errorCode: null,
-        errorMessage: null,
-        issuedByUserId: userId ?? null,
-      },
-    });
-    if (claimed.count === 0) {
-      const fresh = await this.prisma.invoice.findUniqueOrThrow({
-        where: { id: invoiceId },
-      });
-      const raced = this.conflictFor(fresh);
-      if (raced && opts.throwOnConflict) throw raced;
-      return toSummary(fresh);
-    }
-
-    await this.emit(current, account);
+    await this.emit(prepared.invoice, account);
     return toSummary(
       await this.prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } }),
     );
@@ -1106,17 +1207,6 @@ export class InvoicesService {
     if (!(Number(invoice.impTotal) > 0))
       return this.notInvoiceable(invoice.entryId);
     return null;
-  }
-
-  private markPending(invoice: Invoice, code: ErrorCode): Promise<Invoice> {
-    return this.prisma.invoice.update({
-      where: { id: invoice.id },
-      data: {
-        status: 'pending',
-        errorCode: code,
-        errorMessage: DEFAULT_MESSAGES[code] ?? null,
-      },
-    });
   }
 
   private async markError(

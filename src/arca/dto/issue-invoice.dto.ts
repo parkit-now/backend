@@ -1,7 +1,22 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class IssueInvoiceDto {
+  @ApiPropertyOptional({
+    description: 'Importe confirmado por el operador. Si cambio, no se emite.',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  expectedAmount?: number;
+
   @ApiPropertyOptional({
     description:
       'CUIT del cliente, con o sin guiones. La letra la decide el padrón: A ' +

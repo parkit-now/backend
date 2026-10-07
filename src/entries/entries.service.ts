@@ -4,6 +4,7 @@ import type { PaymentMethodType, User, UserMembership } from '@prisma/client';
 import { AuditActions } from '../audit/audit.service';
 import type { CreatedInvoice } from '../arca/invoices.service';
 import { InvoicesService } from '../arca/invoices.service';
+import { lockEntryInvoice } from '../arca/entry-invoice-lock';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
@@ -823,6 +824,7 @@ export class EntriesService {
     const role = actorRole(membership);
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.invoices) await lockEntryInvoice(tx, tenantId, entryId);
       const current = await tx.entry.findFirst({
         where: { tenantId, id: entryId },
         include: { cashSession: true, paymentTransactions: true },
@@ -1006,6 +1008,14 @@ export class EntriesService {
         where: { id: entryId },
         data: updateData,
       });
+
+      if (data.payments !== undefined && this.invoices) {
+        await this.invoices.updatePendingAmount(
+          tx,
+          entryId,
+          Number(nextAmountPaid),
+        );
+      }
 
       if (data.payments !== undefined) {
         const deletedAt = new Date();
