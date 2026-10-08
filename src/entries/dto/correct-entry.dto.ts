@@ -149,6 +149,15 @@ export class CorrectEntryDto {
   manuallyInvoiced?: boolean;
 
   @ApiPropertyOptional({
+    description: 'Número de la factura emitida fuera de Parkit.',
+    maxLength: 40,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  manualInvoiceNumber?: string;
+
+  @ApiPropertyOptional({
     description: 'Required for operator changes to ingreso, egreso or amounts.',
     maxLength: 500,
   })

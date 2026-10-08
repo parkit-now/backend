@@ -152,6 +152,9 @@ export class EntryDto {
   })
   manuallyInvoiced: boolean;
 
+  @ApiPropertyOptional({ maxLength: 40, nullable: true })
+  manualInvoiceNumber: string | null;
+
   @ApiProperty({ type: Number })
   version: number;
 

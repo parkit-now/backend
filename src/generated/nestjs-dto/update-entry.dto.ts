@@ -37,6 +37,9 @@ leftAt?: Date;
 amountPaid?: Prisma.Decimal;
 @IsOptional()
 @IsString()
+manualInvoiceNumber?: string;
+@IsOptional()
+@IsString()
 vehicleType?: string;
 @IsOptional()
 @IsString()

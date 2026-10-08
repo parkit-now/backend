@@ -65,6 +65,7 @@ type EntryAuditSnapshot = {
   cashSessionId: string | null;
   ticketNumber: number | null;
   manuallyInvoiced: boolean;
+  manualInvoiceNumber: string | null;
   /** Prepago de la reserva vinculada: lo sugerido es el excedente. */
   prepaidAmountArs: number | null;
   payments: PaymentSnapshot[];
@@ -132,6 +133,7 @@ function toDto(entry: PrismaEntry): EntryDto {
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
+    manualInvoiceNumber: entry.manualInvoiceNumber,
     source: entry.source,
     vehicleType: entry.vehicleType,
     vehicleTypeId: entry.vehicleTypeId,
@@ -393,6 +395,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
+    manualInvoiceNumber: entry.manualInvoiceNumber,
     prepaidAmountArs: toNumber(entry.prepaidAmountArs),
     payments: activePayments(entry),
   };
@@ -422,6 +425,7 @@ function diffSnapshots(
     'rateSnapshotFractionPriceArs',
     'rateSnapshotMediaEstadiaPriceArs',
     'manuallyInvoiced',
+    'manualInvoiceNumber',
     'payments',
   ];
 
@@ -1092,12 +1096,17 @@ export class EntriesService {
         );
       }
 
-      // Marcar «Facturada» a mano no toca la plata: se permite también con la
-      // caja cerrada, que es justo cuando el dueño revisa qué facturó.
-      const onlyManualInvoice = Object.entries(data).every(
-        ([key, value]) => key === 'manuallyInvoiced' || value === undefined,
+      // En una caja cerrada solo se admiten datos no económicos. Las notas
+      // requieren dueño; la marca y el número manual conservan su permiso actual.
+      const allowedClosedFields = new Set([
+        'manuallyInvoiced',
+        'manualInvoiceNumber',
+      ]);
+      if (role === 'owner') allowedClosedFields.add('notes');
+      const onlyAllowedClosedFields = Object.entries(data).every(
+        ([key, value]) => value === undefined || allowedClosedFields.has(key),
       );
-      if (current.cashSession?.closedAt && !onlyManualInvoice) {
+      if (current.cashSession?.closedAt && !onlyAllowedClosedFields) {
         throw new FormattedException(
           'Conflict',
           HttpStatus.CONFLICT,
@@ -1244,6 +1253,14 @@ export class EntriesService {
       }
       if (data.manuallyInvoiced !== undefined) {
         updateData.manuallyInvoiced = data.manuallyInvoiced;
+      }
+      if (data.manuallyInvoiced === false) {
+        updateData.manualInvoiceNumber = null;
+      } else if (data.manualInvoiceNumber !== undefined) {
+        updateData.manualInvoiceNumber =
+          (data.manuallyInvoiced ?? current.manuallyInvoiced)
+            ? data.manualInvoiceNumber.trim() || null
+            : null;
       }
 
       await tx.entry.update({
