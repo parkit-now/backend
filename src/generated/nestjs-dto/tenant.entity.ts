@@ -17,6 +17,8 @@ import {CashSessionEntity} from './cash-session.entity'
 import {PaymentTransactionEntity} from './payment-transaction.entity'
 import {WhitelistEntity} from './whitelist.entity'
 import {LprIgnoredPlateEntity} from './lpr-ignored-plate.entity'
+import {ClientEntity} from './client.entity'
+import {ClientPlateEntity} from './client-plate.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {MpAccountEntity} from './mp-account.entity'
 import {MpOauthStateEntity} from './mp-oauth-state.entity'
@@ -134,6 +136,8 @@ cashSessions?: CashSessionEntity[] ;
 paymentTransactions?: PaymentTransactionEntity[] ;
 whitelists?: WhitelistEntity[] ;
 lprIgnoredPlates?: LprIgnoredPlateEntity[] ;
+clients?: ClientEntity[] ;
+clientPlates?: ClientPlateEntity[] ;
 lprDetectionEvents?: LprDetectionEventEntity[] ;
 mpAccount?: MpAccountEntity  | null;
 mpOauthStates?: MpOauthStateEntity[] ;

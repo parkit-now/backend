@@ -1,0 +1,34 @@
+model Client {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cuit       String?   @db.VarChar(11)
+  name       String?   @db.VarChar(200)
+  nameEdited Boolean   @default(false) @map("name_edited")
+  email      String?   @db.VarChar(254)
+  phone      String?   @db.VarChar(40)
+  plates     ClientPlate[]
+  version    Int       @default(1)
+  syncSeq    Int       @default(dbgenerated("nextval('clients_sync_seq')")) @map("sync_seq")
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([tenantId, syncSeq], map: "clients_tenant_sync_seq_idx")
+  @@unique([tenantId, id], map: "clients_tenant_id_uidx")
+  @@map("clients")
+}
+
+model ClientPlate {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  clientId  String    @map("client_id") @db.Uuid
+  client    Client    @relation(fields: [tenantId, clientId], references: [tenantId, id], onDelete: Cascade)
+  plate     String    @db.VarChar(20)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, clientId], map: "client_plates_tenant_client_idx")
+  @@map("client_plates")
+}

@@ -1292,6 +1292,8 @@ function toSummary(invoice: Invoice): InvoiceSummaryDto {
     cae: invoice.cae,
     caeVto: isoDate(invoice.caeVto),
     receptorNombre: invoice.receptorNombre,
+    receptorDocTipo: invoice.receptorDocTipo,
+    receptorDocNro: invoice.receptorDocNro,
     errorCode: invoice.errorCode,
     errorMessage: invoice.errorMessage,
   };

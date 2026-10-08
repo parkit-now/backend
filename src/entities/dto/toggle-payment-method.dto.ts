@@ -34,7 +34,7 @@ export class TogglePaymentMethodDto {
 
   @ApiPropertyOptional({
     description:
-      'Qué pasa con la factura al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = queda pendiente para el Historial.',
+      'Qué pasa con la factura al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = no se factura al cobrar; se puede emitir después.',
     enum: PaymentMethodInvoiceMode,
     enumName: 'PaymentMethodInvoiceMode',
   })

@@ -524,6 +524,24 @@ describe('InvoicesService', () => {
       expect(state.invoices[0].status).toBe('pending');
     });
 
+    it('medio en Manual → factura no requerida, disponible para emisión posterior', async () => {
+      const { service, state, prisma } = setup();
+      jest
+        .spyOn(prisma.paymentMethod, 'findMany')
+        .mockResolvedValue([{ id: CASH, invoiceMode: 'manual' }]);
+
+      const created = await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+      });
+
+      expect(created?.issueNow).toBe(false);
+      expect(state.invoices[0].status).toBe('not_required');
+      expect((await service.issueForEntry(ENTRY)).status).toBe('issued');
+    });
+
     it('sin cuenta ARCA vinculada no crea factura', async () => {
       const { service, state, prisma } = setup();
       state.account = null;

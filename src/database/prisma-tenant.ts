@@ -43,6 +43,8 @@ const TENANT_MODELS: readonly string[] = [
   'paymenttransaction',
   'whitelist',
   'lprignoredplate',
+  'client',
+  'clientplate',
   'lprdetectionevent',
   'invoice',
   'reservation',
