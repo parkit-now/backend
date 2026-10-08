@@ -47,6 +47,16 @@ export class InvoiceSummaryDto {
 
   @ApiPropertyOptional({
     nullable: true,
+    type: Number,
+    description: '80 = CUIT; 99 = consumidor final.',
+  })
+  receptorDocTipo: number | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String })
+  receptorDocNro: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
     type: String,
     description: 'Código estable (`ARCA_*` / `INVOICE_*`) del último problema.',
   })
