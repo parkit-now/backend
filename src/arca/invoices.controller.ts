@@ -32,6 +32,7 @@ import { InvoiceDocumentDto } from './dto/invoice-document.dto';
 import { InvoiceChangesQueryDto } from './dto/invoice-changes-query.dto';
 import { InvoiceChangesResponseDto } from './dto/invoice-changes-response.dto';
 import { InvoiceSummaryDto } from './dto/invoice-summary.dto';
+import { InvoicePreviewDto } from './dto/invoice-preview.dto';
 import {
   InvoiceReceiverDto,
   InvoiceReceiversQueryDto,
@@ -51,6 +52,18 @@ export class InvoicesController {
     private readonly invoiceDocumentService: InvoiceDocumentService,
   ) {}
 
+  @Get('entries/:entryId/invoice/preview')
+  @ApiOperation({
+    summary: 'Consultar el importe real antes de emitir una factura',
+  })
+  @ApiOkResponse({ type: InvoicePreviewDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async preview(
+    @Param('entryId', ParseUUIDPipe) entryId: string,
+  ): Promise<InvoicePreviewDto> {
+    return this.invoicesService.previewForEntry(entryId);
+  }
+
   @Post('entries/:entryId/invoice')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -62,7 +75,9 @@ export class InvoicesController {
       'certificado vencido, CUIT sin datos en el padrón) NO son errores HTTP: vuelven en ' +
       '`status` y `errorCode` de la factura; el CUIT mal formado sí es 422 ' +
       'ARCA_CUIT_INVALID. Conflictos: INVOICE_ALREADY_ISSUED, ' +
-      'INVOICE_IN_PROGRESS, INVOICE_NOT_INVOICEABLE, ARCA_NOT_LINKED.',
+      'INVOICE_IN_PROGRESS, INVOICE_NOT_INVOICEABLE, ARCA_NOT_LINKED. ' +
+      'Con expectedAmount, un importe distinto al confirmado devuelve ' +
+      '409 INVOICE_AMOUNT_CHANGED sin llamar a ARCA.',
   })
   @ApiOkResponse({ type: InvoiceSummaryDto })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
@@ -75,6 +90,7 @@ export class InvoicesController {
       entryId,
       user?.id,
       dto?.receiverCuit,
+      dto?.expectedAmount,
     );
   }
 

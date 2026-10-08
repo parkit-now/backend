@@ -4,12 +4,15 @@ import type { PaymentMethodType, User, UserMembership } from '@prisma/client';
 import { AuditActions } from '../audit/audit.service';
 import type { CreatedInvoice } from '../arca/invoices.service';
 import { InvoicesService } from '../arca/invoices.service';
+import { lockEntryInvoice } from '../arca/entry-invoice-lock';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
 import { TenantContextService } from '../database/tenant-context.service';
 import { CloseEntryDto } from './dto/close-entry.dto';
 import { CloseEntryResponseDto } from './dto/close-entry-response.dto';
+import { DeleteEntryDto } from './dto/delete-entry.dto';
+import { DeleteEntryResponseDto } from './dto/delete-entry-response.dto';
 import { CorrectEntryDto } from './dto/correct-entry.dto';
 import { CreateEntryDto } from './dto/create-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
@@ -27,6 +30,7 @@ import {
 } from './vehicle-snapshot';
 import { PaymentLineDto } from '../payment-transactions/dto/payment-line.dto';
 import { inferPaymentMethodTypeFromName } from '../payment-transactions/payment-method-type';
+import { toPaymentTransactionDto } from '../payment-transactions/payment-transactions.service';
 
 type PrismaEntry = Prisma.EntryGetPayload<Record<string, never>>;
 type EntryWithAuditRelations = Prisma.EntryGetPayload<{
@@ -61,6 +65,7 @@ type EntryAuditSnapshot = {
   cashSessionId: string | null;
   ticketNumber: number | null;
   manuallyInvoiced: boolean;
+  manualInvoiceNumber: string | null;
   /** Prepago de la reserva vinculada: lo sugerido es el excedente. */
   prepaidAmountArs: number | null;
   payments: PaymentSnapshot[];
@@ -128,6 +133,7 @@ function toDto(entry: PrismaEntry): EntryDto {
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
+    manualInvoiceNumber: entry.manualInvoiceNumber,
     source: entry.source,
     vehicleType: entry.vehicleType,
     vehicleTypeId: entry.vehicleTypeId,
@@ -146,6 +152,7 @@ function toDto(entry: PrismaEntry): EntryDto {
     version: entry.version,
     syncSeq: entry.syncSeq,
     updatedAt: entry.updatedAt,
+    deletedAt: entry.deletedAt,
   };
 }
 
@@ -388,6 +395,7 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     cashSessionId: entry.cashSessionId,
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
+    manualInvoiceNumber: entry.manualInvoiceNumber,
     prepaidAmountArs: toNumber(entry.prepaidAmountArs),
     payments: activePayments(entry),
   };
@@ -417,6 +425,7 @@ function diffSnapshots(
     'rateSnapshotFractionPriceArs',
     'rateSnapshotMediaEstadiaPriceArs',
     'manuallyInvoiced',
+    'manualInvoiceNumber',
     'payments',
   ];
 
@@ -514,7 +523,7 @@ export class EntriesService {
 
     const entry = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.entry.findFirst({
-        where: { tenantId, plate, leftAt: null },
+        where: { tenantId, plate, leftAt: null, deletedAt: null },
       });
       if (existing) {
         throw new FormattedException(
@@ -583,6 +592,7 @@ export class EntriesService {
   async findAll(): Promise<EntryDto[]> {
     const tenantPrisma = this.prisma.getTenantClient();
     const entries = await tenantPrisma.entry.findMany({
+      where: { deletedAt: null },
       orderBy: [{ enteredAt: 'desc' }],
     });
     return entries.map(toDto);
@@ -600,6 +610,242 @@ export class EntriesService {
     const maxSeq =
       items.length > 0 ? items[items.length - 1].syncSeq : query.afterSeq;
     return { items: items.map(toDto), maxSeq };
+  }
+
+  async deleteEntry(
+    entryId: string,
+    data: DeleteEntryDto,
+    user: User,
+    membership?: UserMembership | null,
+  ): Promise<DeleteEntryResponseDto> {
+    const tenantId = this.tenantContext.getTenantIdOrThrow();
+    const instance = `/tenants/:tenantId/entries/${entryId}/delete`;
+    if (membership?.role !== MembershipRole.owner) {
+      throw new FormattedException(
+        'Forbidden',
+        HttpStatus.FORBIDDEN,
+        'Only the parking owner can delete a stay.',
+        instance,
+        ErrorCodes.ENTITY_INSUFFICIENT_ROLE,
+      );
+    }
+    const conflict = (
+      code: (typeof ErrorCodes)[keyof typeof ErrorCodes],
+      detail: string,
+    ) =>
+      new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        detail,
+        instance,
+        code,
+      );
+
+    return this.prisma.$transaction(async (tx) => {
+      await lockEntryInvoice(tx, tenantId, entryId);
+      const observed = await tx.entry.findFirst({
+        where: { id: entryId, tenantId, deletedAt: null },
+        include: { paymentTransactions: true },
+      });
+      if (!observed) {
+        throw new FormattedException(
+          'Not Found',
+          HttpStatus.NOT_FOUND,
+          'Stay not found.',
+          instance,
+          ErrorCodes.NOT_FOUND,
+        );
+      }
+      const observedSessionIds = [
+        ...new Set(
+          [
+            observed.cashSessionId,
+            ...observed.paymentTransactions
+              .filter((payment) => !payment.deletedAt)
+              .map((payment) => payment.cashSessionId),
+          ].filter((id): id is string => id !== null),
+        ),
+      ].sort();
+      if (observedSessionIds.length > 0) {
+        await tx.$queryRaw`SELECT id FROM cash_sessions WHERE tenant_id = ${tenantId}::uuid AND id IN (${Prisma.join(observedSessionIds.map((id) => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`;
+      }
+      await tx.$queryRaw`SELECT id FROM entries WHERE tenant_id = ${tenantId}::uuid AND id = ${entryId}::uuid FOR UPDATE`;
+      const current = await tx.entry.findFirst({
+        where: { id: entryId, tenantId, deletedAt: null },
+        include: {
+          cashSession: true,
+          paymentTransactions: true,
+          invoice: true,
+        },
+      });
+      if (!current) {
+        throw new FormattedException(
+          'Not Found',
+          HttpStatus.NOT_FOUND,
+          'Stay not found.',
+          instance,
+          ErrorCodes.NOT_FOUND,
+        );
+      }
+      if (current.version !== data.expectedVersion) {
+        throw conflict(
+          ErrorCodes.CONFLICT,
+          'Stay changed since it was loaded.',
+        );
+      }
+      if (!current.cashSession || current.cashSession.closedAt) {
+        throw conflict(
+          ErrorCodes.ENTRY_DELETE_CLOSED_SESSION,
+          'Stay has no open cash session.',
+        );
+      }
+      if (current.reservationId) {
+        throw conflict(
+          ErrorCodes.ENTRY_DELETE_RESERVED,
+          'Stay is linked to a reservation.',
+        );
+      }
+      const invoice = current.invoice;
+      if (
+        current.manuallyInvoiced ||
+        invoice?.status === 'issued' ||
+        invoice?.status === 'issuing' ||
+        invoice?.cbteNro != null
+      ) {
+        throw conflict(
+          ErrorCodes.ENTRY_DELETE_INVOICED,
+          'Stay has an issued or in-progress invoice.',
+        );
+      }
+      const payments = current.paymentTransactions.filter(
+        (payment) => !payment.deletedAt,
+      );
+      const qrIntent = await tx.paymentIntent.findFirst({
+        where: {
+          tenantId,
+          entryId,
+          status: {
+            in: [
+              'created',
+              'pending',
+              'approved',
+              'consumed',
+              'refunded',
+              'charged_back',
+            ],
+          },
+        },
+        select: { id: true },
+      });
+      if (
+        qrIntent ||
+        payments.some(
+          (payment) => payment.paymentMethodType === 'mercadopago_qr',
+        )
+      ) {
+        throw conflict(
+          ErrorCodes.ENTRY_DELETE_QR_PAYMENT,
+          'Stay has a Mercado Pago QR payment.',
+        );
+      }
+      const paymentSessionIds = [
+        ...new Set(
+          payments
+            .map((payment) => payment.cashSessionId)
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+      const sessionsToLock = [
+        ...new Set(
+          [current.cashSessionId, ...paymentSessionIds].filter(
+            (id): id is string => id !== null,
+          ),
+        ),
+      ];
+      if (
+        sessionsToLock.length !== observedSessionIds.length ||
+        sessionsToLock.some((id) => !observedSessionIds.includes(id))
+      ) {
+        throw conflict(
+          ErrorCodes.CONFLICT,
+          'Stay changed while being deleted.',
+        );
+      }
+      const openSessions = await tx.cashSession.count({
+        where: { tenantId, id: { in: sessionsToLock }, closedAt: null },
+      });
+      if (openSessions !== sessionsToLock.length) {
+        throw conflict(
+          ErrorCodes.ENTRY_DELETE_CLOSED_SESSION,
+          'A linked cash session was closed.',
+        );
+      }
+      const deletedAt = new Date();
+      const updated = await tx.entry.updateMany({
+        where: {
+          id: entryId,
+          tenantId,
+          deletedAt: null,
+          version: data.expectedVersion,
+        },
+        data: { deletedAt, version: { increment: 1 } },
+      });
+      if (updated.count !== 1) {
+        throw conflict(
+          ErrorCodes.CONFLICT,
+          'Stay changed while being deleted.',
+        );
+      }
+      await tx.paymentTransaction.updateMany({
+        where: { tenantId, entryId, deletedAt: null },
+        data: { deletedAt },
+      });
+      const deletedPaymentTransactionIds = payments.map(
+        (payment) => payment.id,
+      );
+      const deletedPaymentTransactions =
+        deletedPaymentTransactionIds.length > 0
+          ? await tx.paymentTransaction.findMany({
+              where: { tenantId, id: { in: deletedPaymentTransactionIds } },
+            })
+          : [];
+      await tx.auditLog.create({
+        data: {
+          action: AuditActions.ENTRY_DELETED,
+          entityType: 'entry',
+          entityId: entryId,
+          actorUserId: user.id,
+          tenantId,
+          severity:
+            payments.length > 0 || current.amountPaid != null ? 'warn' : 'info',
+          metadata: {
+            actorRole: 'owner',
+            origin: 'desktop',
+            plate: current.plate,
+            ticketNumber: current.ticketNumber,
+            cashSessionId: current.cashSessionId,
+            amountPaid: Number(
+              current.amountPaid ??
+                payments.reduce(
+                  (total, payment) => total.plus(payment.amount),
+                  new Prisma.Decimal(0),
+                ),
+            ),
+            paymentTransactionIds: deletedPaymentTransactionIds,
+            reason: data.reason?.trim() || null,
+          },
+        },
+      });
+      const entry = await tx.entry.findFirstOrThrow({
+        where: { id: entryId, tenantId },
+      });
+      return {
+        entry: toDto(entry),
+        deletedPaymentTransactions: deletedPaymentTransactions.map(
+          toPaymentTransactionDto,
+        ),
+      };
+    });
   }
 
   async closeEntry(
@@ -622,7 +868,7 @@ export class EntriesService {
 
     const entry = await this.prisma.$transaction(async (tx) => {
       const current = await tx.entry.findFirst({
-        where: { tenantId, id: entryId },
+        where: { tenantId, id: entryId, deletedAt: null },
       });
       if (!current) {
         throw new FormattedException(
@@ -646,6 +892,7 @@ export class EntriesService {
         where: {
           tenantId,
           id: entryId,
+          deletedAt: null,
           version: expectedVersion,
           leftAt: null,
         },
@@ -823,8 +1070,9 @@ export class EntriesService {
     const role = actorRole(membership);
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.invoices) await lockEntryInvoice(tx, tenantId, entryId);
       const current = await tx.entry.findFirst({
-        where: { tenantId, id: entryId },
+        where: { tenantId, id: entryId, deletedAt: null },
         include: { cashSession: true, paymentTransactions: true },
       });
 
@@ -848,12 +1096,17 @@ export class EntriesService {
         );
       }
 
-      // Marcar «Facturada» a mano no toca la plata: se permite también con la
-      // caja cerrada, que es justo cuando el dueño revisa qué facturó.
-      const onlyManualInvoice = Object.entries(data).every(
-        ([key, value]) => key === 'manuallyInvoiced' || value === undefined,
+      // En una caja cerrada solo se admiten datos no económicos. Las notas
+      // requieren dueño; la marca y el número manual conservan su permiso actual.
+      const allowedClosedFields = new Set([
+        'manuallyInvoiced',
+        'manualInvoiceNumber',
+      ]);
+      if (role === 'owner') allowedClosedFields.add('notes');
+      const onlyAllowedClosedFields = Object.entries(data).every(
+        ([key, value]) => value === undefined || allowedClosedFields.has(key),
       );
-      if (current.cashSession?.closedAt && !onlyManualInvoice) {
+      if (current.cashSession?.closedAt && !onlyAllowedClosedFields) {
         throw new FormattedException(
           'Conflict',
           HttpStatus.CONFLICT,
@@ -1001,11 +1254,27 @@ export class EntriesService {
       if (data.manuallyInvoiced !== undefined) {
         updateData.manuallyInvoiced = data.manuallyInvoiced;
       }
+      if (data.manuallyInvoiced === false) {
+        updateData.manualInvoiceNumber = null;
+      } else if (data.manualInvoiceNumber !== undefined) {
+        updateData.manualInvoiceNumber =
+          (data.manuallyInvoiced ?? current.manuallyInvoiced)
+            ? data.manualInvoiceNumber.trim() || null
+            : null;
+      }
 
       await tx.entry.update({
         where: { id: entryId },
         data: updateData,
       });
+
+      if (data.payments !== undefined && this.invoices) {
+        await this.invoices.updatePendingAmount(
+          tx,
+          entryId,
+          Number(nextAmountPaid),
+        );
+      }
 
       if (data.payments !== undefined) {
         const deletedAt = new Date();
@@ -1133,7 +1402,7 @@ export class EntriesService {
     const entry = await this.prisma.$transaction(async (tx) => {
       // 1. Reject if an active stay for this plate already exists.
       const existing = await tx.entry.findFirst({
-        where: { tenantId, plate, leftAt: null },
+        where: { tenantId, plate, leftAt: null, deletedAt: null },
       });
       if (existing) {
         throw new FormattedException(

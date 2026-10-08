@@ -141,6 +141,14 @@ describe('MetricsService', () => {
       expect(result.free).toBe(37);
       expect(result.occupancyPct).toBe(0.63);
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+      expect(wheresOf(mockTenant.entry.count)[0]).toMatchObject({
+        leftAt: null,
+        deletedAt: null,
+      });
+      expect(wheresOf(mockTenant.entry.groupBy)[0]).toMatchObject({
+        leftAt: null,
+        deletedAt: null,
+      });
     });
 
     it('reservedHeld: las reservas de hoy sin ingreso retienen lugar y bajan los libres', async () => {
@@ -323,6 +331,9 @@ describe('MetricsService', () => {
       ]);
       expect(result.totals.revenue).toBe(1750);
       expect(result.totals.vehiclesOut).toBe(3);
+      expect(wheresOf(mockTenant.entry.findMany)[0]).toMatchObject({
+        deletedAt: null,
+      });
     });
 
     it('clips the edge buckets to the requested instants', async () => {

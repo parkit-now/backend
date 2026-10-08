@@ -11,6 +11,7 @@ model Entry {
   amountPaid Decimal?  @map("amount_paid") @db.Decimal(10, 2)
   /// Checkbox "Facturada" para las playas sin integración con ARCA.
   manuallyInvoiced Boolean @default(false) @map("manually_invoiced")
+  manualInvoiceNumber String? @map("manual_invoice_number") @db.VarChar(40)
 
   // LPR fields — populated on automatic ingress; null for manual entries.
   source         String      @default("manual") @db.VarChar(10)
@@ -33,6 +34,7 @@ model Entry {
   version   Int      @default(1)
   syncSeq   Int      @default(dbgenerated("nextval('entries_sync_seq')")) @map("sync_seq")
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   // Snapshot de tarifa — se congela al ingresar.
   //

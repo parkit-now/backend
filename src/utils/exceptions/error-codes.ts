@@ -115,6 +115,10 @@ export const ErrorCodes = {
   ENTRY_ACTIVE_PAYMENT_LOCKED: 'ENTRY_ACTIVE_PAYMENT_LOCKED',
   ENTRY_CORRECTION_REASON_REQUIRED: 'ENTRY_CORRECTION_REASON_REQUIRED',
   ENTRY_EXIT_NOT_AFTER_ENTRY: 'ENTRY_EXIT_NOT_AFTER_ENTRY',
+  ENTRY_DELETE_CLOSED_SESSION: 'ENTRY_DELETE_CLOSED_SESSION',
+  ENTRY_DELETE_INVOICED: 'ENTRY_DELETE_INVOICED',
+  ENTRY_DELETE_RESERVED: 'ENTRY_DELETE_RESERVED',
+  ENTRY_DELETE_QR_PAYMENT: 'ENTRY_DELETE_QR_PAYMENT',
 
   // Cash sessions (turnos de caja)
   // La caja pedida no existe o es de otro estacionamiento (mismo code para
@@ -379,6 +383,7 @@ export const ErrorCodes = {
   ARCA_FISCAL_DATA_INCOMPLETE: 'ARCA_FISCAL_DATA_INCOMPLETE',
   // La estadia ya tiene factura emitida: no se re-emite ni se cambia el monto.
   INVOICE_ALREADY_ISSUED: 'INVOICE_ALREADY_ISSUED',
+  INVOICE_AMOUNT_CHANGED: 'INVOICE_AMOUNT_CHANGED',
   // Otra emision de la misma factura esta en curso (web y desktop a la vez).
   INVOICE_IN_PROGRESS: 'INVOICE_IN_PROGRESS',
   // ARCA rechazo el comprobante; el motivo va en `error_message`.

@@ -104,6 +104,7 @@ describe('EntriesService', () => {
       // Lo que este test cuida de verdad: el aislamiento por tenant.
       expect(mockPrisma.getTenantClient).toHaveBeenCalled();
       expect(mockTenant.entry.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null },
         orderBy: [{ enteredAt: 'desc' }],
       });
     });
@@ -130,6 +131,8 @@ describe('EntriesService', () => {
         rateSnapshotFractionPriceArs: 500,
         cashSessionId: '55555555-5555-7555-8555-555555555555',
         ticketNumber: 7,
+        manuallyInvoiced: false,
+        manualInvoiceNumber: null,
         version: 2,
         syncSeq: 9,
         updatedAt: new Date('2026-09-08T12:00:00.000Z'),
@@ -296,6 +299,108 @@ describe('EntriesService', () => {
         data: { manuallyInvoiced?: boolean };
       };
       expect(updateArg.data.manuallyInvoiced).toBe(true);
+    });
+
+    it('permite al dueño editar solo notas de una caja cerrada', async () => {
+      const current = makeEntry({
+        cashSession: {
+          id: '55555555-5555-7555-8555-555555555555',
+          closedAt: new Date(),
+        },
+      });
+      const { service: subject, tx } = makeService(current);
+      tx.entry.findUniqueOrThrow.mockResolvedValue({
+        ...current,
+        notes: 'Nota del dueño',
+        version: 3,
+      });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { notes: 'Nota del dueño' },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(tx.entry.update.mock.calls[0][0]).toMatchObject({
+        data: { notes: 'Nota del dueño' },
+      });
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('bloquea las notas de caja cerrada al operador y otros cambios al dueño', async () => {
+      const { service: subject } = makeService(
+        makeEntry({
+          cashSession: {
+            id: '55555555-5555-7555-8555-555555555555',
+            closedAt: new Date(),
+          },
+        }),
+      );
+
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { notes: 'No permitido' },
+          USER as never,
+          { role: 'operator' } as never,
+        ),
+        'closed cash session',
+      );
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { notes: 'No permitido' },
+          USER as never,
+          { role: 'admin' } as never,
+        ),
+        'closed cash session',
+      );
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { notes: 'Nota', cochera: 'B2' },
+          USER as never,
+          { role: 'owner' } as never,
+        ),
+        'closed cash session',
+      );
+    });
+
+    it('guarda el número manual y lo limpia al desmarcar Facturada', async () => {
+      const current = makeEntry({
+        cashSession: {
+          id: '55555555-5555-7555-8555-555555555555',
+          closedAt: new Date(),
+        },
+      });
+      const { service: subject, tx } = makeService(current);
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { manuallyInvoiced: true, manualInvoiceNumber: ' 0007-00000009 ' },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+      expect(tx.entry.update.mock.calls[0][0]).toMatchObject({
+        data: { manuallyInvoiced: true, manualInvoiceNumber: '0007-00000009' },
+      });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { manuallyInvoiced: false },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+      expect(tx.entry.update.mock.calls[1][0]).toMatchObject({
+        data: { manuallyInvoiced: false, manualInvoiceNumber: null },
+      });
     });
 
     it('rechaza pagos o egreso en entradas activas', async () => {

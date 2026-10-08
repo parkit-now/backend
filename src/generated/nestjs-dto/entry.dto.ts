@@ -28,6 +28,7 @@ amountPaid: Prisma.Decimal  | null;
   description: `Checkbox "Facturada" para las playas sin integración con ARCA.`,
 })
 manuallyInvoiced: boolean ;
+manualInvoiceNumber: string  | null;
 source: string ;
 vehicleType: string  | null;
 vehicleTypeId: string  | null;
@@ -50,6 +51,11 @@ syncSeq: number ;
   format: `date-time`,
 })
 updatedAt: Date ;
+@ApiProperty({
+  type: `string`,
+  format: `date-time`,
+})
+deletedAt: Date  | null;
 rateSnapshotName: string  | null;
 @ApiProperty({
   type: `number`,

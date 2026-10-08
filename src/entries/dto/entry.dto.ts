@@ -152,6 +152,9 @@ export class EntryDto {
   })
   manuallyInvoiced: boolean;
 
+  @ApiPropertyOptional({ maxLength: 40, nullable: true })
+  manualInvoiceNumber: string | null;
+
   @ApiProperty({ type: Number })
   version: number;
 
@@ -160,4 +163,7 @@ export class EntryDto {
 
   @ApiProperty({ format: 'date-time' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ format: 'date-time', nullable: true })
+  deletedAt: Date | null;
 }

@@ -232,7 +232,7 @@ export class PaymentIntentsService {
 
     // ── 2. La estadía ─────────────────────────────────────────────────────
     const entry = await this.prisma.entry.findFirst({
-      where: { id: dto.entryId, tenantId },
+      where: { id: dto.entryId, tenantId, deletedAt: null },
     });
 
     if (!entry) {
@@ -282,16 +282,32 @@ export class PaymentIntentsService {
     // ── 6. La fila, ANTES de Mercado Pago ─────────────────────────────────
     let intent: PaymentIntent;
     try {
-      intent = await this.prisma.paymentIntent.create({
-        data: {
-          id: dto.id,
-          tenantId,
-          entryId: dto.entryId,
-          status: PaymentIntentStatus.created,
-          amount: new Prisma.Decimal(dto.amount),
-          expiresAt: new Date(Date.now() + INTENT_TTL_MS),
-          createdByUserId: user.id,
-        },
+      intent = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM entries WHERE tenant_id = ${tenantId}::uuid AND id = ${dto.entryId}::uuid FOR UPDATE`;
+        const stillOpen = await tx.entry.findFirst({
+          where: { id: dto.entryId, tenantId, leftAt: null, deletedAt: null },
+          select: { id: true },
+        });
+        if (!stillOpen) {
+          throw new FormattedException(
+            'Conflict',
+            HttpStatus.CONFLICT,
+            `Entry ${dto.entryId} is no longer open for QR payment`,
+            COLLECTION_INSTANCE,
+            ErrorCodes.PAYMENT_INTENT_ENTRY_CLOSED,
+          );
+        }
+        return tx.paymentIntent.create({
+          data: {
+            id: dto.id,
+            tenantId,
+            entryId: dto.entryId,
+            status: PaymentIntentStatus.created,
+            amount: new Prisma.Decimal(dto.amount),
+            expiresAt: new Date(Date.now() + INTENT_TTL_MS),
+            createdByUserId: user.id,
+          },
+        });
       });
     } catch (error) {
       throw await this.mapLiveConflict(error, tenantId, dto.entryId);

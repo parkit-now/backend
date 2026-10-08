@@ -217,6 +217,10 @@ export interface MpOrder {
    * precondición. Quien lo use cae a su propio reloj.
    */
   readonly lastUpdatedDate: Date | null;
+  readonly payments?: readonly {
+    readonly referenceId: string | null;
+    readonly status: string | null;
+  }[];
 }
 
 /**
@@ -273,6 +277,10 @@ export interface MpPayment {
   readonly transactionAmountRefunded: number | null;
   /** Id del vendedor que cobró: sirve para atar un pago a una cuenta vinculada. */
   readonly collectorId: string | null;
+  readonly payerIdentification?: {
+    readonly type: string | null;
+    readonly number: string | null;
+  } | null;
 }
 
 /** Respuesta de `POST /v1/payments/{id}/refunds`. */
@@ -1283,12 +1291,20 @@ export class MpApiClient implements OnModuleInit {
       throw this.malformed(operation, 'response has no order id');
     }
 
+    const transactions = obj(payload.transactions);
+    const payments = Array.isArray(transactions?.payments)
+      ? transactions.payments
+      : [];
     return {
       id,
       status: str(payload.status),
       statusDetail: str(payload.status_detail),
       externalReference: str(payload.external_reference),
       lastUpdatedDate: date(payload.last_updated_date),
+      payments: payments.map((payment: unknown) => ({
+        referenceId: readId(obj(payment)?.reference_id),
+        status: str(obj(payment)?.status),
+      })),
     };
   }
 
@@ -1301,6 +1317,7 @@ export class MpApiClient implements OnModuleInit {
     if (!id) {
       throw this.malformed(operation, 'response has no payment id');
     }
+    const identification = obj(obj(payload.payer)?.identification);
     return {
       id,
       status: str(payload.status),
@@ -1309,6 +1326,12 @@ export class MpApiClient implements OnModuleInit {
       transactionAmount: num(payload.transaction_amount),
       transactionAmountRefunded: num(payload.transaction_amount_refunded),
       collectorId: readId(payload.collector_id),
+      payerIdentification: identification
+        ? {
+            type: str(identification.type),
+            number: str(identification.number),
+          }
+        : null,
     };
   }
 

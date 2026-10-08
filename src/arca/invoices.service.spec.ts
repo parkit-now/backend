@@ -14,6 +14,7 @@ import {
   PADRON_CACHE_TTL_MS,
 } from './invoice-receivers.service';
 import { InvoicesService, STALE_ISSUING_MS } from './invoices.service';
+import { EntriesService } from '../entries/entries.service';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
 const ENTRY = '22222222-2222-7222-8222-222222222222';
@@ -67,6 +68,7 @@ function memoryPrisma(state: {
   invoices: Row[];
   account: Row | null;
   receivers: Row[];
+  entries: Row[];
 }) {
   const byKey = (where: Row) =>
     state.receivers.find(
@@ -124,7 +126,12 @@ function memoryPrisma(state: {
       return Promise.resolve({ ...row });
     },
     create: ({ data }: Row) => {
-      const row: Row = { id: `inv-${state.invoices.length + 1}` };
+      const row: Row = {
+        id: `inv-${state.invoices.length + 1}`,
+        cbteNro: null,
+        attempts: 0,
+        issuingStartedAt: null,
+      };
       applyData(row, data);
       state.invoices.push(row);
       return Promise.resolve(row);
@@ -139,13 +146,37 @@ function memoryPrisma(state: {
       findMany: () => Promise.resolve([{ id: CASH, invoiceMode: 'auto' }]),
     },
     entry: {
-      findUniqueOrThrow: () =>
-        Promise.resolve({
-          enteredAt: new Date('2026-09-24T13:00:00.000Z'),
-          leftAt: new Date('2026-09-24T15:30:00.000Z'),
-        }),
+      findFirst: ({ where }: Row) =>
+        Promise.resolve(state.entries.find((r) => matches(r, where)) ?? null),
+      findUniqueOrThrow: ({ where }: Row) =>
+        Promise.resolve(state.entries.find((r) => matches(r, where))),
+      update: ({ where, data }: Row) => {
+        const row = state.entries.find((r) => matches(r, where))!;
+        applyData(row, data);
+        return Promise.resolve(row);
+      },
     },
-    $executeRaw: () => Promise.resolve(1),
+    paymentTransaction: {
+      updateMany: ({ where, data }: Row) => {
+        const rows = state.entries
+          .flatMap((entry) => entry.paymentTransactions as Row[])
+          .filter((row) => matches(row, where));
+        rows.forEach((row) => applyData(row, data));
+        return Promise.resolve({ count: rows.length });
+      },
+      createMany: ({ data }: Row) => {
+        for (const line of data as Row[]) {
+          const entry = state.entries.find((row) => row.id === line.entryId)!;
+          (entry.paymentTransactions as Row[]).push({
+            ...line,
+            deletedAt: null,
+          });
+        }
+        return Promise.resolve({ count: (data as Row[]).length });
+      },
+    },
+    auditLog: { create: jest.fn().mockResolvedValue(undefined) },
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
   };
   return prisma;
@@ -170,6 +201,23 @@ function setup(
   const state = {
     invoices: [] as Row[],
     receivers: [] as Row[],
+    entries: [
+      {
+        id: ENTRY,
+        tenantId: TENANT,
+        deletedAt: null,
+        amountPaid: 1210,
+        version: 1,
+        paymentTransactions: [],
+        cashSession: { closedAt: null },
+        rateSnapshotHourPriceArs: null,
+        rateSnapshotStayPriceArs: null,
+        rateSnapshotFractionPriceArs: null,
+        rateSnapshotMediaEstadiaPriceArs: null,
+        enteredAt: new Date('2026-09-24T13:00:00.000Z'),
+        leftAt: new Date('2026-09-24T15:30:00.000Z'),
+      },
+    ] as Row[],
     account: {
       tenantId: TENANT,
       environment,
@@ -205,7 +253,10 @@ function setup(
   return { service, state, gateway, prisma };
 }
 
-function pendingInvoice(state: { invoices: Row[] }, extra: Row = {}): Row {
+function pendingInvoice(
+  state: { invoices: Row[]; entries: Row[] },
+  extra: Row = {},
+): Row {
   const row = {
     id: `inv-${state.invoices.length + 1}`,
     tenantId: TENANT,
@@ -220,10 +271,236 @@ function pendingInvoice(state: { invoices: Row[] }, extra: Row = {}): Row {
     ...extra,
   };
   state.invoices.push(row);
+  if (!state.entries.some((entry) => entry.id === row.entryId)) {
+    state.entries.push({ ...state.entries[0], id: row.entryId });
+  }
+  const entry = state.entries.find((entry) => entry.id === row.entryId)!;
+  entry.amountPaid = row.impTotal;
   return row;
 }
 
 describe('InvoicesService', () => {
+  describe('importe confirmado', () => {
+    it('regresion completa: cobrar 100, corregir pagos a 10 y enviar 10 a ARCA', async () => {
+      const { service, state, prisma, gateway } = setup();
+      pendingInvoice(state, { impTotal: 100 });
+      const entry = state.entries[0];
+      entry.paymentTransactions = [
+        {
+          id: 'old-payment',
+          tenantId: TENANT,
+          entryId: ENTRY,
+          paymentMethodId: CASH,
+          paymentMethodName: 'Efectivo',
+          amount: 100,
+          deletedAt: null,
+        },
+      ];
+      const entries = new EntriesService(
+        prisma as unknown as PrismaService,
+        { getTenantIdOrThrow: () => TENANT } as unknown as TenantContextService,
+        service,
+      );
+      await entries.correctEntry(
+        ENTRY,
+        1,
+        {
+          payments: [
+            {
+              id: 'new-cash',
+              paymentMethodName: 'Efectivo',
+              paymentMethodType: 'cash',
+              amount: 6.25,
+            },
+            {
+              id: 'new-transfer',
+              paymentMethodName: 'Transferencia',
+              paymentMethodType: 'transfer',
+              amount: 3.75,
+            },
+          ],
+        },
+        { id: 'owner', role: 'user' } as never,
+        { role: 'owner' } as never,
+      );
+      expect(entry.amountPaid).toBe(10);
+      expect(state.invoices[0].impTotal).toBe(10);
+      expect(prisma.auditLog.create).toHaveBeenCalled();
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+      const preview = await service.previewForEntry(ENTRY);
+      await service.issueForEntry(ENTRY, undefined, undefined, preview.amount);
+      expect(gateway.createCalls[0].ImpTotal).toBe(10);
+    });
+
+    it.each(['issued', 'issuing'])(
+      'no corrige pagos de una factura %s',
+      async (status) => {
+        const { service, state, prisma, gateway } = setup();
+        pendingInvoice(state, { status, impTotal: 100 });
+        state.entries[0].paymentTransactions = [
+          {
+            id: 'old-payment',
+            tenantId: TENANT,
+            entryId: ENTRY,
+            paymentMethodName: 'Efectivo',
+            amount: 100,
+            deletedAt: null,
+          },
+        ];
+        const entries = new EntriesService(
+          prisma as unknown as PrismaService,
+          {
+            getTenantIdOrThrow: () => TENANT,
+          } as unknown as TenantContextService,
+          service,
+        );
+        expect(
+          codeOf(
+            await rejection(
+              entries.correctEntry(
+                ENTRY,
+                1,
+                {
+                  payments: [
+                    {
+                      id: 'new-payment',
+                      paymentMethodName: 'Efectivo',
+                      paymentMethodType: 'cash',
+                      amount: 10,
+                    },
+                  ],
+                },
+                { id: 'owner', role: 'user' } as never,
+                { role: 'owner' } as never,
+              ),
+            ),
+          ),
+        ).toBe('INVOICE_ALREADY_ISSUED');
+        expect(state.entries[0].amountPaid).toBe(100);
+        expect(state.invoices[0].impTotal).toBe(100);
+        expect(gateway.createCalls).toHaveLength(0);
+      },
+    );
+
+    it.each(['pending', 'error', 'not_required'])(
+      'repara un importe antiguo en estado %s: 100 -> 10',
+      async (status) => {
+        const { service, state, gateway } = setup();
+        const invoice = pendingInvoice(state, { status, impTotal: 100 });
+        state.entries[0].amountPaid = 10;
+        expect(await service.previewForEntry(ENTRY)).toEqual({ amount: 10 });
+        expect(invoice.impTotal).toBe(100); // La consulta no modifica datos.
+        expect(
+          (await service.issueForEntry(ENTRY, undefined, undefined, 10)).status,
+        ).toBe('issued');
+        expect(gateway.createCalls[0].ImpTotal).toBe(10);
+        expect(Number(invoice.impTotal)).toBe(10);
+      },
+    );
+
+    it('sin factura previa consulta el cobro y crea una sola factura al emitir', async () => {
+      const { service, state, gateway } = setup();
+      state.entries[0].amountPaid = 10.25;
+      expect(await service.previewForEntry(ENTRY)).toEqual({ amount: 10.25 });
+      expect(state.invoices).toHaveLength(0);
+      await service.issueForEntry(ENTRY, undefined, undefined, 10.25);
+      expect(gateway.createCalls[0].ImpTotal).toBe(10.25);
+      expect(state.invoices).toHaveLength(1);
+    });
+
+    it('si cambia luego del aviso, rechaza sin llamar a ARCA; requiere reconfirmar', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state, { impTotal: 100 });
+      const preview = await service.previewForEntry(ENTRY);
+      state.entries[0].amountPaid = 10;
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(ENTRY, undefined, undefined, preview.amount),
+          ),
+        ),
+      ).toBe('INVOICE_AMOUNT_CHANGED');
+      expect(gateway.createCalls).toHaveLength(0);
+      const refreshed = await service.previewForEntry(ENTRY);
+      await service.issueForEntry(
+        ENTRY,
+        undefined,
+        undefined,
+        refreshed.amount,
+      );
+      expect(gateway.createCalls[0].ImpTotal).toBe(10);
+    });
+
+    it('actualiza el pendiente en la transaccion de correccion y no toca emitidas o inciertas', async () => {
+      const { service, state, prisma } = setup();
+      const pending = pendingInvoice(state, { impTotal: 100 });
+      const issued = pendingInvoice(state, {
+        entryId: 'issued',
+        status: 'issued',
+        impTotal: 100,
+      });
+      const uncertain = pendingInvoice(state, {
+        entryId: 'uncertain',
+        status: 'issuing',
+        cbteNro: 1,
+        impTotal: 100,
+      });
+      await service.updatePendingAmount(prisma as never, ENTRY, 10);
+      await service.updatePendingAmount(prisma as never, 'issued', 10);
+      await service.updatePendingAmount(prisma as never, 'uncertain', 10);
+      expect(pending.impTotal).toBe(10);
+      expect(issued.impTotal).toBe(100);
+      expect(uncertain.impTotal).toBe(100);
+    });
+
+    it('un reintento incierto conserva su importe original para reconciliar', async () => {
+      const { service, state, gateway } = setup();
+      const invoice = pendingInvoice(state, { impTotal: 100 });
+      gateway.willRespond('timeout-but-approved');
+      await service.issueForEntry(ENTRY);
+      invoice.issuingStartedAt = new Date(Date.now() - STALE_ISSUING_MS - 1000);
+      state.entries[0].amountPaid = 10;
+      expect(await service.previewForEntry(ENTRY)).toEqual({ amount: 100 });
+      await service.issueForEntry(ENTRY, undefined, undefined, 100);
+      expect(gateway.createCalls).toHaveLength(1);
+      expect(invoice.status).toBe('issued');
+      expect(Number(invoice.impTotal)).toBe(100);
+    });
+
+    it.each([0, null])('no permite facturar un cobro %s', async (amount) => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state);
+      state.entries[0].amountPaid = amount;
+      expect(codeOf(await rejection(service.previewForEntry(ENTRY)))).toBe(
+        'INVOICE_NOT_INVOICEABLE',
+      );
+      expect(codeOf(await rejection(service.issueForEntry(ENTRY)))).toBe(
+        'INVOICE_NOT_INVOICEABLE',
+      );
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('no consulta ni emite el ingreso de otro estacionamiento', async () => {
+      const { service, state, gateway } = setup();
+      state.entries[0].tenantId = 'other-tenant';
+      expect(codeOf(await rejection(service.previewForEntry(ENTRY)))).toBe(
+        'NOT_FOUND',
+      );
+      expect(codeOf(await rejection(service.issueForEntry(ENTRY)))).toBe(
+        'NOT_FOUND',
+      );
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('el lote y clientes anteriores tambien usan el cobro corregido', async () => {
+      const { service, state, gateway } = setup();
+      pendingInvoice(state, { impTotal: 100 });
+      state.entries[0].amountPaid = 10;
+      await service.issueBatch([ENTRY]);
+      expect(gateway.createCalls[0].ImpTotal).toBe(10);
+    });
+  });
+
   beforeAll(() => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);

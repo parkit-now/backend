@@ -444,7 +444,7 @@ export class DriverService {
         where: { tenantId },
         select: { status: true },
       }),
-      tenantPrisma.entry.count({ where: { leftAt: null } }),
+      tenantPrisma.entry.count({ where: { leftAt: null, deletedAt: null } }),
       // Reservas de hoy que retienen lugar: las que todavía no vencieron lo
       // ocupan (SCRUM-261) hasta que el auto entra (ver countReservedHeld).
       tenantPrisma.reservation.findMany({
