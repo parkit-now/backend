@@ -216,7 +216,7 @@ export class PaymentMethodSummaryDto {
 
   @ApiProperty({
     description:
-      'Facturación al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = queda pendiente para el Historial.',
+      'Facturación al cobrar con este medio: none = no se factura, auto = se emite al cobrar, manual = no se factura al cobrar; se puede emitir después.',
     enum: PaymentMethodInvoiceMode,
     enumName: 'PaymentMethodInvoiceMode',
     example: PaymentMethodInvoiceMode.none,

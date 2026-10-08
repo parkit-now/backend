@@ -7,10 +7,22 @@ describe('resolveInitialInvoice', () => {
     ).toEqual({ kind: 'issue' });
   });
 
-  it('un medio en Manual → pendiente', () => {
+  it('un medio en Manual → sin factura pendiente', () => {
     expect(
       resolveInitialInvoice({ total: 5000, lineModes: ['manual'] }),
-    ).toEqual({ kind: 'pending' });
+    ).toEqual({ kind: 'not_required' });
+  });
+
+  it('Manual prevalece en un cobro dividido con Automática', () => {
+    expect(
+      resolveInitialInvoice({ total: 5000, lineModes: ['auto', 'manual'] }),
+    ).toEqual({ kind: 'not_required' });
+  });
+
+  it('Manual con monto alto no queda pendiente por identificación', () => {
+    expect(
+      resolveInitialInvoice({ total: 10_000_000, lineModes: ['manual'] }),
+    ).toEqual({ kind: 'not_required' });
   });
 
   it('mezcla de Automática y desmarcado → pendiente', () => {
