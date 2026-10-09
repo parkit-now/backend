@@ -25,10 +25,12 @@ leftAt: Date  | null;
 })
 amountPaid: Prisma.Decimal  | null;
 @ApiProperty({
-  description: `Checkbox "Facturada" para las playas sin integración con ARCA.`,
+  description: `Factura emitida fuera de Parkit; con ARCA vinculada solo el dueño puede registrarla.`,
 })
 manuallyInvoiced: boolean ;
 manualInvoiceNumber: string  | null;
+manualInvoiceType: string  | null;
+manualInvoicePointOfSale: string  | null;
 source: string ;
 vehicleType: string  | null;
 vehicleTypeId: string  | null;

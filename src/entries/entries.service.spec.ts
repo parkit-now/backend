@@ -133,6 +133,8 @@ describe('EntriesService', () => {
         ticketNumber: 7,
         manuallyInvoiced: false,
         manualInvoiceNumber: null,
+        manualInvoiceType: null,
+        manualInvoicePointOfSale: null,
         version: 2,
         syncSeq: 9,
         updatedAt: new Date('2026-09-08T12:00:00.000Z'),
@@ -153,8 +155,15 @@ describe('EntriesService', () => {
       };
     }
 
-    function makeService(current: Record<string, unknown>) {
+    function makeService(
+      current: Record<string, unknown>,
+      invoices?: { markExternallyIssued: ReturnType<typeof jest.fn> },
+    ) {
       const tx = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+        arcaAccount: {
+          findUnique: jest.fn().mockResolvedValue(null),
+        },
         entry: {
           findFirst: jest.fn().mockResolvedValue(current),
           update: jest.fn().mockResolvedValue(undefined),
@@ -181,6 +190,7 @@ describe('EntriesService', () => {
         service: new EntriesService(
           prisma as unknown as PrismaService,
           tenantContext as unknown as TenantContextService,
+          invoices as never,
         ),
       };
     }
@@ -400,6 +410,140 @@ describe('EntriesService', () => {
       );
       expect(tx.entry.update.mock.calls[1][0]).toMatchObject({
         data: { manuallyInvoiced: false, manualInvoiceNumber: null },
+      });
+    });
+
+    it('el dueño registra una factura externa con ARCA y cierra el pendiente en la misma transacción', async () => {
+      const invoices = {
+        markExternallyIssued: jest.fn().mockResolvedValue(undefined),
+      };
+      const { service: subject, tx } = makeService(makeEntry(), invoices);
+      tx.arcaAccount.findUnique.mockResolvedValue({ status: 'linked' });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        {
+          manuallyInvoiced: true,
+          manualInvoiceType: 'C',
+          manualInvoicePointOfSale: '00012',
+          manualInvoiceNumber: '00000123',
+        },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(invoices.markExternallyIssued).toHaveBeenCalledWith(
+        tx,
+        TENANT,
+        ENTRY,
+      );
+      expect(tx.entry.update.mock.calls[0][0]).toMatchObject({
+        data: {
+          manuallyInvoiced: true,
+          manualInvoiceType: 'C',
+          manualInvoicePointOfSale: '00012',
+          manualInvoiceNumber: '00000123',
+        },
+      });
+    });
+
+    it('ARCA vinculada: no permite registrar la factura a un operador ni sin los tres datos', async () => {
+      const invoices = {
+        markExternallyIssued: jest.fn().mockResolvedValue(undefined),
+      };
+      const { service: subject, tx } = makeService(makeEntry(), invoices);
+      tx.arcaAccount.findUnique.mockResolvedValue({ status: 'linked' });
+      const details = {
+        manuallyInvoiced: true,
+        manualInvoiceType: 'C',
+        manualInvoicePointOfSale: '12',
+        manualInvoiceNumber: '123',
+      };
+
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          details,
+          USER as never,
+          { role: 'operator' } as never,
+        ),
+        'Only the parking owner',
+      );
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { manuallyInvoiced: true },
+          USER as never,
+          { role: 'owner' } as never,
+        ),
+        'require type',
+      );
+      expect(invoices.markExternallyIssued).not.toHaveBeenCalled();
+      expect(tx.entry.update).not.toHaveBeenCalled();
+    });
+
+    it('ARCA vinculada: no acepta factura externa para una estadía sin cobro', async () => {
+      const invoices = {
+        markExternallyIssued: jest.fn().mockResolvedValue(undefined),
+      };
+      const { service: subject, tx } = makeService(
+        makeEntry({ amountPaid: 0, paymentTransactions: [] }),
+        invoices,
+      );
+      tx.arcaAccount.findUnique.mockResolvedValue({ status: 'linked' });
+
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          {
+            manuallyInvoiced: true,
+            manualInvoiceType: 'C',
+            manualInvoicePointOfSale: '1',
+            manualInvoiceNumber: '123',
+          },
+          USER as never,
+          { role: 'owner' } as never,
+        ),
+        'Only a paid stay',
+      );
+      expect(tx.entry.update).not.toHaveBeenCalled();
+    });
+
+    it('el dueño puede quitar la marca externa sin emitir nada en ARCA', async () => {
+      const invoices = {
+        markExternallyIssued: jest.fn().mockResolvedValue(undefined),
+      };
+      const { service: subject, tx } = makeService(
+        makeEntry({
+          manuallyInvoiced: true,
+          manualInvoiceType: 'A',
+          manualInvoicePointOfSale: '1',
+          manualInvoiceNumber: '9',
+        }),
+        invoices,
+      );
+      tx.arcaAccount.findUnique.mockResolvedValue({ status: 'linked' });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { manuallyInvoiced: false },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(invoices.markExternallyIssued).not.toHaveBeenCalled();
+      expect(tx.entry.update.mock.calls[0][0]).toMatchObject({
+        data: {
+          manuallyInvoiced: false,
+          manualInvoiceType: null,
+          manualInvoicePointOfSale: null,
+          manualInvoiceNumber: null,
+        },
       });
     });
 

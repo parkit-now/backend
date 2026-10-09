@@ -284,9 +284,17 @@ export class InvoicesService {
 
     const invoice = await this.prisma.$transaction(async (tx) => {
       await lockEntryInvoice(tx, tenantId, entryId);
+      const entry = await tx.entry.findFirst({
+        where: { tenantId, id: entryId, deletedAt: null },
+        select: { manuallyInvoiced: true },
+      });
+      if (entry?.manuallyInvoiced) throw this.externallyIssued(entryId);
       const existing = await tx.invoice.findFirst({
         where: { tenantId, entryId },
       });
+      if (!existing || !['issued', 'issuing'].includes(existing.status)) {
+        await this.assertInvoiceModeAllowsIssue(tx, tenantId, entryId);
+      }
       if (existing) return existing;
       const amount = await this.resolveAmount(tx, entryId, null);
       this.assertExpectedAmount(entryId, amount, expectedAmount);
@@ -309,9 +317,17 @@ export class InvoicesService {
     }
     return this.prisma.$transaction(async (tx) => {
       await lockEntryInvoice(tx, tenantId, entryId);
+      const entry = await tx.entry.findFirst({
+        where: { tenantId, id: entryId, deletedAt: null },
+        select: { manuallyInvoiced: true },
+      });
+      if (entry?.manuallyInvoiced) throw this.externallyIssued(entryId);
       const invoice = await tx.invoice.findFirst({
         where: { tenantId, entryId },
       });
+      if (!invoice || !['issued', 'issuing'].includes(invoice.status)) {
+        await this.assertInvoiceModeAllowsIssue(tx, tenantId, entryId);
+      }
       const amount = await this.resolveAmount(tx, entryId, invoice);
       const conflict = invoice
         ? this.conflictFor({ ...invoice, impTotal: new Prisma.Decimal(amount) })
@@ -336,6 +352,77 @@ export class InvoicesService {
       },
       data: { impTotal: amount },
     });
+  }
+
+  async markExternallyIssued(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    entryId: string,
+  ): Promise<void> {
+    const invoice = await tx.invoice.findFirst({
+      where: { tenantId, entryId },
+    });
+    if (!invoice) return;
+    if (invoice.status === 'issued') throw this.externallyIssued(entryId);
+    if (invoice.status === 'issuing' || invoice.cbteNro !== null) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'Invoice issuance is in progress; resolve it before registering an external invoice.',
+        this.instance(entryId),
+        ErrorCodes.INVOICE_IN_PROGRESS,
+      );
+    }
+    await tx.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: 'not_required',
+        errorCode: null,
+        errorMessage: null,
+        issuingStartedAt: null,
+      },
+    });
+  }
+
+  private async assertInvoiceModeAllowsIssue(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    entryId: string,
+  ): Promise<void> {
+    const lines = await tx.paymentTransaction.findMany({
+      where: { tenantId, entryId, deletedAt: null },
+      select: { paymentMethodId: true },
+    });
+    const ids = [
+      ...new Set(
+        lines
+          .map((line) => line.paymentMethodId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const methods = await tx.paymentMethod.findMany({
+      where: { tenantId, id: { in: ids } },
+      select: { id: true, invoiceMode: true },
+    });
+    const modeById = new Map(
+      methods.map((method) => [method.id, method.invoiceMode]),
+    );
+    if (
+      lines.length === 0 ||
+      lines.some((line) =>
+        line.paymentMethodId
+          ? (modeById.get(line.paymentMethodId) ?? 'none') === 'none'
+          : true,
+      )
+    ) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'Invoicing is disabled for this payment method.',
+        this.instance(entryId),
+        ErrorCodes.INVOICE_MODE_DISABLED,
+      );
+    }
   }
 
   private async resolveAmount(
@@ -682,9 +769,16 @@ export class InvoicesService {
       await lockEntryInvoice(tx, tenantId, current.entryId);
       const activeEntry = await tx.entry.findFirst({
         where: { tenantId, id: current.entryId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, manuallyInvoiced: true },
       });
       if (!activeEntry) throw this.notInvoiceable(current.entryId);
+      if (activeEntry.manuallyInvoiced) {
+        if (opts.throwOnConflict) throw this.externallyIssued(current.entryId);
+        const invoice = await tx.invoice.findFirstOrThrow({
+          where: { id: invoiceId, tenantId },
+        });
+        return { invoice, claimed: false };
+      }
       let fresh = await tx.invoice.findFirstOrThrow({
         where: { id: invoiceId, tenantId },
       });
@@ -1247,6 +1341,16 @@ export class InvoicesService {
       'The entry is still open or was charged $0.',
       this.instance(entryId),
       ErrorCodes.INVOICE_NOT_INVOICEABLE,
+    );
+  }
+
+  private externallyIssued(entryId: string): FormattedException {
+    return new FormattedException(
+      'Conflict',
+      HttpStatus.CONFLICT,
+      'This stay already has an invoice issued outside Parkit.',
+      this.instance(entryId),
+      ErrorCodes.INVOICE_ALREADY_ISSUED,
     );
   }
 

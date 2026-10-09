@@ -43,6 +43,12 @@ amountPaid?: Prisma.Decimal;
 manualInvoiceNumber?: string;
 @IsOptional()
 @IsString()
+manualInvoiceType?: string;
+@IsOptional()
+@IsString()
+manualInvoicePointOfSale?: string;
+@IsOptional()
+@IsString()
 vehicleType?: string;
 @IsOptional()
 @IsString()

@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -141,8 +142,9 @@ export class CorrectEntryDto {
 
   @ApiPropertyOptional({
     description:
-      'Marca la estadía como facturada por fuera de Parkit (playas sin ARCA). ' +
-      'Sólo en estadías cerradas; se permite aunque la caja esté cerrada.',
+      'Marca la estadía como facturada por fuera de Parkit. ' +
+      'Con ARCA vinculada requiere dueño, tipo, punto de venta y número; ' +
+      'se permite aunque la caja esté cerrada.',
   })
   @IsOptional()
   @IsBoolean()
@@ -156,6 +158,24 @@ export class CorrectEntryDto {
   @IsString()
   @MaxLength(40)
   manualInvoiceNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Letra de una factura emitida fuera de Parkit.',
+    enum: ['A', 'B', 'C'],
+    nullable: true,
+  })
+  @IsOptional()
+  @IsIn(['A', 'B', 'C'])
+  manualInvoiceType?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Punto de venta de una factura emitida fuera de Parkit.',
+    maxLength: 5,
+    nullable: true,
+  })
+  @IsOptional()
+  @Matches(/^\d{1,5}$/)
+  manualInvoicePointOfSale?: string | null;
 
   @ApiPropertyOptional({
     description: 'Required for operator changes to ingreso, egreso or amounts.',

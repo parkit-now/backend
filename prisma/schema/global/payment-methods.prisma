@@ -39,6 +39,7 @@ enum PaymentMethodInvoiceMode {
   none // no se factura
   auto // se emite al cobrar
   manual // no se factura al cobrar; se puede emitir desde el Historial
+  manual_pending // no se emite al cobrar; queda pendiente para el Historial
 
   @@map("payment_method_invoice_mode")
 }

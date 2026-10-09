@@ -157,6 +157,12 @@ function memoryPrisma(state: {
       },
     },
     paymentTransaction: {
+      findMany: ({ where }: Row) =>
+        Promise.resolve(
+          state.entries
+            .flatMap((entry) => entry.paymentTransactions as Row[])
+            .filter((row) => matches(row, where)),
+        ),
       updateMany: ({ where, data }: Row) => {
         const rows = state.entries
           .flatMap((entry) => entry.paymentTransactions as Row[])
@@ -208,7 +214,16 @@ function setup(
         deletedAt: null,
         amountPaid: 1210,
         version: 1,
-        paymentTransactions: [],
+        paymentTransactions: [
+          {
+            id: 'payment-1',
+            tenantId: TENANT,
+            entryId: ENTRY,
+            paymentMethodId: CASH,
+            deletedAt: null,
+            amount: 1210,
+          },
+        ],
         cashSession: { closedAt: null },
         rateSnapshotHourPriceArs: null,
         rateSnapshotStayPriceArs: null,
@@ -280,6 +295,67 @@ function pendingInvoice(
 }
 
 describe('InvoicesService', () => {
+  describe('factura externa', () => {
+    it('cierra una pendiente y bloquea vista previa, emisión individual y en lote', async () => {
+      const { service, state, prisma, gateway } = setup();
+      const invoice = pendingInvoice(state, {
+        errorCode: 'ARCA_UNAVAILABLE',
+        errorMessage: 'Sin conexión',
+      });
+      const entries = new EntriesService(
+        prisma as unknown as PrismaService,
+        { getTenantIdOrThrow: () => TENANT } as unknown as TenantContextService,
+        service,
+      );
+
+      await entries.correctEntry(
+        ENTRY,
+        1,
+        {
+          manuallyInvoiced: true,
+          manualInvoiceType: 'C',
+          manualInvoicePointOfSale: '12',
+          manualInvoiceNumber: '123',
+        },
+        { id: 'owner-user' } as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(state.entries[0].manuallyInvoiced).toBe(true);
+      expect(invoice.status).toBe('not_required');
+      expect(invoice.errorCode).toBeNull();
+      expect(codeOf(await rejection(service.previewForEntry(ENTRY)))).toBe(
+        'INVOICE_ALREADY_ISSUED',
+      );
+      expect(codeOf(await rejection(service.issueForEntry(ENTRY)))).toBe(
+        'INVOICE_ALREADY_ISSUED',
+      );
+      const batch = await service.issueBatch([ENTRY]);
+      expect(batch.results[0].errorCode).toBe('INVOICE_ALREADY_ISSUED');
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it.each(['issued', 'issuing'])(
+      'no reemplaza una factura de Parkit %s',
+      async (status) => {
+        const { service, state, prisma } = setup();
+        pendingInvoice(state, { status });
+        expect(
+          codeOf(
+            await rejection(
+              service.markExternallyIssued(prisma as never, TENANT, ENTRY),
+            ),
+          ),
+        ).toBe(
+          status === 'issued'
+            ? 'INVOICE_ALREADY_ISSUED'
+            : 'INVOICE_IN_PROGRESS',
+        );
+        expect(state.invoices[0].status).toBe(status);
+      },
+    );
+  });
+
   describe('importe confirmado', () => {
     it('regresion completa: cobrar 100, corregir pagos a 10 y enviar 10 a ARCA', async () => {
       const { service, state, prisma, gateway } = setup();
@@ -308,12 +384,14 @@ describe('InvoicesService', () => {
           payments: [
             {
               id: 'new-cash',
+              paymentMethodId: CASH,
               paymentMethodName: 'Efectivo',
               paymentMethodType: 'cash',
               amount: 6.25,
             },
             {
               id: 'new-transfer',
+              paymentMethodId: CASH,
               paymentMethodName: 'Transferencia',
               paymentMethodType: 'transfer',
               amount: 3.75,
@@ -540,6 +618,46 @@ describe('InvoicesService', () => {
       expect(created?.issueNow).toBe(false);
       expect(state.invoices[0].status).toBe('not_required');
       expect((await service.issueForEntry(ENTRY)).status).toBe('issued');
+    });
+
+    it('Manual con pendiente deja la factura pendiente sin emitirla al cobrar', async () => {
+      const { service, state, prisma } = setup();
+      jest
+        .spyOn(prisma.paymentMethod, 'findMany')
+        .mockResolvedValue([{ id: CASH, invoiceMode: 'manual_pending' }]);
+
+      const created = await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+      });
+
+      expect(created?.issueNow).toBe(false);
+      expect(state.invoices[0].status).toBe('pending');
+      expect((await service.issueForEntry(ENTRY)).status).toBe('issued');
+    });
+
+    it('Desactivado no permite emitir desde el Historial', async () => {
+      const { service, state, prisma } = setup();
+      jest
+        .spyOn(prisma.paymentMethod, 'findMany')
+        .mockResolvedValue([{ id: CASH, invoiceMode: 'none' }]);
+
+      await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+      });
+
+      expect(state.invoices[0].status).toBe('not_required');
+      expect(codeOf(await rejection(service.issueForEntry(ENTRY)))).toBe(
+        'INVOICE_MODE_DISABLED',
+      );
+      expect(codeOf(await rejection(service.previewForEntry(ENTRY)))).toBe(
+        'INVOICE_MODE_DISABLED',
+      );
     });
 
     it('sin cuenta ARCA vinculada no crea factura', async () => {
@@ -1117,6 +1235,17 @@ describe('InvoicesService', () => {
       pendingInvoice(state);
       pendingInvoice(state, { entryId: OTHER, status: 'issued' });
       pendingInvoice(state, { entryId: THIRD });
+      state.entries.push({
+        ...state.entries[0],
+        id: THIRD,
+        paymentTransactions: [
+          {
+            ...(state.entries[0].paymentTransactions as Row[])[0],
+            id: 'third-payment',
+            entryId: THIRD,
+          },
+        ],
+      });
 
       const { results } = await service.issueBatch([ENTRY, OTHER, THIRD]);
 
