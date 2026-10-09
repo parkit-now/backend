@@ -28,7 +28,11 @@ function account(id: string, fingerprint: string, expiresInDays: number) {
   };
 }
 
-type Where = { renewalCsrPem?: null; certExpiresAt: Record<string, Date> };
+type Where = {
+  renewalCsrPem?: null;
+  certExpiresAt: Record<string, Date>;
+  tenant?: { deletedAt: null };
+};
 
 function setup(env: Record<string, string> = {}) {
   const toRenew = [account('a', 'fp-1', 20), account('b', 'fp-1', 20)];
@@ -101,6 +105,23 @@ describe('ArcaMaintenanceService', () => {
       ([arg]) => arg.where.renewalCsrPem === null,
     );
     expect(where.certExpiresAt.lte).toEqual(new Date(NOW.getTime() + 30 * DAY));
+  });
+
+  it('no renueva certificados de estacionamientos dados de baja', async () => {
+    // Sin este filtro seguiríamos hablando con ARCA en nombre de una playa que
+    // para el resto del producto ya no existe, hasta que la purga borre la
+    // fila — hasta 365 días después según la ventana de gracia.
+    const { service, prisma } = setup();
+
+    await service.run();
+
+    const consultas = prisma.arcaAccount.findMany.mock.calls as [
+      { where: Where },
+    ][];
+    expect(consultas.length).toBeGreaterThan(0);
+    for (const [{ where }] of consultas) {
+      expect(where.tenant).toEqual({ deletedAt: null });
+    }
   });
 
   it('con DRY_RUN=false: una renovación por certificado, marca vencidos y reconcilia', async () => {

@@ -214,6 +214,15 @@ export class MpTokenService {
   }> {
     const accounts = await this.prisma.mpAccount.findMany({
       where: {
+        // Un estacionamiento dado de baja no renueva tokens. Sin este filtro
+        // seguiríamos pidiéndole credenciales a Mercado Pago en nombre de una
+        // playa que para el resto del producto ya no existe, hasta que la
+        // purga borre la fila —hasta 365 días después—.
+        //
+        // Sólo pasa cuando la desvinculación falló al dar de baja
+        // (`ParkingDeletionService` reporta el fallo pero no aborta): si salió
+        // bien, el estado pasa a `revoked` y esta consulta ya no la ve.
+        tenant: { deletedAt: null },
         status: MpAccountStatus.linked,
         accessTokenExpiresAt: { lte: new Date(Date.now() + REFRESH_WINDOW_MS) },
       },

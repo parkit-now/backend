@@ -138,6 +138,15 @@ export class ArcaMaintenanceService {
     const now = Date.now();
     const accounts = await this.prisma.arcaAccount.findMany({
       where: {
+        // Un estacionamiento dado de baja no renueva nada. Sin este filtro
+        // seguiríamos hablando con ARCA en nombre de una playa que para el
+        // resto del producto ya no existe, hasta que la purga borre la fila
+        // —hasta 365 días después, según la ventana de gracia—.
+        //
+        // Sólo pasa cuando la desvinculación falló al dar de baja
+        // (`ParkingDeletionService` reporta el fallo pero no aborta): si salió
+        // bien, el estado deja de ser `linked` y esta consulta ya no la ve.
+        tenant: { deletedAt: null },
         environment: this.arcaConfig.environment,
         status: 'linked',
         renewalCsrPem: null,
@@ -162,6 +171,8 @@ export class ArcaMaintenanceService {
   private findExpired() {
     return this.prisma.arcaAccount.findMany({
       where: {
+        // Ver `findRenewalCandidates`: una playa dada de baja no se avisa.
+        tenant: { deletedAt: null },
         environment: this.arcaConfig.environment,
         status: 'linked',
         certExpiresAt: { lte: new Date() },
