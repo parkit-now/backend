@@ -16,9 +16,10 @@ export type InitialInvoiceDecision =
  * Qué hacer con la factura de una estadía recién cobrada, según el
  * `invoice_mode` del medio de cada línea de pago:
  *
- * - monto 0, ninguna línea en `auto` o alguna en `manual` → no se factura al cobrar;
+ * - monto 0 o alguna línea en `none` → no se puede facturar;
+ * - alguna línea en `manual_pending` → queda pendiente para el Historial;
+ * - alguna línea en `manual` → no se factura al cobrar;
  * - todas las líneas en `auto` → se emite ya;
- * - mezcla de `auto` y `none` → queda pendiente para el Historial;
  * - consumidor final en Automática desde $10.000.000 → pendiente hasta identificar receptor.
  *
  * Una línea sin medio (cliente viejo, medio borrado) cuenta como `none`.
@@ -28,14 +29,13 @@ export function resolveInitialInvoice(input: {
   readonly lineModes: readonly PaymentMethodInvoiceMode[];
 }): InitialInvoiceDecision {
   if (!(input.total > 0)) return { kind: 'not_required' };
-  if (!input.lineModes.includes('auto') || input.lineModes.includes('manual')) {
+  if (input.lineModes.length === 0 || input.lineModes.includes('none')) {
     return { kind: 'not_required' };
   }
+  if (input.lineModes.includes('manual_pending')) return { kind: 'pending' };
+  if (input.lineModes.includes('manual')) return { kind: 'not_required' };
   if (input.total >= CONSUMIDOR_FINAL_ID_THRESHOLD) {
     return { kind: 'pending', reason: 'INVOICE_RECEIVER_REQUIRED' };
   }
-  if (input.lineModes.every((mode) => mode === 'auto')) {
-    return { kind: 'issue' };
-  }
-  return { kind: 'pending' };
+  return { kind: 'issue' };
 }

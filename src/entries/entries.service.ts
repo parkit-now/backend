@@ -66,6 +66,8 @@ type EntryAuditSnapshot = {
   ticketNumber: number | null;
   manuallyInvoiced: boolean;
   manualInvoiceNumber: string | null;
+  manualInvoiceType: string | null;
+  manualInvoicePointOfSale: string | null;
   /** Prepago de la reserva vinculada: lo sugerido es el excedente. */
   prepaidAmountArs: number | null;
   payments: PaymentSnapshot[];
@@ -134,6 +136,8 @@ function toDto(entry: PrismaEntry): EntryDto {
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
     manualInvoiceNumber: entry.manualInvoiceNumber,
+    manualInvoiceType: entry.manualInvoiceType,
+    manualInvoicePointOfSale: entry.manualInvoicePointOfSale,
     source: entry.source,
     vehicleType: entry.vehicleType,
     vehicleTypeId: entry.vehicleTypeId,
@@ -396,6 +400,8 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     ticketNumber: entry.ticketNumber,
     manuallyInvoiced: entry.manuallyInvoiced,
     manualInvoiceNumber: entry.manualInvoiceNumber,
+    manualInvoiceType: entry.manualInvoiceType,
+    manualInvoicePointOfSale: entry.manualInvoicePointOfSale,
     prepaidAmountArs: toNumber(entry.prepaidAmountArs),
     payments: activePayments(entry),
   };
@@ -426,6 +432,8 @@ function diffSnapshots(
     'rateSnapshotMediaEstadiaPriceArs',
     'manuallyInvoiced',
     'manualInvoiceNumber',
+    'manualInvoiceType',
+    'manualInvoicePointOfSale',
     'payments',
   ];
 
@@ -1101,6 +1109,8 @@ export class EntriesService {
       const allowedClosedFields = new Set([
         'manuallyInvoiced',
         'manualInvoiceNumber',
+        'manualInvoiceType',
+        'manualInvoicePointOfSale',
       ]);
       if (role === 'owner') allowedClosedFields.add('notes');
       const onlyAllowedClosedFields = Object.entries(data).every(
@@ -1121,7 +1131,10 @@ export class EntriesService {
         isActive &&
         (data.leftAt !== undefined ||
           data.payments !== undefined ||
-          data.manuallyInvoiced !== undefined)
+          data.manuallyInvoiced !== undefined ||
+          data.manualInvoiceNumber !== undefined ||
+          data.manualInvoiceType !== undefined ||
+          data.manualInvoicePointOfSale !== undefined)
       ) {
         throw new FormattedException(
           'Conflict',
@@ -1130,6 +1143,70 @@ export class EntriesService {
           `/tenants/:tenantId/entries/${entryId}/correction`,
           ErrorCodes.ENTRY_ACTIVE_PAYMENT_LOCKED,
         );
+      }
+
+      const externalFieldsChanged =
+        data.manuallyInvoiced !== undefined ||
+        data.manualInvoiceNumber !== undefined ||
+        data.manualInvoiceType !== undefined ||
+        data.manualInvoicePointOfSale !== undefined;
+      const arcaAccount = externalFieldsChanged
+        ? await tx.arcaAccount.findUnique({
+            where: { tenantId },
+            select: { status: true },
+          })
+        : null;
+      const arcaLinked =
+        arcaAccount?.status === 'linked' ||
+        arcaAccount?.status === 'cert_expired';
+      if (arcaLinked && externalFieldsChanged && role !== 'owner') {
+        throw new FormattedException(
+          'Forbidden',
+          HttpStatus.FORBIDDEN,
+          'Only the parking owner can register an external invoice.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.FORBIDDEN,
+        );
+      }
+      const externalMarked = data.manuallyInvoiced ?? current.manuallyInvoiced;
+      const externalType = data.manualInvoiceType ?? current.manualInvoiceType;
+      const externalPointOfSale =
+        data.manualInvoicePointOfSale ?? current.manualInvoicePointOfSale;
+      const externalNumber =
+        data.manualInvoiceNumber ?? current.manualInvoiceNumber;
+      if (arcaLinked && externalFieldsChanged && externalMarked) {
+        if (!(Number(current.amountPaid) > 0)) {
+          throw new FormattedException(
+            'Unprocessable Entity',
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            'Only a paid stay can have an external invoice.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.INVOICE_NOT_INVOICEABLE,
+          );
+        }
+        if (
+          !['A', 'B', 'C'].includes(externalType ?? '') ||
+          !/^\d{1,5}$/.test(externalPointOfSale ?? '') ||
+          !/^\d{1,8}$/.test(externalNumber ?? '')
+        ) {
+          throw new FormattedException(
+            'Bad Request',
+            HttpStatus.BAD_REQUEST,
+            'External invoices require type, point of sale and number.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.VALIDATION_FAILED,
+          );
+        }
+        if (!this.invoices) {
+          throw new FormattedException(
+            'Conflict',
+            HttpStatus.CONFLICT,
+            'Invoice integration is unavailable.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.ARCA_UNAVAILABLE,
+          );
+        }
+        await this.invoices.markExternallyIssued(tx, tenantId, entryId);
       }
 
       const before = snapshotEntry(current);
@@ -1169,6 +1246,15 @@ export class EntriesService {
         activePayments(current),
         nextPayments,
       );
+      if (amountsChanged && (current.manuallyInvoiced || externalMarked)) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'The stay already has an external invoice; its charged amount cannot change.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.INVOICE_ALREADY_ISSUED,
+        );
+      }
       // Una factura emitida no se edita: cambiar el monto dejaría el cobro y
       // el comprobante fiscal diciendo cosas distintas. Anularla es una nota
       // de crédito, que se hace desde ARCA (fuera del MVP).
@@ -1256,11 +1342,21 @@ export class EntriesService {
       }
       if (data.manuallyInvoiced === false) {
         updateData.manualInvoiceNumber = null;
+        updateData.manualInvoiceType = null;
+        updateData.manualInvoicePointOfSale = null;
       } else if (data.manualInvoiceNumber !== undefined) {
         updateData.manualInvoiceNumber =
           (data.manuallyInvoiced ?? current.manuallyInvoiced)
             ? data.manualInvoiceNumber.trim() || null
             : null;
+      }
+      if (data.manuallyInvoiced !== false) {
+        if (data.manualInvoiceType !== undefined) {
+          updateData.manualInvoiceType = data.manualInvoiceType;
+        }
+        if (data.manualInvoicePointOfSale !== undefined) {
+          updateData.manualInvoicePointOfSale = data.manualInvoicePointOfSale;
+        }
       }
 
       await tx.entry.update({

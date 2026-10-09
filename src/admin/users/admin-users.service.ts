@@ -268,5 +268,10 @@ function toMembershipDto(
     parkingName: membership.tenant.name,
     role: membership.role,
     createdAt: membership.createdAt,
+    // Se expone en vez de filtrar la membresía. Filtrarla diría que esa
+    // persona no tiene acceso, y no es cierto: el acceso existe y vuelve solo
+    // si el estacionamiento se restaura dentro de la ventana de gracia. Lo
+    // que el panel necesita no es que desaparezca, es poder marcarla.
+    parkingDeletedAt: membership.tenant.deletedAt,
   };
 }

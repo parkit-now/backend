@@ -25,10 +25,22 @@ describe('resolveInitialInvoice', () => {
     ).toEqual({ kind: 'not_required' });
   });
 
-  it('mezcla de Automática y desmarcado → pendiente', () => {
+  it('Manual con pendiente deja una factura pendiente, aun sin Automática', () => {
+    expect(
+      resolveInitialInvoice({ total: 5000, lineModes: ['manual_pending'] }),
+    ).toEqual({ kind: 'pending' });
+    expect(
+      resolveInitialInvoice({
+        total: 5000,
+        lineModes: ['manual', 'manual_pending'],
+      }),
+    ).toEqual({ kind: 'pending' });
+  });
+
+  it('Desactivado impide facturar incluso en un cobro dividido', () => {
     expect(
       resolveInitialInvoice({ total: 5000, lineModes: ['auto', 'none'] }),
-    ).toEqual({ kind: 'pending' });
+    ).toEqual({ kind: 'not_required' });
   });
 
   it('ningún medio marcado → no requiere factura', () => {

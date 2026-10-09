@@ -9,9 +9,11 @@ model Entry {
   enteredAt  DateTime  @default(now()) @map("entered_at")
   leftAt     DateTime? @map("left_at")
   amountPaid Decimal?  @map("amount_paid") @db.Decimal(10, 2)
-  /// Checkbox "Facturada" para las playas sin integración con ARCA.
+  /// Factura emitida fuera de Parkit; con ARCA vinculada solo el dueño puede registrarla.
   manuallyInvoiced Boolean @default(false) @map("manually_invoiced")
   manualInvoiceNumber String? @map("manual_invoice_number") @db.VarChar(40)
+  manualInvoiceType String? @map("manual_invoice_type") @db.VarChar(1)
+  manualInvoicePointOfSale String? @map("manual_invoice_point_of_sale") @db.VarChar(5)
 
   // LPR fields — populated on automatic ingress; null for manual entries.
   source         String      @default("manual") @db.VarChar(10)

@@ -392,6 +392,8 @@ export const ErrorCodes = {
   INVOICE_RECEIVER_REQUIRED: 'INVOICE_RECEIVER_REQUIRED',
   // La estadia no se puede facturar: sigue abierta o se cobro $0.
   INVOICE_NOT_INVOICEABLE: 'INVOICE_NOT_INVOICEABLE',
+  // El medio de pago de la estadia tiene la facturacion desactivada.
+  INVOICE_MODE_DISABLED: 'INVOICE_MODE_DISABLED',
   // Receptor con CUIT: el padron no tiene datos de ese CUIT (produccion).
   INVOICE_RECEIVER_NOT_FOUND: 'INVOICE_RECEIVER_NOT_FOUND',
   // DEPRECADO desde la Etapa 5: un receptor que no recibe A sale B

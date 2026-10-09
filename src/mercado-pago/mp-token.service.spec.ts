@@ -281,6 +281,20 @@ describe('MpTokenService', () => {
   });
 
   describe('refreshExpiringTokens (cron diario)', () => {
+    it('no renueva tokens de estacionamientos dados de baja', async () => {
+      // Sin este filtro seguiríamos pidiéndole credenciales a Mercado Pago en
+      // nombre de una playa que para el resto del producto ya no existe, hasta
+      // que la purga borre la fila — hasta 365 días después.
+      prisma.mpAccount.findMany.mockResolvedValue([]);
+
+      await service.refreshExpiringTokens();
+
+      const { where } = prisma.mpAccount.findMany.mock.calls[0][0] as {
+        where: { tenant?: { deletedAt: null } };
+      };
+      expect(where.tenant).toEqual({ deletedAt: null });
+    });
+
     it('renueva sólo las cuentas vinculadas con menos de 30 días', async () => {
       prisma.mpAccount.findMany.mockResolvedValue([
         makeAccount({
