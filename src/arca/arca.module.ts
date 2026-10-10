@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { PrismaModule } from '../database/prisma.module';
 import { ArcaAccountsController } from './arca-accounts.controller';
+import { ArcaSelectedAccountsController } from './arca-selected-accounts.controller';
 import { ArcaAccountsService } from './arca-accounts.service';
 import { ArcaConfigService } from './arca-config.service';
 import { ArcaCryptoService } from './arca-crypto.service';
@@ -19,7 +20,11 @@ import { InvoicesService } from './invoices.service';
  */
 @Module({
   imports: [PrismaModule, AuditModule],
-  controllers: [ArcaAccountsController, InvoicesController],
+  controllers: [
+    ArcaAccountsController,
+    ArcaSelectedAccountsController,
+    InvoicesController,
+  ],
   providers: [
     ArcaConfigService,
     ArcaCryptoService,

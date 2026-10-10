@@ -5,6 +5,7 @@ import {
   ArrayUnique,
   IsArray,
   IsUUID,
+  IsOptional,
 } from 'class-validator';
 import { InvoiceSummaryDto } from './invoice-summary.dto';
 
@@ -12,6 +13,10 @@ import { InvoiceSummaryDto } from './invoice-summary.dto';
 export const INVOICE_BATCH_MAX = 50;
 
 export class IssueInvoiceBatchDto {
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  arcaAccountId?: string;
   @ApiProperty({
     description: `Estadías cobradas a facturar a consumidor final (1 a ${INVOICE_BATCH_MAX}).`,
     type: [String],

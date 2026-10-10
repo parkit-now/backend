@@ -2,6 +2,7 @@
 import {Prisma,InvoiceStatus,ArcaEnvironment,ArcaTaxCondition} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {EntryEntity} from './entry.entity'
+import {ArcaAccountEntity} from './arca-account.entity'
 import {TenantEntity} from './tenant.entity'
 import {ArcaRequestEntity} from './arca-request.entity'
 
@@ -13,6 +14,8 @@ export class InvoiceEntity {
 })
 entryId: string ;
 entry?: EntryEntity ;
+arcaAccountId: string  | null;
+arcaAccount?: ArcaAccountEntity  | null;
 @ApiProperty({
   enum: InvoiceStatus,
 })

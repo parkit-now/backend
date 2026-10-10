@@ -3,6 +3,14 @@ import { VEHICLE_CATEGORY_API_PROPERTY } from '../../vehicle-categories/dto/vehi
 import type { VehicleCategory } from '../../vehicle-categories/vehicle-categories';
 
 export class EntryDto {
+  @ApiPropertyOptional({ nullable: true, type: String, format: 'uuid' })
+  manualInvoiceArcaAccountId: string | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String })
+  manualInvoiceIssuerCuit: string | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String })
+  manualInvoiceIssuerName: string | null;
   @ApiProperty({ format: 'uuid' })
   id: string;
 

@@ -22,6 +22,37 @@ import {
 } from '../../vehicle-categories/vehicle-categories';
 
 export class CorrectEntryDto {
+  @ApiPropertyOptional({
+    format: 'uuid',
+    nullable: true,
+    type: String,
+    description: 'Cuenta de la factura registrada externamente.',
+  })
+  @IsOptional()
+  @IsUUID()
+  manualInvoiceArcaAccountId?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    maxLength: 32,
+    description: 'CUIT de un emisor externo no vinculado. Admite guiones.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  manualInvoiceIssuerCuit?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    maxLength: 180,
+    description: 'Nombre o razón social de un emisor externo no vinculado.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(180)
+  manualInvoiceIssuerName?: string | null;
   @ApiPropertyOptional({ example: 'ABC123', maxLength: 20 })
   @IsOptional()
   @IsString()

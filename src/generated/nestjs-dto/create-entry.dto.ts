@@ -49,6 +49,12 @@ manualInvoiceType?: string;
 manualInvoicePointOfSale?: string;
 @IsOptional()
 @IsString()
+manualInvoiceIssuerCuit?: string;
+@IsOptional()
+@IsString()
+manualInvoiceIssuerName?: string;
+@IsOptional()
+@IsString()
 vehicleType?: string;
 @IsOptional()
 @IsString()

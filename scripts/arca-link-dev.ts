@@ -143,11 +143,19 @@ async function main(): Promise<void> {
       certExpiresAt: cert.notAfter,
       linkedAt: new Date(),
     };
-    await prisma.arcaAccount.upsert({
-      where: { tenantId: args.tenant! },
-      create: { tenantId: args.tenant!, ...data },
-      update: data,
+    const existing = await prisma.arcaAccount.findFirst({
+      where: {
+        tenantId: args.tenant!,
+        role: 'primary',
+        status: { not: 'unlinked' },
+      },
     });
+    if (existing)
+      await prisma.arcaAccount.update({ where: { id: existing.id }, data });
+    else
+      await prisma.arcaAccount.create({
+        data: { tenantId: args.tenant!, ...data },
+      });
 
     console.log(
       `✓ "${tenant.name}" vinculada con ARCA (${config.environment}): CUIT ${cuit}, ` +

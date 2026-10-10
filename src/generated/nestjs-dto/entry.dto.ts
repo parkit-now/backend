@@ -31,6 +31,8 @@ manuallyInvoiced: boolean ;
 manualInvoiceNumber: string  | null;
 manualInvoiceType: string  | null;
 manualInvoicePointOfSale: string  | null;
+manualInvoiceIssuerCuit: string  | null;
+manualInvoiceIssuerName: string  | null;
 source: string ;
 vehicleType: string  | null;
 vehicleTypeId: string  | null;

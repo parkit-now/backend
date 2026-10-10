@@ -1,6 +1,7 @@
 
 import {Prisma} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
+import {ArcaAccountEntity} from './arca-account.entity'
 import {VehicleCategoryEntity} from './vehicle-category.entity'
 import {ReservationEntity} from './reservation.entity'
 import {WhitelistEntity} from './whitelist.entity'
@@ -41,6 +42,10 @@ manuallyInvoiced: boolean ;
 manualInvoiceNumber: string  | null;
 manualInvoiceType: string  | null;
 manualInvoicePointOfSale: string  | null;
+manualInvoiceArcaAccountId: string  | null;
+manualInvoiceArcaAccount?: ArcaAccountEntity  | null;
+manualInvoiceIssuerCuit: string  | null;
+manualInvoiceIssuerName: string  | null;
 source: string ;
 vehicleType: string  | null;
 vehicleTypeId: string  | null;

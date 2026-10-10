@@ -20,6 +20,9 @@ model Invoice {
   entryId String @unique @map("entry_id") @db.Uuid
   entry   Entry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
 
+  arcaAccountId String? @map("arca_account_id") @db.Uuid
+  arcaAccount ArcaAccount? @relation(fields: [tenantId, arcaAccountId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction, map: "invoices_arca_account_fkey")
+
   status           InvoiceStatus
   errorCode        String?       @map("error_code") @db.VarChar(64)
   errorMessage     String?       @map("error_message")
@@ -73,6 +76,7 @@ model Invoice {
   // `invoices_voucher_number_idx` (único, parcial WHERE cbte_nro IS NOT NULL) e
   // `invoices_issuing_idx` (parcial) viven sólo en SQL.
   @@index([tenantId, syncSeq], map: "invoices_tenant_sync_seq_idx")
+  @@index([arcaAccountId], map: "invoices_arca_account_idx")
   @@index([tenantId, status], map: "invoices_tenant_status_idx")
   @@map("invoices")
 }

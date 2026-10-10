@@ -120,7 +120,9 @@ export class ParkingDeletionService {
         where: { tenantId: id, status: PaymentIntentStatus.approved },
       }),
       this.prisma.mpAccount.findUnique({ where: { tenantId: id } }),
-      this.prisma.arcaAccount.findUnique({ where: { tenantId: id } }),
+      this.prisma.arcaAccount.findFirst({
+        where: { tenantId: id, role: 'primary', status: { not: 'unlinked' } },
+      }),
     ]);
 
     // Sólo plata de terceros que quedaría colgada. Un turno de caja abierto o
@@ -318,8 +320,8 @@ export class ParkingDeletionService {
       });
     }
 
-    const arcaAccount = await this.prisma.arcaAccount.findUnique({
-      where: { tenantId },
+    const arcaAccount = await this.prisma.arcaAccount.findFirst({
+      where: { tenantId, role: 'primary', status: { not: 'unlinked' } },
     });
     if (arcaAccount) {
       await record('Desvincular ARCA', async () => {

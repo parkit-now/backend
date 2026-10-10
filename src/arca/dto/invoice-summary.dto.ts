@@ -3,6 +3,14 @@ import { InvoiceStatus } from '@prisma/client';
 
 /** Lo que el cobro necesita saber de la factura: cómo salió y por qué. */
 export class InvoiceSummaryDto {
+  @ApiPropertyOptional({ nullable: true, type: String, format: 'uuid' })
+  arcaAccountId: string | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String })
+  emisorCuit: string | null;
+
+  @ApiPropertyOptional({ nullable: true, type: String })
+  emisorRazonSocial: string | null;
   @ApiProperty({
     type: [String],
     format: 'uuid',

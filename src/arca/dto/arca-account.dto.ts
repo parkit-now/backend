@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArcaAccountStatus,
+  ArcaAccountRole,
   ArcaEnvironment,
   ArcaTaxCondition,
 } from '@prisma/client';
@@ -25,6 +26,8 @@ import {
  * el certificado tampoco: sólo lo que el dueño necesita ver.
  */
 export class ArcaAccountDto {
+  @ApiProperty({ enum: ArcaAccountRole, enumName: 'ArcaAccountRole' })
+  role: ArcaAccountRole;
   @ApiProperty({ format: 'uuid' })
   id: string;
 
@@ -116,6 +119,14 @@ export class ArcaAccountDto {
 }
 
 export class CreateArcaAccountDto {
+  @ApiPropertyOptional({
+    enum: ArcaAccountRole,
+    enumName: 'ArcaAccountRole',
+    default: 'primary',
+  })
+  @IsOptional()
+  @IsEnum(ArcaAccountRole)
+  role?: ArcaAccountRole;
   @ApiProperty({
     example: '20-12345678-3',
     description: 'Con o sin guiones. Se valida el dígito verificador.',
@@ -255,15 +266,29 @@ export class SetArcaSalesPointDto {
 }
 
 export class ReuseArcaCertificateDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Cuenta de origen del certificado.',
+  })
+  @IsOptional()
+  @IsUUID()
+  fromAccountId?: string;
+  @ApiPropertyOptional({
     format: 'uuid',
     description: 'La otra playa del mismo dueño, ya vinculada con este CUIT.',
   })
+  @IsOptional()
   @IsUUID()
-  fromTenantId: string;
+  fromTenantId?: string;
 }
 
 export class ArcaReusableCertificateDto {
+  @ApiPropertyOptional({ enum: ArcaAccountRole })
+  role?: ArcaAccountRole;
+  @ApiPropertyOptional({ nullable: true, type: Number })
+  ptoVta?: number | null;
+  @ApiProperty({ format: 'uuid' })
+  accountId: string;
   @ApiProperty({ format: 'uuid' })
   tenantId: string;
 

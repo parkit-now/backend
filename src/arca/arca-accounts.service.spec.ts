@@ -5,7 +5,7 @@ import type { ConfigService } from '@nestjs/config';
 import type { User } from '@prisma/client';
 import forge from 'node-forge';
 import type { AuditService } from '../audit/audit.service';
-import type { PermissionsService } from '../auth/permissions.service';
+import { PermissionsService } from '../auth/permissions.service';
 import type { PrismaService } from '../database/prisma.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { ArcaAccountsService } from './arca-accounts.service';
@@ -23,9 +23,19 @@ type Row = Record<string, any>;
 
 function matches(row: Row, where: Row = {}): boolean {
   return Object.entries(where).every(([key, value]: [string, unknown]) =>
-    value !== null && typeof value === 'object' && 'not' in value
-      ? row[key] !== value.not
-      : row[key] === value,
+    value instanceof Date
+      ? row[key] === value
+      : value !== null && typeof value === 'object' && 'gt' in value
+        ? row[key] instanceof Date &&
+          value.gt instanceof Date &&
+          row[key] > value.gt
+        : value === undefined
+          ? true
+          : value !== null && typeof value === 'object' && 'in' in value
+            ? (value.in as unknown[]).includes(row[key])
+            : value !== null && typeof value === 'object' && 'not' in value
+              ? row[key] !== value.not
+              : row[key] === value,
   );
 }
 
@@ -85,6 +95,27 @@ function setup(environment = 'homologacion') {
   };
   const prisma = {
     arcaAccount: {
+      create: ({ data }: Row) => {
+        const row = {
+          id: `acc-${state.accounts.length + 1}`,
+          ivaRate: 21,
+          renewalCsrPem: null,
+          ...data,
+        };
+        state.accounts.push(row);
+        return Promise.resolve({ ...row });
+      },
+      findMany: ({ where, include }: Row) =>
+        Promise.resolve(
+          state.accounts
+            .filter((row) => matches(row, where))
+            .map((row) => ({
+              ...row,
+              ...((include as { tenant?: boolean } | undefined)?.tenant
+                ? { tenant: { name: 'Estacionamiento Palermo' } }
+                : {}),
+            })),
+        ),
       // Copia, como Prisma: el servicio no puede ver cambios posteriores.
       findUnique: ({ where }: Row) => {
         const row = find(where);
@@ -122,6 +153,11 @@ function setup(environment = 'homologacion') {
         Promise.resolve({ name: 'Estacionamiento Palermo' }),
     },
     paymentMethod,
+    userMembership: {
+      findMany: () => Promise.resolve([{ tenantId: TENANT, role: 'owner' }]),
+    },
+    invoice: { count: jest.fn().mockResolvedValue(0) },
+    $executeRaw: jest.fn().mockResolvedValue(1),
     arcaAccessTicket,
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
   };
@@ -132,7 +168,7 @@ function setup(environment = 'homologacion') {
     config,
     crypto,
     audit as unknown as AuditService,
-    {} as PermissionsService,
+    new PermissionsService(),
     gateway,
   );
 
@@ -155,6 +191,7 @@ function setup(environment = 'homologacion') {
     arcaAccessTicket,
     storedKey,
     renewalKey,
+    prisma,
   };
 }
 
@@ -358,6 +395,151 @@ describe('ArcaAccountsService — paso 3 (punto de venta)', () => {
 });
 
 describe('ArcaAccountsService — desvincular', () => {
+  it('reutiliza por ID el certificado de primaria y renueva ambas sin cambiar sus puntos de venta', async () => {
+    const { service, state, storedKey, renewalKey } = setup();
+    const primary = await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
+    await service.uploadCertificate(TENANT, {
+      certificate: certFor(storedKey()),
+    });
+    Object.assign(state.accounts[0], { status: 'linked', ptoVta: 1 });
+    const secondary = await service.create(TENANT, {
+      cuit: CUIT,
+      iibb: IIBB,
+      role: 'secondary',
+    });
+    const reusable = await service.listReusableCertificates(
+      TENANT,
+      USER,
+      secondary.id,
+    );
+    expect(reusable.map((item) => item.accountId)).toEqual([primary.id]);
+    const reused = await service.reuseCertificate(
+      TENANT,
+      USER,
+      { fromAccountId: primary.id },
+      secondary.id,
+    );
+    expect(reused.status).toBe('pending_sales_point');
+    expect(state.accounts[1].certFingerprint).toBe(
+      state.accounts[0].certFingerprint,
+    );
+    Object.assign(state.accounts[1], { status: 'linked', ptoVta: 2 });
+    await service.getRenewalCsr(TENANT, secondary.id);
+    expect(state.accounts[1].renewalCsrPem).toBe(
+      state.accounts[0].renewalCsrPem,
+    );
+    const originalFingerprint = state.accounts[0].certFingerprint;
+    await service.uploadRenewalCertificate(
+      TENANT,
+      USER,
+      { certificate: certFor(renewalKey()) },
+      secondary.id,
+    );
+    expect(state.accounts[0].certFingerprint).not.toBe(originalFingerprint);
+    expect(state.accounts[1].certFingerprint).toBe(
+      state.accounts[0].certFingerprint,
+    );
+    expect(state.accounts.map((account) => account.ptoVta)).toEqual([1, 2]);
+  });
+  it('exige una primaria vinculada antes de crear secundaria', async () => {
+    const { service, state } = setup();
+    expect(
+      codeOf(
+        await rejection(
+          service.create(TENANT, { cuit: CUIT, iibb: IIBB, role: 'secondary' }),
+        ),
+      ),
+    ).toBe('ARCA_PRIMARY_REQUIRED');
+    expect(state.accounts).toHaveLength(0);
+  });
+
+  it('acepta mismo CUIT con otro punto de venta, pero no uno duplicado', async () => {
+    const { service, state } = setup();
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
+    Object.assign(state.accounts[0], { status: 'linked', ptoVta: 1 });
+    const secondary = await service.create(TENANT, {
+      cuit: CUIT,
+      iibb: IIBB,
+      role: 'secondary',
+    });
+    expect(secondary.certAlias).not.toBe('parkitestacionamientopalermo');
+    const original = state.accounts[0];
+    Object.assign(state.accounts[1], {
+      ...original,
+      id: secondary.id,
+      role: 'secondary',
+      status: 'pending_sales_point',
+      ptoVta: null,
+      condicionIva: 'monotributo',
+      inicioActividad: new Date('2020-01-01'),
+      certPem: 'CERT',
+      certFingerprint: 'abc',
+    });
+    expect(
+      codeOf(
+        await rejection(
+          service.setSalesPoint(TENANT, USER, { ptoVta: 1 }, secondary.id),
+        ),
+      ),
+    ).toBe('ARCA_ACCOUNT_DUPLICATE');
+    const linked = await service.setSalesPoint(
+      TENANT,
+      USER,
+      { ptoVta: 2 },
+      secondary.id,
+    );
+    expect(linked.ptoVta).toBe(2);
+    expect(
+      codeOf(
+        await rejection(
+          service.create(TENANT, { cuit: CUIT, iibb: IIBB, role: 'secondary' }),
+        ),
+      ),
+    ).toBe('ARCA_ALREADY_LINKED');
+  });
+
+  it('desvincular secundaria conserva primaria y los modos; primaria quita ambas', async () => {
+    const { service, state, paymentMethod } = setup();
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
+    state.accounts[0].status = 'linked';
+    const secondary = await service.create(TENANT, {
+      cuit: CUIT,
+      iibb: IIBB,
+      role: 'secondary',
+    });
+    await service.unlink(TENANT, USER, secondary.id);
+    expect(state.accounts[0].status).toBe('linked');
+    expect(paymentMethod.updateMany).not.toHaveBeenCalled();
+    const replacement = await service.create(TENANT, {
+      cuit: CUIT,
+      iibb: IIBB,
+      role: 'secondary',
+    });
+    expect(replacement.id).not.toBe(secondary.id);
+    await service.unlink(TENANT, USER);
+    expect(
+      state.accounts.every((account) => account.status === 'unlinked'),
+    ).toBe(true);
+    expect(paymentMethod.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('bloquea la desvinculación si hay una emisión incierta', async () => {
+    const { service, state, prisma } = setup();
+    await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
+    prisma.invoice.count.mockResolvedValue(1);
+    expect(codeOf(await rejection(service.unlink(TENANT, USER)))).toBe(
+      'INVOICE_IN_PROGRESS',
+    );
+    expect(state.accounts[0].status).toBe('pending_certificate');
+  });
+
+  it('no permite gestionar una cuenta de otro estacionamiento', async () => {
+    const { service } = setup();
+    const account = await service.create(TENANT, { cuit: CUIT, iibb: IIBB });
+    expect(
+      codeOf(await rejection(service.getAccount('another-tenant', account.id))),
+    ).toBe('ARCA_NOT_LINKED');
+  });
   it('borra clave y certificado y pone todos los medios en none', async () => {
     const { service, state, storedKey, paymentMethod, arcaAccessTicket } =
       setup();

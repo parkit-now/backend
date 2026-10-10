@@ -23,6 +23,13 @@ enum ArcaAccountStatus {
   @@map("arca_account_status")
 }
 
+enum ArcaAccountRole {
+  primary
+  secondary
+
+  @@map("arca_account_role")
+}
+
 /// Condición frente al IVA del EMISOR: decide la letra del comprobante.
 enum ArcaTaxCondition {
   responsable_inscripto
@@ -36,8 +43,12 @@ enum ArcaTaxCondition {
 model ArcaAccount {
   id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
 
-  tenantId String @unique @map("tenant_id") @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  role ArcaAccountRole @default(primary)
+  invoices Invoice[]
+  externalEntries Entry[] @relation("ExternalInvoiceAccount")
 
   environment ArcaEnvironment
   status      ArcaAccountStatus @default(pending_certificate)
@@ -71,6 +82,8 @@ model ArcaAccount {
 
   // `arca_accounts_cert_expiry_idx` es parcial (WHERE status = 'linked'): vive
   // sólo en SQL.
+  @@unique([tenantId, id], map: "arca_accounts_tenant_id_id_key")
+  @@index([tenantId], map: "arca_accounts_tenant_id_idx")
   @@map("arca_accounts")
 }
 
