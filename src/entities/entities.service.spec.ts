@@ -70,7 +70,7 @@ describe('EntitiesService', () => {
       delete: jest.fn(),
     },
     mpAccount: { findUnique: jest.fn() },
-    arcaAccount: { findUnique: jest.fn() },
+    arcaAccount: { findFirst: jest.fn() },
     $transaction: jest.fn(),
   };
   const mockAudit = { record: jest.fn(), listForTenant: jest.fn() };
@@ -491,7 +491,7 @@ describe('EntitiesService', () => {
 
       it('rechaza poner Automática sin ARCA vinculada', async () => {
         mockPrisma.paymentMethod.findFirst.mockResolvedValue(cash);
-        mockPrisma.arcaAccount.findUnique.mockResolvedValue(null);
+        mockPrisma.arcaAccount.findFirst.mockResolvedValue(null);
 
         const error = await service
           .togglePaymentMethod('t-1', owner, 'pm-1', { invoiceMode: 'auto' })
@@ -523,7 +523,7 @@ describe('EntitiesService', () => {
           invoiceMode: 'none',
         });
 
-        expect(mockPrisma.arcaAccount.findUnique).not.toHaveBeenCalled();
+        expect(mockPrisma.arcaAccount.findFirst).not.toHaveBeenCalled();
         expect(txInner.paymentMethod.update).toHaveBeenCalled();
       });
     });

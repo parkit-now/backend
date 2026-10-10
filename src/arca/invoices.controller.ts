@@ -65,6 +65,12 @@ export class InvoicesController {
     type: String,
     isArray: true,
   })
+  @ApiQuery({
+    name: 'arcaAccountId',
+    required: false,
+    type: String,
+    format: 'uuid',
+  })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   async preview(
     @Param('entryId', ParseUUIDPipe) entryId: string,
@@ -73,8 +79,16 @@ export class InvoicesController {
       new ParseArrayPipe({ items: String, optional: true, separator: ',' }),
     )
     invoicePaymentIds?: string[],
+    @Query('arcaAccountId', new ParseUUIDPipe({ optional: true }))
+    arcaAccountId?: string,
+    @CurrentUser() user?: User,
   ): Promise<InvoicePreviewDto> {
-    return this.invoicesService.previewForEntry(entryId, invoicePaymentIds);
+    return this.invoicesService.previewForEntry(
+      entryId,
+      invoicePaymentIds,
+      arcaAccountId,
+      user?.id,
+    );
   }
 
   @Post('entries/:entryId/invoice')
@@ -105,6 +119,7 @@ export class InvoicesController {
       dto?.receiverCuit,
       dto?.expectedAmount,
       dto?.invoicePaymentIds,
+      dto?.arcaAccountId,
     );
   }
 
@@ -119,10 +134,21 @@ export class InvoicesController {
       '422 ARCA_CERT_NOT_AUTHORIZED (falta asociar la constancia al certificado).',
   })
   @ApiOkResponse({ type: TaxpayerDto })
+  @ApiQuery({
+    name: 'arcaAccountId',
+    required: false,
+    type: String,
+    format: 'uuid',
+  })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   @ApiParam({ name: 'cuit', description: 'Con o sin guiones' })
-  async taxpayer(@Param('cuit') cuit: string): Promise<TaxpayerDto> {
-    return this.invoicesService.lookupTaxpayer(cuit);
+  async taxpayer(
+    @Param('cuit') cuit: string,
+    @Query('arcaAccountId', new ParseUUIDPipe({ optional: true }))
+    arcaAccountId?: string,
+    @CurrentUser() user?: User,
+  ): Promise<TaxpayerDto> {
+    return this.invoicesService.lookupTaxpayer(cuit, arcaAccountId, user?.id);
   }
 
   @Get('invoice-receivers')
@@ -153,7 +179,11 @@ export class InvoicesController {
     @CurrentUser() user: User,
     @Body() dto: IssueInvoiceBatchDto,
   ): Promise<InvoiceBatchResponseDto> {
-    return this.invoicesService.issueBatch(dto.entryIds, user?.id);
+    return this.invoicesService.issueBatch(
+      dto.entryIds,
+      user?.id,
+      dto.arcaAccountId,
+    );
   }
 
   @Get('invoices/:invoiceId/document')

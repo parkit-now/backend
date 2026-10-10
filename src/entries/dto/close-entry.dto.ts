@@ -15,6 +15,13 @@ import { PaymentLineDto } from '../../payment-transactions/dto/payment-line.dto'
 
 export class CloseEntryDto {
   @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Cuenta emisora de esta factura; primaria si se omite.',
+  })
+  @IsOptional()
+  @IsUUID()
+  arcaAccountId?: string;
+  @ApiPropertyOptional({
     description:
       'Exit timestamp (ISO 8601). Defaults to now on the server if omitted.',
     format: 'date-time',

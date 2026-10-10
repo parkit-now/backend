@@ -48,10 +48,20 @@ export class InvoiceDocumentService {
     });
     // Sólo para lo que la foto no tiene (ver `buildInvoiceDocument`).
     const account =
-      invoice.emisorIibb && invoice.emisorInicioActividad
+      (invoice.emisorIibb && invoice.emisorInicioActividad) ||
+      (!invoice.arcaAccountId && !invoice.emisorCuit)
         ? null
-        : await this.prisma.arcaAccount.findUnique({
-            where: { tenantId: invoice.tenantId },
+        : await this.prisma.arcaAccount.findFirst({
+            where: {
+              tenantId: invoice.tenantId,
+              ...(invoice.arcaAccountId
+                ? { id: invoice.arcaAccountId }
+                : {
+                    cuit: invoice.emisorCuit ?? undefined,
+                    ptoVta: invoice.ptoVta ?? undefined,
+                    environment: invoice.environment ?? undefined,
+                  }),
+            },
             select: { iibb: true, inicioActividad: true },
           });
 

@@ -5,6 +5,8 @@ import { AuditActions } from '../audit/audit.service';
 import type { CreatedInvoice } from '../arca/invoices.service';
 import { InvoicesService } from '../arca/invoices.service';
 import { lockEntryInvoice } from '../arca/entry-invoice-lock';
+import { lockArcaAccounts } from '../arca/arca-account-lock';
+import { isValidCuit, normalizeCuit } from '../arca/arca-cuit';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { PrismaService } from '../database/prisma.service';
@@ -68,6 +70,9 @@ type EntryAuditSnapshot = {
   manualInvoiceNumber: string | null;
   manualInvoiceType: string | null;
   manualInvoicePointOfSale: string | null;
+  manualInvoiceArcaAccountId: string | null;
+  manualInvoiceIssuerCuit: string | null;
+  manualInvoiceIssuerName: string | null;
   /** Prepago de la reserva vinculada: lo sugerido es el excedente. */
   prepaidAmountArs: number | null;
   payments: PaymentSnapshot[];
@@ -138,6 +143,9 @@ function toDto(entry: PrismaEntry): EntryDto {
     manualInvoiceNumber: entry.manualInvoiceNumber,
     manualInvoiceType: entry.manualInvoiceType,
     manualInvoicePointOfSale: entry.manualInvoicePointOfSale,
+    manualInvoiceArcaAccountId: entry.manualInvoiceArcaAccountId,
+    manualInvoiceIssuerCuit: entry.manualInvoiceIssuerCuit,
+    manualInvoiceIssuerName: entry.manualInvoiceIssuerName,
     source: entry.source,
     vehicleType: entry.vehicleType,
     vehicleTypeId: entry.vehicleTypeId,
@@ -402,6 +410,9 @@ function snapshotEntry(entry: EntryWithAuditRelations): EntryAuditSnapshot {
     manualInvoiceNumber: entry.manualInvoiceNumber,
     manualInvoiceType: entry.manualInvoiceType,
     manualInvoicePointOfSale: entry.manualInvoicePointOfSale,
+    manualInvoiceArcaAccountId: entry.manualInvoiceArcaAccountId,
+    manualInvoiceIssuerCuit: entry.manualInvoiceIssuerCuit,
+    manualInvoiceIssuerName: entry.manualInvoiceIssuerName,
     prepaidAmountArs: toNumber(entry.prepaidAmountArs),
     payments: activePayments(entry),
   };
@@ -434,6 +445,9 @@ function diffSnapshots(
     'manualInvoiceNumber',
     'manualInvoiceType',
     'manualInvoicePointOfSale',
+    'manualInvoiceArcaAccountId',
+    'manualInvoiceIssuerCuit',
+    'manualInvoiceIssuerName',
     'payments',
   ];
 
@@ -1025,6 +1039,8 @@ export class EntriesService {
           paymentLines: data.payments,
           selectedPaymentIds: data.invoicePaymentIds,
           receiverCuit: data.invoiceReceiverCuit,
+          arcaAccountId: data.arcaAccountId,
+          userId: user?.id,
         });
 
         // Cobro que tenía que facturarse y no se pudo por el certificado
@@ -1115,6 +1131,9 @@ export class EntriesService {
         'manualInvoiceNumber',
         'manualInvoiceType',
         'manualInvoicePointOfSale',
+        'manualInvoiceArcaAccountId',
+        'manualInvoiceIssuerCuit',
+        'manualInvoiceIssuerName',
       ]);
       if (role === 'owner') allowedClosedFields.add('notes');
       const onlyAllowedClosedFields = Object.entries(data).every(
@@ -1139,7 +1158,10 @@ export class EntriesService {
           data.invoicePending !== undefined ||
           data.manualInvoiceNumber !== undefined ||
           data.manualInvoiceType !== undefined ||
-          data.manualInvoicePointOfSale !== undefined)
+          data.manualInvoicePointOfSale !== undefined ||
+          data.manualInvoiceArcaAccountId !== undefined ||
+          data.manualInvoiceIssuerCuit !== undefined ||
+          data.manualInvoiceIssuerName !== undefined)
       ) {
         throw new FormattedException(
           'Conflict',
@@ -1154,17 +1176,57 @@ export class EntriesService {
         data.manuallyInvoiced !== undefined ||
         data.manualInvoiceNumber !== undefined ||
         data.manualInvoiceType !== undefined ||
-        data.manualInvoicePointOfSale !== undefined;
+        data.manualInvoicePointOfSale !== undefined ||
+        data.manualInvoiceArcaAccountId !== undefined ||
+        data.manualInvoiceIssuerCuit !== undefined ||
+        data.manualInvoiceIssuerName !== undefined;
+      const customIssuer =
+        data.manualInvoiceArcaAccountId === null ||
+        data.manualInvoiceIssuerCuit !== undefined ||
+        data.manualInvoiceIssuerName !== undefined;
+      const issuerCuit = data.manualInvoiceIssuerCuit
+        ? normalizeCuit(data.manualInvoiceIssuerCuit)
+        : null;
+      const issuerName = data.manualInvoiceIssuerName?.trim() || null;
+      if (
+        customIssuer &&
+        data.manuallyInvoiced !== false &&
+        (data.manualInvoiceArcaAccountId ||
+          (!issuerCuit && !issuerName) ||
+          (issuerCuit && !isValidCuit(issuerCuit)))
+      ) {
+        throw new FormattedException(
+          'Bad Request',
+          HttpStatus.BAD_REQUEST,
+          'An external issuer requires a valid CUIT or name, without a linked account.',
+          `/tenants/:tenantId/entries/${entryId}/correction`,
+          ErrorCodes.VALIDATION_FAILED,
+        );
+      }
+      if (externalFieldsChanged) await lockArcaAccounts(tx, tenantId);
       const arcaAccount = externalFieldsChanged
-        ? await tx.arcaAccount.findUnique({
-            where: { tenantId },
-            select: { status: true },
+        ? await tx.arcaAccount.findFirst({
+            where: {
+              tenantId,
+              ...(data.manualInvoiceArcaAccountId
+                ? { id: data.manualInvoiceArcaAccountId }
+                : { role: 'primary', status: { not: 'unlinked' } }),
+            },
           })
         : null;
       const arcaLinked =
         arcaAccount?.status === 'linked' ||
         arcaAccount?.status === 'cert_expired';
-      if (arcaLinked && externalFieldsChanged && role !== 'owner') {
+      if (
+        (arcaLinked ||
+          data.manualInvoiceArcaAccountId ||
+          customIssuer ||
+          current.manualInvoiceIssuerCuit ||
+          current.manualInvoiceIssuerName) &&
+        externalFieldsChanged &&
+        role !== 'owner' &&
+        user.role !== 'admin'
+      ) {
         throw new FormattedException(
           'Forbidden',
           HttpStatus.FORBIDDEN,
@@ -1252,11 +1314,31 @@ export class EntriesService {
         }
       }
       const externalType = data.manualInvoiceType ?? current.manualInvoiceType;
+      if (
+        data.manualInvoiceArcaAccountId &&
+        (!arcaAccount ||
+          !['linked', 'cert_expired'].includes(arcaAccount.status))
+      ) {
+        throw new FormattedException(
+          'Conflict',
+          HttpStatus.CONFLICT,
+          'The selected external invoice account is unavailable.',
+          '/tenants/:tenantId/entries/:entryId/correction',
+          ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE,
+        );
+      }
       const externalPointOfSale =
         data.manualInvoicePointOfSale ?? current.manualInvoicePointOfSale;
       const externalNumber =
         data.manualInvoiceNumber ?? current.manualInvoiceNumber;
-      if (arcaLinked && externalFieldsChanged && externalMarked) {
+      if (
+        (arcaLinked ||
+          customIssuer ||
+          current.manualInvoiceIssuerCuit ||
+          current.manualInvoiceIssuerName) &&
+        externalFieldsChanged &&
+        externalMarked
+      ) {
         if (!(Number(current.amountPaid) > 0)) {
           throw new FormattedException(
             'Unprocessable Entity',
@@ -1426,6 +1508,9 @@ export class EntriesService {
         updateData.manualInvoiceNumber = null;
         updateData.manualInvoiceType = null;
         updateData.manualInvoicePointOfSale = null;
+        updateData.manualInvoiceArcaAccountId = null;
+        updateData.manualInvoiceIssuerCuit = null;
+        updateData.manualInvoiceIssuerName = null;
       } else if (data.manualInvoiceNumber !== undefined) {
         updateData.manualInvoiceNumber =
           (data.manuallyInvoiced ?? current.manuallyInvoiced)
@@ -1433,6 +1518,21 @@ export class EntriesService {
             : null;
       }
       if (data.manuallyInvoiced !== false) {
+        if (customIssuer && externalMarked) {
+          updateData.manualInvoiceArcaAccountId = null;
+          updateData.manualInvoiceIssuerCuit = issuerCuit;
+          updateData.manualInvoiceIssuerName = issuerName;
+        } else if (
+          externalFieldsChanged &&
+          externalMarked &&
+          arcaLinked &&
+          arcaAccount &&
+          (data.manualInvoiceArcaAccountId || !current.manuallyInvoiced)
+        ) {
+          updateData.manualInvoiceArcaAccountId = arcaAccount.id;
+          updateData.manualInvoiceIssuerCuit = arcaAccount.cuit;
+          updateData.manualInvoiceIssuerName = arcaAccount.razonSocial;
+        }
         if (data.manualInvoiceType !== undefined) {
           updateData.manualInvoiceType = data.manualInvoiceType;
         }

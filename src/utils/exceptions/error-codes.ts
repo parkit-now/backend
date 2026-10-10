@@ -348,6 +348,10 @@ export const ErrorCodes = {
   // La playa no tiene ARCA vinculada (o la integracion esta apagada en este
   // entorno). En GET de la cuenta es el camino feliz de "todavia no vinculo".
   ARCA_NOT_LINKED: 'ARCA_NOT_LINKED',
+  ARCA_PRIMARY_REQUIRED: 'ARCA_PRIMARY_REQUIRED',
+  ARCA_ACCOUNT_DUPLICATE: 'ARCA_ACCOUNT_DUPLICATE',
+  ARCA_ACCOUNT_UNAVAILABLE: 'ARCA_ACCOUNT_UNAVAILABLE',
+  INVOICE_EMITTER_LOCKED: 'INVOICE_EMITTER_LOCKED',
   // ARCA no respondio, el WSAA rechazo el login o el servicio esta caido. En
   // una factura se guarda como `error_code`: el cobro nunca falla por esto.
   ARCA_UNAVAILABLE: 'ARCA_UNAVAILABLE',

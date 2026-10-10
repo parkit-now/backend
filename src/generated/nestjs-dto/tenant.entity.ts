@@ -144,7 +144,7 @@ mpOauthStates?: MpOauthStateEntity[] ;
 paymentIntents?: PaymentIntentEntity[] ;
 reservations?: ReservationEntity[] ;
 reservationPayments?: ReservationPaymentEntity[] ;
-arcaAccount?: ArcaAccountEntity  | null;
+arcaAccounts?: ArcaAccountEntity[] ;
 arcaRequests?: ArcaRequestEntity[] ;
 invoiceReceivers?: InvoiceReceiverEntity[] ;
 invoices?: InvoiceEntity[] ;

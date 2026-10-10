@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { Prisma, type ArcaAccount, type Invoice } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { PermissionsService } from '../auth/permissions.service';
+import { lockArcaAccounts } from './arca-account-lock';
 import { TenantContextService } from '../database/tenant-context.service';
 import { ErrorCodes, type ErrorCode } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
@@ -61,6 +63,8 @@ const DEFAULT_MESSAGES: Partial<Record<ErrorCode, string>> = {
     'El monto supera el tope de consumidor final: hay que identificar al receptor.',
   ARCA_CERT_EXPIRED: 'El certificado de ARCA venció: hay que renovarlo.',
   ARCA_CUIT_INVALID: 'El CUIT del receptor no es válido.',
+  ARCA_ACCOUNT_UNAVAILABLE:
+    'La cuenta elegida ya no está disponible. La factura queda pendiente con su emisor original.',
   INVOICE_RECEIVER_NOT_FOUND:
     'ARCA no tiene datos de ese CUIT: emitila a consumidor final.',
 };
@@ -134,6 +138,7 @@ export class InvoicesService {
     private readonly crypto: ArcaCryptoService,
     private readonly receivers: InvoiceReceiversService,
     @Inject(ARCA_GATEWAY) private readonly gateway: ArcaGateway,
+    private readonly permissions: PermissionsService,
   ) {}
 
   /**
@@ -160,26 +165,30 @@ export class InvoicesService {
        * queda pendiente con el motivo.
        */
       readonly receiverCuit?: string | null;
+      readonly arcaAccountId?: string;
+      readonly userId?: string;
     },
   ): Promise<CreatedInvoice | null> {
     if (!this.config.enabled) return null;
 
-    const account = await tx.arcaAccount.findUnique({
-      where: { tenantId: input.tenantId },
-      select: {
-        status: true,
-        certExpiresAt: true,
-        environment: true,
-        condicionIva: true,
+    await lockArcaAccounts(tx, input.tenantId);
+    const account = await tx.arcaAccount.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        ...(input.arcaAccountId
+          ? { id: input.arcaAccountId }
+          : { role: 'primary', status: { not: 'unlinked' } }),
       },
     });
-    if (
-      !account ||
-      account.environment !== this.config.environment ||
-      (account.status !== 'linked' && account.status !== 'cert_expired')
-    ) {
+    if (!account) {
+      if (input.arcaAccountId) throw this.notLinked(input.entryId);
       return null;
     }
+    await this.assertAccountPermission(account, input.userId);
+    const unavailable =
+      account.environment !== this.config.environment ||
+      !['linked', 'cert_expired'].includes(account.status);
+    if (unavailable && !input.arcaAccountId) return null;
 
     const selectedLines = input.selectedPaymentIds
       ? this.selectPaymentLines(
@@ -226,10 +235,14 @@ export class InvoicesService {
     let status: Invoice['status'] = 'pending';
     let errorCode: ErrorCode | null = null;
     let issueNow = false;
-    if (decision.kind === 'not_required') {
+    if (unavailable && selectedTotal > 0) {
+      errorCode = ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE;
+    } else if (decision.kind === 'not_required') {
       status = 'not_required';
     } else if (decision.kind === 'pending') {
       errorCode = decision.reason ?? null;
+    } else if (unavailable) {
+      errorCode = ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE;
     } else if (receiverInvalid) {
       errorCode = ErrorCodes.ARCA_CUIT_INVALID;
     } else if (this.isCertExpired(account)) {
@@ -242,6 +255,9 @@ export class InvoicesService {
       data: {
         tenantId: input.tenantId,
         entryId: input.entryId,
+        arcaAccountId: account.id,
+        emisorCuit: account.cuit,
+        emisorRazonSocial: account.razonSocial,
         status,
         errorCode,
         errorMessage: errorCode ? (DEFAULT_MESSAGES[errorCode] ?? null) : null,
@@ -288,6 +304,7 @@ export class InvoicesService {
     receiverCuit?: string,
     expectedAmount?: number,
     selectedPaymentIds?: string[],
+    arcaAccountId?: string,
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const cuit = receiverCuit ? normalizeCuit(receiverCuit) : null;
@@ -302,12 +319,28 @@ export class InvoicesService {
     }
     // La cuenta se valida ANTES de crear nada: sin ella, un POST dejaría una
     // factura `pending` huérfana en una playa que no factura.
-    if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
-      throw this.notLinked(entryId);
+    const previous = await this.prisma.invoice.findFirst({
+      where: { tenantId, entryId },
+    });
+    const selectedAccountId =
+      arcaAccountId ?? previous?.arcaAccountId ?? undefined;
+    const selectedAccount = await this.linkedAccount(
+      tenantId,
+      selectedAccountId,
+      previous && (previous.status === 'issuing' || previous.cbteNro !== null)
+        ? previous
+        : undefined,
+    );
+    if (!this.config.enabled || !selectedAccount) {
+      throw this.notLinked(entryId, selectedAccountId);
     }
+    await this.assertAccountPermission(selectedAccount, userId);
 
     const invoice = await this.prisma.$transaction(async (tx) => {
       await lockEntryInvoice(tx, tenantId, entryId);
+      await lockArcaAccounts(tx, tenantId);
+      if (!(await this.linkedAccount(tenantId, selectedAccount.id)))
+        throw this.notLinked(entryId, selectedAccount.id);
       const entry = await tx.entry.findFirst({
         where: { tenantId, id: entryId, deletedAt: null },
         select: { manuallyInvoiced: true },
@@ -337,6 +370,9 @@ export class InvoicesService {
           tenantId,
           entryId,
           status: 'pending',
+          arcaAccountId: selectedAccount.id,
+          emisorCuit: selectedAccount.cuit,
+          emisorRazonSocial: selectedAccount.razonSocial,
           impTotal: amount,
           selectedPaymentIds: selectedPaymentIds ?? [],
         },
@@ -348,17 +384,32 @@ export class InvoicesService {
       receiverCuit: cuit,
       expectedAmount,
       selectedPaymentIds,
+      arcaAccountId: selectedAccount.id,
     });
   }
 
   async previewForEntry(
     entryId: string,
     selectedPaymentIds?: string[],
+    arcaAccountId?: string,
+    userId?: string,
   ): Promise<InvoicePreviewDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
-    if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
-      throw this.notLinked(entryId);
+    const previous = await this.prisma.invoice.findFirst({
+      where: { tenantId, entryId },
+    });
+    const account = await this.linkedAccount(
+      tenantId,
+      arcaAccountId ?? previous?.arcaAccountId ?? undefined,
+    );
+    if (!this.config.enabled || !account) {
+      throw this.notLinked(
+        entryId,
+        arcaAccountId ?? previous?.arcaAccountId ?? undefined,
+      );
     }
+    await this.assertAccountPermission(account, userId);
+    if (previous) this.assertEmitterChange(previous, account);
     return this.prisma.$transaction(async (tx) => {
       await lockEntryInvoice(tx, tenantId, entryId);
       const entry = await tx.entry.findFirst({
@@ -588,9 +639,11 @@ export class InvoicesService {
   async issueBatch(
     entryIds: readonly string[],
     userId?: string,
+    arcaAccountId?: string,
   ): Promise<InvoiceBatchResponseDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
-    if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
+    const account = await this.linkedAccount(tenantId, arcaAccountId);
+    if (!this.config.enabled || !account) {
       throw new FormattedException(
         'Conflict',
         HttpStatus.CONFLICT,
@@ -599,6 +652,7 @@ export class InvoicesService {
         ErrorCodes.ARCA_NOT_LINKED,
       );
     }
+    await this.assertAccountPermission(account, userId);
 
     const results: InvoiceBatchItemDto[] = [];
     let arcaDown = false;
@@ -612,7 +666,14 @@ export class InvoicesService {
         continue;
       }
       try {
-        const invoice = await this.issueForEntry(entryId, userId);
+        const invoice = await this.issueForEntry(
+          entryId,
+          userId,
+          undefined,
+          undefined,
+          undefined,
+          arcaAccountId,
+        );
         results.push({
           entryId,
           invoice,
@@ -640,7 +701,11 @@ export class InvoicesService {
    * CUIT, para mostrárselo al operario antes de emitir. Usa (y llena) la
    * misma caché que la emisión, así la letra que ve es la que sale.
    */
-  async lookupTaxpayer(rawCuit: string): Promise<TaxpayerDto> {
+  async lookupTaxpayer(
+    rawCuit: string,
+    arcaAccountId?: string,
+    userId?: string,
+  ): Promise<TaxpayerDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const instance = '/tenants/:tenantId/arca/taxpayers/:cuit';
     const cuit = normalizeCuit(rawCuit);
@@ -654,7 +719,7 @@ export class InvoicesService {
       );
     }
     const account = this.config.enabled
-      ? await this.linkedAccount(tenantId)
+      ? await this.linkedAccount(tenantId, arcaAccountId)
       : null;
     if (!account) {
       throw new FormattedException(
@@ -665,6 +730,8 @@ export class InvoicesService {
         ErrorCodes.ARCA_NOT_LINKED,
       );
     }
+
+    await this.assertAccountPermission(account, userId);
 
     let padron: PadronReceiver;
     try {
@@ -779,7 +846,11 @@ export class InvoicesService {
           reconciled++;
           continue;
         }
-        const account = await this.linkedAccount(invoice.tenantId);
+        const account = await this.linkedAccount(
+          invoice.tenantId,
+          invoice.arcaAccountId ?? undefined,
+          invoice,
+        );
         if (
           !account ||
           invoice.environment === null ||
@@ -850,6 +921,7 @@ export class InvoicesService {
       readonly receiverCuit?: string | null;
       readonly expectedAmount?: number;
       readonly selectedPaymentIds?: readonly string[];
+      readonly arcaAccountId?: string;
     },
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
@@ -857,14 +929,9 @@ export class InvoicesService {
       where: { id: invoiceId, tenantId },
     });
 
-    const account = await this.linkedAccount(tenantId);
-    if (!account) {
-      if (opts.throwOnConflict) throw this.notLinked(current.entryId);
-      return toSummary(current);
-    }
-
     const prepared = await this.prisma.$transaction(async (tx) => {
       await lockEntryInvoice(tx, tenantId, current.entryId);
+      await lockArcaAccounts(tx, tenantId);
       const activeEntry = await tx.entry.findFirst({
         where: { tenantId, id: current.entryId, deletedAt: null },
         select: { id: true, manuallyInvoiced: true },
@@ -880,6 +947,29 @@ export class InvoicesService {
       let fresh = await tx.invoice.findFirstOrThrow({
         where: { id: invoiceId, tenantId },
       });
+      const selectedId = opts.arcaAccountId ?? fresh.arcaAccountId ?? undefined;
+      const account = await this.linkedAccount(
+        tenantId,
+        selectedId,
+        fresh.status === 'issuing' || fresh.cbteNro !== null
+          ? fresh
+          : undefined,
+      );
+      if (!account) {
+        if (opts.throwOnConflict)
+          throw this.notLinked(current.entryId, selectedId);
+        if (fresh.status !== 'issuing' && fresh.status !== 'issued')
+          fresh = await tx.invoice.update({
+            where: { id: invoiceId },
+            data: {
+              status: 'pending',
+              errorCode: ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE,
+            },
+          });
+        return { invoice: fresh, claimed: false };
+      }
+      await this.assertAccountPermission(account, userId);
+      this.assertEmitterChange(fresh, account);
       // Resolve and validate under the same lock used by history corrections.
       const amount = await this.resolveAmount(
         tx,
@@ -900,6 +990,9 @@ export class InvoicesService {
         fresh = await tx.invoice.update({
           where: { id: invoiceId },
           data: {
+            arcaAccountId: account.id,
+            emisorCuit: account.cuit,
+            emisorRazonSocial: account.razonSocial,
             impTotal: amount,
             ...(opts.selectedPaymentIds !== undefined
               ? { selectedPaymentIds: [...opts.selectedPaymentIds] }
@@ -962,7 +1055,7 @@ export class InvoicesService {
         const raced = this.conflictFor(fresh);
         if (raced && opts.throwOnConflict) throw raced;
       }
-      return { invoice: fresh, claimed: claimed.count > 0 };
+      return { invoice: fresh, claimed: claimed.count > 0, account };
     });
     if (!prepared.claimed) {
       if (
@@ -980,7 +1073,7 @@ export class InvoicesService {
       return toSummary(prepared.invoice);
     }
 
-    await this.emit(prepared.invoice, account);
+    await this.emit(prepared.invoice, prepared.account!);
     return toSummary(
       await this.prisma.invoice.findUniqueOrThrow({ where: { id: invoiceId } }),
     );
@@ -1346,9 +1439,32 @@ export class InvoicesService {
     }
   }
 
-  private async linkedAccount(tenantId: string): Promise<LinkedAccount | null> {
-    const account = await this.prisma.arcaAccount.findUnique({
-      where: { tenantId },
+  private async linkedAccount(
+    tenantId: string,
+    accountId?: string,
+    original?: Invoice,
+  ): Promise<LinkedAccount | null> {
+    if (
+      !accountId &&
+      original &&
+      !original.emisorCuit &&
+      (original.status === 'issuing' || original.cbteNro !== null)
+    )
+      return null;
+    const account = await this.prisma.arcaAccount.findFirst({
+      where: {
+        tenantId,
+        ...(accountId
+          ? { id: accountId }
+          : original?.emisorCuit
+            ? {
+                cuit: original.emisorCuit,
+                ptoVta: original.ptoVta,
+                environment: original.environment ?? undefined,
+              }
+            : { role: 'primary' }),
+        status: { not: 'unlinked' },
+      },
     });
     if (
       !account ||
@@ -1364,6 +1480,56 @@ export class InvoicesService {
       return null;
     }
     return account as LinkedAccount;
+  }
+
+  private assertEmitterChange(invoice: Invoice, account: ArcaAccount): void {
+    const changed = invoice.arcaAccountId
+      ? invoice.arcaAccountId !== account.id
+      : !invoice.emisorCuit ||
+        invoice.emisorCuit !== account.cuit ||
+        invoice.ptoVta !== account.ptoVta ||
+        (invoice.environment !== null &&
+          invoice.environment !== account.environment);
+    if (
+      changed &&
+      (invoice.status === 'issuing' ||
+        invoice.status === 'issued' ||
+        invoice.cbteNro !== null)
+    ) {
+      throw new FormattedException(
+        'Conflict',
+        HttpStatus.CONFLICT,
+        'The original issuer must resolve this invoice first.',
+        this.instance(invoice.entryId),
+        ErrorCodes.INVOICE_EMITTER_LOCKED,
+      );
+    }
+  }
+
+  private async assertAccountPermission(
+    account: ArcaAccount,
+    userId?: string,
+  ): Promise<void> {
+    if (account.role !== 'secondary') return;
+    const user = userId
+      ? await this.prisma.user.findUnique({ where: { id: userId } })
+      : null;
+    const membership = user
+      ? await this.prisma.userMembership.findUnique({
+          where: {
+            userId_tenantId: { userId: user.id, tenantId: account.tenantId },
+          },
+        })
+      : null;
+    if (!user || !this.permissions.canManageEntity(user, membership)) {
+      throw new FormattedException(
+        'Forbidden',
+        HttpStatus.FORBIDDEN,
+        'Only the owner can invoice with a secondary account.',
+        '/tenants/:tenantId/arca/accounts',
+        ErrorCodes.ENTITY_INSUFFICIENT_ROLE,
+      );
+    }
   }
 
   private credentials(account: LinkedAccount): ArcaCredentials {
@@ -1430,13 +1596,17 @@ export class InvoicesService {
     });
   }
 
-  private notLinked(entryId: string): FormattedException {
+  private notLinked(entryId: string, selectedId?: string): FormattedException {
     return new FormattedException(
       'Conflict',
       HttpStatus.CONFLICT,
-      'This entity has no ARCA account linked.',
+      selectedId
+        ? 'The selected ARCA account is no longer available.'
+        : 'This entity has no ARCA account linked.',
       this.instance(entryId),
-      ErrorCodes.ARCA_NOT_LINKED,
+      selectedId
+        ? ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE
+        : ErrorCodes.ARCA_NOT_LINKED,
     );
   }
 
@@ -1495,6 +1665,9 @@ function isoDate(value: Date | null): string | null {
 function toSummary(invoice: Invoice): InvoiceSummaryDto {
   return {
     id: invoice.id,
+    arcaAccountId: invoice.arcaAccountId ?? null,
+    emisorCuit: invoice.emisorCuit,
+    emisorRazonSocial: invoice.emisorRazonSocial,
     selectedPaymentIds: invoice.selectedPaymentIds ?? [],
     status: invoice.status,
     cbteTipo: invoice.cbteTipo,

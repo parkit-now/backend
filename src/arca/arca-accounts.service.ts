@@ -1,5 +1,5 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
-import type { ArcaAccount, User } from '@prisma/client';
+import type { ArcaAccount, Prisma, User } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { PrismaService } from '../database/prisma.service';
@@ -10,6 +10,7 @@ import {
   parseArcaCertificate,
 } from './arca-cert.util';
 import { ArcaConfigService } from './arca-config.service';
+import { lockArcaAccounts } from './arca-account-lock';
 import { ArcaCryptoService } from './arca-crypto.service';
 import {
   aliasFromPem,
@@ -90,8 +91,19 @@ export class ArcaAccountsService {
     @Inject(ARCA_GATEWAY) private readonly gateway: ArcaGateway,
   ) {}
 
-  async getAccount(tenantId: string): Promise<ArcaAccountDto> {
-    return this.toDto(await this.requireAccount(tenantId));
+  async getAccount(
+    tenantId: string,
+    accountId?: string,
+  ): Promise<ArcaAccountDto> {
+    return this.toDto(await this.requireAccount(tenantId, accountId));
+  }
+
+  async listAccounts(tenantId: string): Promise<ArcaAccountDto[]> {
+    const accounts = await this.prisma.arcaAccount.findMany({
+      where: { tenantId, status: { not: 'unlinked' } },
+      orderBy: { role: 'asc' },
+    });
+    return accounts.map((account) => this.toDto(account));
   }
 
   /** Paso 1: CUIT e Ingresos Brutos. Genera la clave y la solicitud (CSR). */
@@ -110,24 +122,16 @@ export class ArcaAccountsService {
       );
     }
 
-    const existing = await this.prisma.arcaAccount.findUnique({
-      where: { tenantId },
-    });
-    if (existing && ACTIVE_STATUSES.includes(existing.status)) {
-      throw this.error(
-        HttpStatus.CONFLICT,
-        'The entity already has an ARCA account linked. Unlink it first.',
-        ErrorCodes.ARCA_ALREADY_LINKED,
-      );
-    }
-
     const tenant = await this.prisma.tenant.findUniqueOrThrow({
       where: { id: tenantId },
       select: { name: true },
     });
     const { keyPem, csrPem } = generateArcaCsr({
       cuit,
-      alias: arcaCertAlias(tenant.name, tenantId),
+      alias:
+        dto.role === 'secondary'
+          ? `${arcaCertAlias(tenant.name, tenantId).slice(0, 23)}sec`
+          : arcaCertAlias(tenant.name, tenantId),
     });
     const key = this.crypto.encrypt(keyPem);
 
@@ -146,16 +150,53 @@ export class ArcaAccountsService {
       ptoVta: null,
       linkedAt: null,
     };
-    const account = await this.prisma.arcaAccount.upsert({
-      where: { tenantId },
-      create: { tenantId, ...data },
-      update: data,
+    const account = await this.prisma.$transaction(async (tx) => {
+      await lockArcaAccounts(tx, tenantId);
+      const role = dto.role ?? 'primary';
+      if (role === 'secondary') {
+        const primary = await tx.arcaAccount.findFirst({
+          where: {
+            tenantId,
+            role: 'primary',
+            status: { in: ['linked', 'cert_expired'] },
+          },
+        });
+        if (!primary)
+          throw this.error(
+            HttpStatus.CONFLICT,
+            'Link the primary account first.',
+            ErrorCodes.ARCA_PRIMARY_REQUIRED,
+          );
+      }
+      const existing = await tx.arcaAccount.findFirst({
+        where: { tenantId, role, status: { not: 'unlinked' } },
+      });
+      if (existing && ACTIVE_STATUSES.includes(existing.status)) {
+        throw this.error(
+          HttpStatus.CONFLICT,
+          'Unlink the existing account first.',
+          ErrorCodes.ARCA_ALREADY_LINKED,
+        );
+      }
+      // Archive drafts as well: account IDs must never change fiscal identity.
+      if (existing)
+        await tx.arcaAccount.update({
+          where: { id: existing.id },
+          data: {
+            status: 'unlinked',
+            csrPem: null,
+            keyEncrypted: null,
+            keyVersion: null,
+            ...CLEARED_CERTIFICATE,
+          },
+        });
+      return tx.arcaAccount.create({ data: { tenantId, role, ...data } });
     });
     return this.toDto(account);
   }
 
-  async getCsr(tenantId: string): Promise<ArcaCsrDto> {
-    const account = await this.requireAccount(tenantId);
+  async getCsr(tenantId: string, accountId?: string): Promise<ArcaCsrDto> {
+    const account = await this.requireAccount(tenantId, accountId);
     if (!PENDING_STATUSES.includes(account.status) || !account.csrPem) {
       throw this.stepInvalid('There is no pending certificate request.');
     }
@@ -172,9 +213,10 @@ export class ArcaAccountsService {
   async uploadCertificate(
     tenantId: string,
     dto: UploadArcaCertificateDto,
+    accountId?: string,
   ): Promise<ArcaCertificateResultDto> {
     this.assertEnabled();
-    const account = await this.requireAccount(tenantId);
+    const account = await this.requireAccount(tenantId, accountId);
     if (
       !PENDING_STATUSES.includes(account.status) ||
       !account.keyEncrypted ||
@@ -250,7 +292,7 @@ export class ArcaAccountsService {
       );
     }
 
-    const updated = await this.prisma.arcaAccount.update({
+    const updated = await this.updateActiveAccount(tenantId, account.id, {
       where: { id: account.id },
       data: {
         status: 'pending_sales_point',
@@ -269,8 +311,9 @@ export class ArcaAccountsService {
   async update(
     tenantId: string,
     dto: UpdateArcaAccountDto,
+    accountId?: string,
   ): Promise<ArcaAccountDto> {
-    const account = await this.requireAccount(tenantId);
+    const account = await this.requireAccount(tenantId, accountId);
 
     const fiscal = {
       razonSocial: dto.razonSocial?.trim(),
@@ -287,7 +330,7 @@ export class ArcaAccountsService {
       throw this.stepInvalid('Upload the certificate first.');
     }
 
-    const updated = await this.prisma.arcaAccount.update({
+    const updated = await this.updateActiveAccount(tenantId, account.id, {
       where: { id: account.id },
       data: {
         ...fiscal,
@@ -311,9 +354,10 @@ export class ArcaAccountsService {
     tenantId: string,
     user: User,
     dto: SetArcaSalesPointDto,
+    accountId?: string,
   ): Promise<ArcaAccountDto> {
     this.assertEnabled();
-    const account = await this.requireAccount(tenantId);
+    const account = await this.requireAccount(tenantId, accountId);
     if (account.status !== 'pending_sales_point' || !isCertified(account)) {
       throw this.stepInvalid('Upload a valid certificate first.');
     }
@@ -371,14 +415,34 @@ export class ArcaAccountsService {
       throw this.mapArcaError(error, 'wsfe');
     }
 
-    const updated = await this.prisma.arcaAccount.update({
-      where: { id: account.id },
-      data: {
-        status: 'linked',
-        ptoVta: dto.ptoVta,
-        inicioActividad,
-        linkedAt: new Date(),
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await lockArcaAccounts(tx, tenantId);
+      await this.requireAccount(tenantId, account.id);
+      const duplicate = await tx.arcaAccount.findFirst({
+        where: {
+          tenantId,
+          id: { not: account.id },
+          status: { not: 'unlinked' },
+          environment: account.environment,
+          cuit: account.cuit,
+          ptoVta: dto.ptoVta,
+        },
+      });
+      if (duplicate)
+        throw this.error(
+          HttpStatus.CONFLICT,
+          'This issuer and sales point are already configured.',
+          ErrorCodes.ARCA_ACCOUNT_DUPLICATE,
+        );
+      return tx.arcaAccount.update({
+        where: { id: account.id },
+        data: {
+          status: 'linked',
+          ptoVta: dto.ptoVta,
+          inicioActividad,
+          linkedAt: new Date(),
+        },
+      });
     });
 
     await this.audit.record({
@@ -405,14 +469,15 @@ export class ArcaAccountsService {
   async listReusableCertificates(
     tenantId: string,
     user: User,
+    accountId?: string,
   ): Promise<ArcaReusableCertificateDto[]> {
-    const account = await this.requireAccount(tenantId);
+    const account = await this.requireAccount(tenantId, accountId);
     const candidates = await this.prisma.arcaAccount.findMany({
       where: {
         cuit: account.cuit,
         environment: account.environment,
         status: 'linked',
-        tenantId: { not: tenantId },
+        id: { not: account.id },
         certPem: { not: null },
         keyEncrypted: { not: null },
         certExpiresAt: { gt: new Date() },
@@ -428,6 +493,9 @@ export class ArcaAccountsService {
     return candidates
       .filter((c) => owned.has(c.tenantId))
       .map((c) => ({
+        accountId: c.id,
+        role: c.role,
+        ptoVta: c.ptoVta,
         tenantId: c.tenantId,
         tenantName: c.tenant.name,
         cuit: c.cuit,
@@ -444,24 +512,34 @@ export class ArcaAccountsService {
     tenantId: string,
     user: User,
     dto: ReuseArcaCertificateDto,
+    accountId?: string,
   ): Promise<ArcaAccountDto> {
     this.assertEnabled();
-    const account = await this.requireAccount(tenantId);
+    const account = await this.requireAccount(tenantId, accountId);
     if (!PENDING_STATUSES.includes(account.status)) {
       throw this.stepInvalid('The linking is not in progress.');
     }
 
-    const reusable = await this.listReusableCertificates(tenantId, user);
-    if (!reusable.some((r) => r.tenantId === dto.fromTenantId)) {
+    const reusable = await this.listReusableCertificates(
+      tenantId,
+      user,
+      accountId,
+    );
+    const candidate = reusable.find((r) =>
+      dto.fromAccountId
+        ? r.accountId === dto.fromAccountId
+        : r.tenantId === dto.fromTenantId,
+    );
+    if (!candidate) {
       throw this.stepInvalid(
         'That entity has no reusable ARCA certificate for this CUIT.',
       );
     }
     const source = await this.prisma.arcaAccount.findUniqueOrThrow({
-      where: { tenantId: dto.fromTenantId },
+      where: { id: candidate.accountId },
     });
 
-    const updated = await this.prisma.arcaAccount.update({
+    const updated = await this.updateActiveAccount(tenantId, account.id, {
       where: { id: account.id },
       data: {
         status: 'pending_sales_point',
@@ -493,9 +571,12 @@ export class ArcaAccountsService {
    * preparó, se genera en el momento. Se puede pedir en cualquier momento, no
    * sólo cerca del vencimiento: renovar antes no rompe nada.
    */
-  async getRenewalCsr(tenantId: string): Promise<ArcaCsrDto> {
+  async getRenewalCsr(
+    tenantId: string,
+    accountId?: string,
+  ): Promise<ArcaCsrDto> {
     this.assertEnabled();
-    const account = await this.requireRenewable(tenantId);
+    const account = await this.requireRenewable(tenantId, accountId);
     const renewal = await this.prepareRenewal(account);
     const alias = aliasFromPem(renewal.csrPem) ?? 'parkit';
     return {
@@ -519,6 +600,7 @@ export class ArcaAccountsService {
     const siblings = {
       certFingerprint: account.certFingerprint,
       environment: account.environment,
+      status: { not: 'unlinked' as const },
     };
     const existing = await this.prisma.arcaAccount.findFirst({
       where: { ...siblings, renewalCsrPem: { not: null } },
@@ -574,9 +656,10 @@ export class ArcaAccountsService {
     tenantId: string,
     user: User,
     dto: UploadArcaCertificateDto,
+    accountId?: string,
   ): Promise<ArcaAccountDto> {
     this.assertEnabled();
-    const account = await this.requireRenewable(tenantId);
+    const account = await this.requireRenewable(tenantId, accountId);
     if (
       !account.renewalCsrPem ||
       !account.renewalKeyEncrypted ||
@@ -638,6 +721,16 @@ export class ArcaAccountsService {
 
     const oldFingerprint = account.certFingerprint;
     await this.prisma.$transaction(async (tx) => {
+      await lockArcaAccounts(tx, tenantId);
+      const active = await tx.arcaAccount.findFirst({
+        where: { id: account.id, tenantId, status: { not: 'unlinked' } },
+      });
+      if (!active)
+        throw this.error(
+          HttpStatus.NOT_FOUND,
+          'This account is no longer available.',
+          ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE,
+        );
       const siblings = {
         certFingerprint: oldFingerprint,
         environment: account.environment,
@@ -649,7 +742,7 @@ export class ArcaAccountsService {
         data: { status: 'linked' },
       });
       await tx.arcaAccount.updateMany({
-        where: siblings,
+        where: { ...siblings, status: { not: 'unlinked' } },
         data: {
           certPem,
           certFingerprint: cert.fingerprint,
@@ -704,7 +797,7 @@ export class ArcaAccountsService {
         certExpiresAt: cert.notAfter.toISOString(),
       },
     });
-    return this.getAccount(tenantId);
+    return this.getAccount(tenantId, account.id);
   }
 
   /**
@@ -714,42 +807,95 @@ export class ArcaAccountsService {
    * sincronizar" mirando sólo el modo del medio, y un `auto` sin ARCA le
    * mentiría al operario. El update bumpea `sync_seq`, así que baja solo.
    */
-  async unlink(tenantId: string, user: User): Promise<void> {
-    const account = await this.requireAccount(tenantId);
+  async unlink(
+    tenantId: string,
+    user: User,
+    accountId?: string,
+  ): Promise<void> {
+    const account = await this.requireAccount(tenantId, accountId);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.arcaAccount.update({
-        where: { id: account.id },
+    const affectedAccounts = await this.prisma.$transaction(async (tx) => {
+      await lockArcaAccounts(tx, tenantId);
+      const affected = await tx.arcaAccount.findMany({
+        where: {
+          tenantId,
+          ...(account.role === 'secondary' ? { id: account.id } : {}),
+          status: { not: 'unlinked' },
+        },
+      });
+      const ids = affected.map((a) => a.id);
+      const uncertain = await tx.invoice.count({
+        where: {
+          tenantId,
+          AND: [
+            {
+              OR: [
+                { status: 'issuing' },
+                { cbteNro: { not: null }, status: { not: 'issued' } },
+              ],
+            },
+            {
+              OR: [
+                { arcaAccountId: { in: ids } },
+                ...affected.map((item) => ({
+                  arcaAccountId: null,
+                  emisorCuit: item.cuit,
+                  ptoVta: item.ptoVta,
+                  environment: item.environment,
+                })),
+                ...(account.role === 'primary'
+                  ? [{ arcaAccountId: null, emisorCuit: null }]
+                  : []),
+              ],
+            },
+          ],
+        },
+      });
+      if (uncertain > 0)
+        throw this.error(
+          HttpStatus.CONFLICT,
+          'Resolve in-progress invoices before unlinking.',
+          ErrorCodes.INVOICE_IN_PROGRESS,
+        );
+      await tx.arcaAccount.updateMany({
+        where: { id: { in: ids } },
         data: {
           status: 'unlinked',
           csrPem: null,
           ...CLEARED_CERTIFICATE,
           keyEncrypted: null,
           keyVersion: null,
-          ptoVta: null,
           linkedAt: null,
         },
       });
-      await tx.paymentMethod.updateMany({
-        where: { tenantId, invoiceMode: { not: 'none' } },
-        data: { invoiceMode: 'none' },
-      });
+      if (account.role !== 'secondary')
+        await tx.paymentMethod.updateMany({
+          where: { tenantId, invoiceMode: { not: 'none' } },
+          data: { invoiceMode: 'none' },
+        });
 
       // El ticket del WSAA es del certificado: se borra sólo si ya no lo usa
       // ninguna otra sede.
-      if (account.certFingerprint) {
-        const shared = await tx.arcaAccount.count({
-          where: {
-            certFingerprint: account.certFingerprint,
-            id: { not: account.id },
-          },
-        });
-        if (shared === 0) {
-          await tx.arcaAccessTicket.deleteMany({
-            where: { certFingerprint: account.certFingerprint },
+      for (const affectedAccount of affected) {
+        if (affectedAccount.certFingerprint) {
+          const shared = await tx.arcaAccount.count({
+            where: {
+              certFingerprint: affectedAccount.certFingerprint,
+              status: { not: 'unlinked' },
+            },
           });
+          if (shared === 0) {
+            await tx.arcaAccessTicket.deleteMany({
+              where: { certFingerprint: affectedAccount.certFingerprint },
+            });
+          }
         }
       }
+      return affected.map((item) => ({
+        id: item.id,
+        role: item.role,
+        cuit: item.cuit,
+      }));
     });
 
     await this.audit.record({
@@ -758,15 +904,49 @@ export class ArcaAccountsService {
       entityId: account.id,
       actorUserId: user.id,
       tenantId,
-      metadata: { cuit: account.cuit, previousStatus: account.status },
+      metadata: {
+        cuit: account.cuit,
+        previousStatus: account.status,
+        affectedAccounts,
+      },
     });
   }
 
   // ---------------------------------------------------------------------------
 
-  private async requireAccount(tenantId: string): Promise<ArcaAccount> {
-    const account = await this.prisma.arcaAccount.findUnique({
-      where: { tenantId },
+  private async updateActiveAccount(
+    tenantId: string,
+    accountId: string,
+    args: {
+      where: Prisma.ArcaAccountWhereUniqueInput;
+      data: Prisma.ArcaAccountUpdateInput;
+    },
+  ): Promise<ArcaAccount> {
+    return this.prisma.$transaction(async (tx) => {
+      await lockArcaAccounts(tx, tenantId);
+      const active = await tx.arcaAccount.findFirst({
+        where: { tenantId, id: accountId, status: { not: 'unlinked' } },
+      });
+      if (!active)
+        throw this.error(
+          HttpStatus.NOT_FOUND,
+          'This account is no longer available.',
+          ErrorCodes.ARCA_ACCOUNT_UNAVAILABLE,
+        );
+      return tx.arcaAccount.update(args);
+    });
+  }
+
+  private async requireAccount(
+    tenantId: string,
+    accountId?: string,
+  ): Promise<ArcaAccount> {
+    const account = await this.prisma.arcaAccount.findFirst({
+      where: {
+        tenantId,
+        ...(accountId ? { id: accountId } : { role: 'primary' }),
+        status: { not: 'unlinked' },
+      },
     });
     if (!account || account.status === 'unlinked') {
       throw this.error(
@@ -779,8 +959,11 @@ export class ArcaAccountsService {
   }
 
   /** La cuenta que emite (o emitía): la única que tiene algo que renovar. */
-  private async requireRenewable(tenantId: string): Promise<CertifiedAccount> {
-    const account = await this.requireAccount(tenantId);
+  private async requireRenewable(
+    tenantId: string,
+    accountId?: string,
+  ): Promise<CertifiedAccount> {
+    const account = await this.requireAccount(tenantId, accountId);
     if (!ACTIVE_STATUSES.includes(account.status) || !isCertified(account)) {
       throw this.stepInvalid(
         'Only a linked account can renew its certificate.',
@@ -925,6 +1108,7 @@ export class ArcaAccountsService {
   private toDto(account: ArcaAccount): ArcaAccountDto {
     return {
       id: account.id,
+      role: account.role,
       status: account.status,
       environment: account.environment,
       cuit: account.cuit,

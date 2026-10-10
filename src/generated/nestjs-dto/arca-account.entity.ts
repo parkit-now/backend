@@ -1,13 +1,21 @@
 
-import {Prisma,ArcaEnvironment,ArcaAccountStatus,ArcaTaxCondition} from '@prisma/client'
+import {Prisma,ArcaAccountRole,ArcaEnvironment,ArcaAccountStatus,ArcaTaxCondition} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {TenantEntity} from './tenant.entity'
+import {InvoiceEntity} from './invoice.entity'
+import {EntryEntity} from './entry.entity'
 
 
 export class ArcaAccountEntity {
   id: string ;
 tenantId: string ;
 tenant?: TenantEntity ;
+@ApiProperty({
+  enum: ArcaAccountRole,
+})
+role: ArcaAccountRole ;
+invoices?: InvoiceEntity[] ;
+externalEntries?: EntryEntity[] ;
 @ApiProperty({
   enum: ArcaEnvironment,
 })

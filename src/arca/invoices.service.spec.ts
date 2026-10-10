@@ -14,6 +14,7 @@ import {
   PADRON_CACHE_TTL_MS,
 } from './invoice-receivers.service';
 import { InvoicesService, STALE_ISSUING_MS } from './invoices.service';
+import { PermissionsService } from '../auth/permissions.service';
 import { EntriesService } from '../entries/entries.service';
 
 const TENANT = '11111111-1111-7111-8111-111111111111';
@@ -67,6 +68,8 @@ function codeOf(error: unknown): string | undefined {
 function memoryPrisma(state: {
   invoices: Row[];
   account: Row | null;
+  additionalAccounts?: Row[];
+  actorRole?: 'owner' | 'operator';
   receivers: Row[];
   entries: Row[];
 }) {
@@ -140,7 +143,22 @@ function memoryPrisma(state: {
   const prisma = {
     invoice,
     invoiceReceiver,
-    arcaAccount: { findUnique: () => Promise.resolve(state.account) },
+    arcaAccount: {
+      findFirst: ({ where }: Row) =>
+        Promise.resolve(
+          [
+            ...(state.account ? [state.account] : []),
+            ...(state.additionalAccounts ?? []),
+          ].find((row) => matches(row, where)) ?? null,
+        ),
+    },
+    user: {
+      findUnique: ({ where }: Row) =>
+        Promise.resolve({ id: String(where.id), role: 'user' }),
+    },
+    userMembership: {
+      findUnique: () => Promise.resolve({ role: state.actorRole ?? 'owner' }),
+    },
     arcaRequest: { create: jest.fn().mockResolvedValue(undefined) },
     paymentMethod: {
       findMany: () => Promise.resolve([{ id: CASH, invoiceMode: 'auto' }]),
@@ -234,6 +252,8 @@ function setup(
       },
     ] as Row[],
     account: {
+      id: 'primary-account',
+      role: 'primary',
       tenantId: TENANT,
       environment,
       status: 'linked',
@@ -251,6 +271,8 @@ function setup(
       iibb: '901-000000-0',
       inicioActividad: null,
     } as Row | null,
+    additionalAccounts: [] as Row[],
+    actorRole: 'owner' as 'owner' | 'operator',
   };
   const prisma = memoryPrisma(state);
   const gateway = new FakeArcaGateway();
@@ -264,6 +286,7 @@ function setup(
     crypto,
     new InvoiceReceiversService(prisma as unknown as PrismaService),
     gateway,
+    new PermissionsService(),
   );
   return { service, state, gateway, prisma };
 }
@@ -277,6 +300,7 @@ function pendingInvoice(
     tenantId: TENANT,
     entryId: ENTRY,
     status: 'pending',
+    arcaAccountId: 'primary-account',
     impTotal: 1210,
     attempts: 0,
     cbteNro: null,
@@ -295,6 +319,287 @@ function pendingInvoice(
 }
 
 describe('InvoicesService', () => {
+  describe('cuentas primaria y secundaria', () => {
+    it('un lote sin selección nueva conserva el emisor de una factura pendiente', async () => {
+      const { service, gateway } = twoAccounts();
+      gateway.willRespond('reject', 'approve');
+      await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'secondary-account',
+      );
+      const result = await service.issueBatch([ENTRY], 'owner');
+      expect(result.results[0].invoice?.arcaAccountId).toBe(
+        'secondary-account',
+      );
+      expect(result.results[0].invoice?.status).toBe('issued');
+    });
+    function twoAccounts() {
+      const context = setup();
+      context.state.additionalAccounts.push({
+        ...context.state.account!,
+        id: 'secondary-account',
+        role: 'secondary',
+        cuit: '20123456786',
+        ptoVta: 2,
+        condicionIva: 'monotributo',
+        razonSocial: 'Emisor secundario',
+      });
+      return context;
+    }
+
+    it('sin selección usa primaria; una selección del dueño usa sus datos fiscales', async () => {
+      const { service, state, gateway } = twoAccounts();
+      const calls = jest.spyOn(gateway, 'createVoucher');
+      const result = await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'secondary-account',
+      );
+      expect(result.arcaAccountId).toBe('secondary-account');
+      expect(result.emisorRazonSocial).toBe('Emisor secundario');
+      expect(gateway.createCalls[0]).toMatchObject({
+        PtoVta: 2,
+        CbteTipo: 11,
+        ImpTotal: 1210,
+      });
+      expect(calls.mock.calls[0][0].cuit).toBe(
+        state.additionalAccounts[0].cuit,
+      );
+      const primary = setup();
+      expect((await primary.service.issueForEntry(ENTRY)).arcaAccountId).toBe(
+        'primary-account',
+      );
+    });
+
+    it('operador no puede emitir ni consultar el receptor con secundaria', async () => {
+      const { service, state, gateway } = twoAccounts();
+      state.actorRole = 'operator';
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(
+              ENTRY,
+              'operator',
+              undefined,
+              undefined,
+              undefined,
+              'secondary-account',
+            ),
+          ),
+        ),
+      ).toBe('ENTITY_INSUFFICIENT_ROLE');
+      expect(
+        codeOf(
+          await rejection(
+            service.lookupTaxpayer(
+              '20447275865',
+              'secondary-account',
+              'operator',
+            ),
+          ),
+        ),
+      ).toBe('ENTITY_INSUFFICIENT_ROLE');
+      expect(state.invoices).toHaveLength(0);
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('un rechazo conserva la cuenta para reintentar sin nueva selección', async () => {
+      const { service, gateway } = twoAccounts();
+      gateway.willRespond('reject', 'approve');
+      await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'secondary-account',
+      );
+      const result = await service.issueForEntry(ENTRY, 'owner');
+      expect(result.status).toBe('issued');
+      expect(result.arcaAccountId).toBe('secondary-account');
+      expect(gateway.createCalls.every((call) => call.PtoVta === 2)).toBe(true);
+    });
+
+    it('una factura emitida conserva su estado aunque luego se desvincule la cuenta', async () => {
+      const { service, state, gateway } = twoAccounts();
+      await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'secondary-account',
+      );
+      const issued = { ...state.invoices[0] };
+      state.additionalAccounts[0].status = 'unlinked';
+
+      const result = await service.issueAfterClose(issued.id, 'owner');
+
+      expect(result?.status).toBe('issued');
+      expect(result?.arcaAccountId).toBe('secondary-account');
+      expect(state.invoices[0]).toEqual(issued);
+      expect(gateway.createCalls).toHaveLength(1);
+    });
+
+    it('permite cambiar de cuenta después de un rechazo sin posible autorización', async () => {
+      const { service, gateway } = twoAccounts();
+      gateway.willRespond('reject', 'approve');
+      await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'secondary-account',
+      );
+      const result = await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'primary-account',
+      );
+      expect(result.arcaAccountId).toBe('primary-account');
+      expect(gateway.createCalls[1].PtoVta).toBe(1);
+    });
+
+    it('una emisión incierta bloquea el cambio y se reconcilia con la cuenta original', async () => {
+      const { service, state, gateway } = twoAccounts();
+      gateway.willRespond('timeout-but-approved');
+      await service.issueForEntry(
+        ENTRY,
+        'owner',
+        undefined,
+        1210,
+        undefined,
+        'secondary-account',
+      );
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(
+              ENTRY,
+              'owner',
+              undefined,
+              1210,
+              undefined,
+              'primary-account',
+            ),
+          ),
+        ),
+      ).toBe('INVOICE_EMITTER_LOCKED');
+      state.invoices[0].issuingStartedAt = new Date(
+        Date.now() - STALE_ISSUING_MS - 1,
+      );
+      const result = await service.issueForEntry(ENTRY, 'owner');
+      expect(result.status).toBe('issued');
+      expect(result.arcaAccountId).toBe('secondary-account');
+      expect(gateway.createCalls).toHaveLength(1);
+    });
+
+    it('no admite una cuenta de otro estacionamiento', async () => {
+      const { service, state } = twoAccounts();
+      state.additionalAccounts[0].tenantId = 'another-tenant';
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(
+              ENTRY,
+              'owner',
+              undefined,
+              undefined,
+              undefined,
+              'secondary-account',
+            ),
+          ),
+        ),
+      ).toBe('ARCA_ACCOUNT_UNAVAILABLE');
+      expect(state.invoices).toHaveLength(0);
+    });
+
+    it('una cuenta desvinculada antes del sync deja pendiente y nunca usa primaria', async () => {
+      const { service, state, prisma } = twoAccounts();
+      state.additionalAccounts[0].status = 'unlinked';
+      prisma.paymentMethod.findMany = () =>
+        Promise.resolve([{ id: CASH, invoiceMode: 'none' }]);
+      const result = await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 1210,
+        paymentMethodIds: [CASH],
+        arcaAccountId: 'secondary-account',
+        userId: 'owner',
+      });
+      expect(result?.issueNow).toBe(false);
+      expect(state.invoices[0]).toMatchObject({
+        status: 'pending',
+        arcaAccountId: 'secondary-account',
+        errorCode: 'ARCA_ACCOUNT_UNAVAILABLE',
+      });
+    });
+
+    it('el lote conserva la cuenta seleccionada para todos los movimientos', async () => {
+      const { service, state, gateway } = twoAccounts();
+      state.entries.push({
+        ...state.entries[0],
+        id: 'entry-2',
+        paymentTransactions: [
+          {
+            ...state.entries[0].paymentTransactions[0],
+            id: 'payment-2',
+            entryId: 'entry-2',
+          },
+        ],
+      });
+      const result = await service.issueBatch(
+        [ENTRY, 'entry-2'],
+        'owner',
+        'secondary-account',
+      );
+      expect(
+        result.results.every(
+          (item) => item.invoice?.arcaAccountId === 'secondary-account',
+        ),
+      ).toBe(true);
+      expect(gateway.createCalls).toHaveLength(2);
+    });
+
+    it('guarda el emisor externo y lo conserva después de desvincularlo', async () => {
+      const { service, state, prisma } = twoAccounts();
+      const entries = new EntriesService(
+        prisma as never,
+        { getTenantIdOrThrow: () => TENANT } as never,
+        service,
+      );
+      await entries.correctEntry(
+        ENTRY,
+        1,
+        {
+          manuallyInvoiced: true,
+          manualInvoiceType: 'C',
+          manualInvoicePointOfSale: '2',
+          manualInvoiceNumber: '42',
+          manualInvoiceArcaAccountId: 'secondary-account',
+        },
+        { id: 'owner' } as never,
+        { role: 'owner' } as never,
+      );
+      state.additionalAccounts[0].status = 'unlinked';
+      expect(state.entries[0]).toMatchObject({
+        manualInvoiceArcaAccountId: 'secondary-account',
+        manualInvoiceIssuerName: 'Emisor secundario',
+        manualInvoiceIssuerCuit: '20123456786',
+      });
+    });
+  });
   describe('factura externa', () => {
     it('cierra una pendiente y bloquea vista previa, emisión individual y en lote', async () => {
       const { service, state, prisma, gateway } = setup();

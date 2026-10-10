@@ -12,6 +12,14 @@ import {
 
 export class IssueInvoiceDto {
   @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Cuenta emisora. Nueva factura: primaria; reintento: cuenta anterior.',
+  })
+  @IsOptional()
+  @IsUUID()
+  arcaAccountId?: string;
+  @ApiPropertyOptional({
     description:
       'IDs de los pagos incluidos en esta factura. Se omite para conservar la selección previa o facturar el total.',
     type: [String],

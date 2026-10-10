@@ -49,7 +49,7 @@ describe('ParkingDeletionService', () => {
     reservation: { count: jest.fn(), findMany: jest.fn() },
     paymentIntent: { count: jest.fn(), findMany: jest.fn() },
     mpAccount: { findUnique: jest.fn() },
-    arcaAccount: { findUnique: jest.fn() },
+    arcaAccount: { findFirst: jest.fn() },
     $transaction: jest.fn(),
   };
 
@@ -86,7 +86,7 @@ describe('ParkingDeletionService', () => {
       counter.mockResolvedValue(0);
     }
     mockPrisma.mpAccount.findUnique.mockResolvedValue(null);
-    mockPrisma.arcaAccount.findUnique.mockResolvedValue(null);
+    mockPrisma.arcaAccount.findFirst.mockResolvedValue(null);
     mockPrisma.reservation.findMany.mockResolvedValue([]);
     mockPrisma.paymentIntent.findMany.mockResolvedValue([]);
     tx.tenant.update.mockImplementation(({ data }: { data: Partial<Tenant> }) =>
@@ -196,7 +196,7 @@ describe('ParkingDeletionService', () => {
       mockPrisma.reservation.findMany.mockResolvedValue([{ id: 'r-1' }]);
       mockPrisma.paymentIntent.findMany.mockResolvedValue([{ id: 'pi-1' }]);
       mockPrisma.mpAccount.findUnique.mockResolvedValue({ id: 'mp-1' });
-      mockPrisma.arcaAccount.findUnique.mockResolvedValue({ id: 'arca-1' });
+      mockPrisma.arcaAccount.findFirst.mockResolvedValue({ id: 'arca-1' });
       mockReservations.ownerCancel.mockImplementation(() => {
         order.push('reserva');
         return Promise.resolve();

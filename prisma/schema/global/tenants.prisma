@@ -116,8 +116,7 @@ model Tenant {
   // Pagos de reservas (global/reservation-payments.prisma).
   reservationPayments  ReservationPayment[]
 
-  // `@unique` sobre `ArcaAccount.tenantId`: una playa vincula a lo sumo una.
-  arcaAccount          ArcaAccount?
+  arcaAccounts         ArcaAccount[]
   arcaRequests         ArcaRequest[]
   invoiceReceivers     InvoiceReceiver[]
   invoices             Invoice[]

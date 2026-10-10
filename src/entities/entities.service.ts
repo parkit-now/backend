@@ -364,9 +364,9 @@ export class EntitiesService {
     // promete al operario "la factura se emite al sincronizar" y no se emite
     // nada. Volver a `none` siempre se permite.
     if (dto.invoiceMode !== undefined && dto.invoiceMode !== 'none') {
-      const arca = await this.prisma.arcaAccount.findUnique({
+      const arca = await this.prisma.arcaAccount.findFirst({
         // `tenantId` EXPLÍCITO: `arca_accounts` no está en TENANT_MODELS.
-        where: { tenantId },
+        where: { tenantId, role: 'primary', status: { not: 'unlinked' } },
         select: { status: true },
       });
       if (arca?.status !== 'linked' && arca?.status !== 'cert_expired') {

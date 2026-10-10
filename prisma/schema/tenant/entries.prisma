@@ -14,6 +14,10 @@ model Entry {
   manualInvoiceNumber String? @map("manual_invoice_number") @db.VarChar(40)
   manualInvoiceType String? @map("manual_invoice_type") @db.VarChar(1)
   manualInvoicePointOfSale String? @map("manual_invoice_point_of_sale") @db.VarChar(5)
+  manualInvoiceArcaAccountId String? @map("manual_invoice_arca_account_id") @db.Uuid
+  manualInvoiceArcaAccount ArcaAccount? @relation("ExternalInvoiceAccount", fields: [tenantId, manualInvoiceArcaAccountId], references: [tenantId, id], onDelete: NoAction, onUpdate: NoAction, map: "entries_external_arca_account_fkey")
+  manualInvoiceIssuerCuit String? @map("manual_invoice_issuer_cuit") @db.VarChar(11)
+  manualInvoiceIssuerName String? @map("manual_invoice_issuer_name")
 
   // LPR fields — populated on automatic ingress; null for manual entries.
   source         String      @default("manual") @db.VarChar(10)

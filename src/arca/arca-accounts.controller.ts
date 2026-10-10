@@ -114,7 +114,7 @@ export class ArcaAccountsController {
     @Param('tenantId') tenantId: string,
     @Body() dto: CreateArcaAccountDto,
   ): Promise<ArcaAccountDto> {
-    return this.accounts.create(tenantId, dto);
+    return this.accounts.create(tenantId, { ...dto, role: 'primary' });
   }
 
   @Patch('account')
