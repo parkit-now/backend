@@ -79,6 +79,16 @@ describe('EntriesService.closeEntry — factura', () => {
       entryId: ENTRY,
       total: 1210,
       paymentMethodIds: [CASH],
+      paymentLines: [
+        {
+          id: '44444444-4444-7444-8444-444444444444',
+          paymentMethodId: CASH,
+          paymentMethodName: 'Efectivo',
+          amount: 1210,
+        },
+      ],
+      selectedPaymentIds: undefined,
+      receiverCuit: undefined,
     });
     expect(result.invoice?.status).toBe('issued');
     expect(result.id).toBe(ENTRY);

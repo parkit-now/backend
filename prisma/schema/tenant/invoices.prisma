@@ -45,6 +45,7 @@ model Invoice {
   receptorCondicionIvaId Int?    @map("receptor_condicion_iva_id") @db.SmallInt
 
   impTotal Decimal  @map("imp_total") @db.Decimal(12, 2)
+  selectedPaymentIds String[] @default([]) @map("selected_payment_ids") @db.Uuid
   impNeto  Decimal? @map("imp_neto") @db.Decimal(12, 2)
   impIva   Decimal? @map("imp_iva") @db.Decimal(12, 2)
   ivaRate  Decimal? @map("iva_rate") @db.Decimal(5, 2)
