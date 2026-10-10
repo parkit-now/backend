@@ -177,6 +177,11 @@ describe('EntriesService', () => {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           createMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
+        invoice: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue(undefined),
+          update: jest.fn().mockResolvedValue(undefined),
+        },
         auditLog: {
           create: jest.fn().mockResolvedValue(undefined),
         },
@@ -309,6 +314,106 @@ describe('EntriesService', () => {
         data: { manuallyInvoiced?: boolean };
       };
       expect(updateArg.data.manuallyInvoiced).toBe(true);
+    });
+
+    it('el dueño puede crear un pendiente sin ARCA y con la caja cerrada', async () => {
+      const { service: subject, tx } = makeService(
+        makeEntry({ cashSession: { closedAt: new Date() } }),
+      );
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { invoicePending: true },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(tx.invoice.create).toHaveBeenCalledWith({
+        data: {
+          tenantId: TENANT,
+          entryId: ENTRY,
+          status: 'pending',
+          impTotal: 2000,
+        },
+      });
+      expect(tx.invoice.findFirst).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, entryId: ENTRY },
+      });
+      const auditArg = tx.auditLog.create.mock.calls[0][0] as {
+        data: {
+          metadata: {
+            changedFields: string[];
+            invoiceReminder: { before: boolean; after: boolean };
+          };
+        };
+      };
+      expect(auditArg.data.metadata.changedFields).toContain('invoicePending');
+      expect(auditArg.data.metadata.invoiceReminder).toEqual({
+        before: false,
+        after: true,
+      });
+    });
+
+    it('el dueño puede quitar un pendiente existente', async () => {
+      const { service: subject, tx } = makeService(makeEntry());
+      tx.invoice.findFirst.mockResolvedValue({
+        id: 'invoice-1',
+        status: 'pending',
+        cbteNro: null,
+      });
+
+      await subject.correctEntry(
+        ENTRY,
+        2,
+        { invoicePending: false },
+        USER as never,
+        { role: 'owner' } as never,
+      );
+
+      expect(tx.invoice.update).toHaveBeenCalledWith({
+        where: { id: 'invoice-1' },
+        data: {
+          status: 'not_required',
+          errorCode: null,
+          errorMessage: null,
+        },
+      });
+    });
+
+    it('el operador no puede cambiar el recordatorio', async () => {
+      const { service: subject, tx } = makeService(makeEntry());
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { invoicePending: true },
+          USER as never,
+          { role: 'operator' } as never,
+        ),
+        'Only the parking owner',
+      );
+      expect(tx.invoice.create).not.toHaveBeenCalled();
+    });
+
+    it('no cambia una factura emitida ni un intento con numero reservado', async () => {
+      const { service: subject, tx } = makeService(makeEntry());
+      tx.invoice.findFirst.mockResolvedValue({
+        id: 'invoice-1',
+        status: 'pending',
+        cbteNro: 19,
+      });
+      await expectRejectDetail(
+        subject.correctEntry(
+          ENTRY,
+          2,
+          { invoicePending: false },
+          USER as never,
+          { role: 'owner' } as never,
+        ),
+        'issued or may still be issuing',
+      );
+      expect(tx.invoice.update).not.toHaveBeenCalled();
     });
 
     it('permite al dueño editar solo notas de una caja cerrada', async () => {
