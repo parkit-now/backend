@@ -509,9 +509,113 @@ describe('InvoicesService', () => {
       expect(gateway.createCalls[0].ImpTotal).toBe(10);
     });
 
+    it('desde Historial factura sólo los pagos elegidos y no permite otra factura', async () => {
+      const { service, state, prisma, gateway } = setup();
+      const qr = 'payment-qr';
+      const mp = 'payment-mp';
+      const cash = 'payment-cash';
+      state.entries[0].amountPaid = 5000;
+      state.entries[0].paymentTransactions = [
+        {
+          id: qr,
+          tenantId: TENANT,
+          entryId: ENTRY,
+          paymentMethodId: 'qr',
+          amount: 2500,
+          deletedAt: null,
+        },
+        {
+          id: mp,
+          tenantId: TENANT,
+          entryId: ENTRY,
+          paymentMethodId: 'mp',
+          amount: 1500,
+          deletedAt: null,
+        },
+        {
+          id: cash,
+          tenantId: TENANT,
+          entryId: ENTRY,
+          paymentMethodId: CASH,
+          amount: 1000,
+          deletedAt: null,
+        },
+      ];
+      jest.spyOn(prisma.paymentMethod, 'findMany').mockResolvedValue([
+        { id: 'qr', invoiceMode: 'auto' },
+        { id: 'mp', invoiceMode: 'manual' },
+        { id: CASH, invoiceMode: 'manual' },
+      ]);
+
+      expect(await service.previewForEntry(ENTRY, [qr])).toEqual({
+        amount: 2500,
+      });
+      expect(await service.previewForEntry(ENTRY, [qr, mp])).toEqual({
+        amount: 4000,
+      });
+      const result = await service.issueForEntry(
+        ENTRY,
+        undefined,
+        undefined,
+        2500,
+        [qr],
+      );
+      expect(result.selectedPaymentIds).toEqual([qr]);
+      expect(gateway.createCalls[0].ImpTotal).toBe(2500);
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(ENTRY, undefined, undefined, 1500, [mp]),
+          ),
+        ),
+      ).toBe('INVOICE_ALREADY_ISSUED');
+    });
+
+    it('si una línea elegida cambia o se borra, no emite el importe viejo', async () => {
+      const { service, state, gateway } = setup();
+      const selected = ['payment-1'];
+      expect(await service.previewForEntry(ENTRY, selected)).toEqual({
+        amount: 1210,
+      });
+      state.entries[0].paymentTransactions[0].amount = 1000;
+      expect(
+        codeOf(
+          await rejection(
+            service.issueForEntry(ENTRY, undefined, undefined, 1210, selected),
+          ),
+        ),
+      ).toBe('INVOICE_AMOUNT_CHANGED');
+      state.entries[0].paymentTransactions[0].deletedAt = new Date();
+      expect(
+        codeOf(await rejection(service.previewForEntry(ENTRY, selected))),
+      ).toBe('INVOICE_AMOUNT_CHANGED');
+      expect(gateway.createCalls).toHaveLength(0);
+    });
+
+    it('un rechazo de ARCA conserva los pagos seleccionados para reintentar', async () => {
+      const { service, state, gateway } = setup();
+      state.entries[0].amountPaid = 5000;
+      state.entries[0].paymentTransactions[0].amount = 2500;
+      gateway.willRespond('reject');
+      const first = await service.issueForEntry(
+        ENTRY,
+        undefined,
+        undefined,
+        2500,
+        ['payment-1'],
+      );
+      expect(first.status).toBe('error');
+      expect(await service.previewForEntry(ENTRY)).toEqual({ amount: 2500 });
+      await service.issueForEntry(ENTRY, undefined, undefined, 2500);
+      expect(gateway.createCalls.at(-1)?.ImpTotal).toBe(2500);
+    });
+
     it('actualiza el pendiente en la transaccion de correccion y no toca emitidas o inciertas', async () => {
       const { service, state, prisma } = setup();
-      const pending = pendingInvoice(state, { impTotal: 100 });
+      const pending = pendingInvoice(state, {
+        impTotal: 100,
+        selectedPaymentIds: ['payment-1'],
+      });
       const issued = pendingInvoice(state, {
         entryId: 'issued',
         status: 'issued',
@@ -527,6 +631,7 @@ describe('InvoicesService', () => {
       await service.updatePendingAmount(prisma as never, 'issued', 10);
       await service.updatePendingAmount(prisma as never, 'uncertain', 10);
       expect(pending.impTotal).toBe(10);
+      expect(pending.selectedPaymentIds).toEqual([]);
       expect(issued.impTotal).toBe(100);
       expect(uncertain.impTotal).toBe(100);
     });
@@ -588,6 +693,74 @@ describe('InvoicesService', () => {
   afterAll(() => jest.restoreAllMocks());
 
   describe('createForClosedEntry', () => {
+    it('en un cobro dividido emite automáticamente sólo la línea elegida', async () => {
+      const { service, state, prisma, gateway } = setup();
+      const qr = '44444444-4444-7444-8444-444444444444';
+      const cash = '55555555-5555-7555-8555-555555555555';
+      const qrMethod = '66666666-6666-7666-8666-666666666666';
+      state.entries[0].amountPaid = 5000;
+      state.entries[0].paymentTransactions = [
+        {
+          id: qr,
+          tenantId: TENANT,
+          entryId: ENTRY,
+          paymentMethodId: qrMethod,
+          amount: 2500,
+          deletedAt: null,
+        },
+        {
+          id: cash,
+          tenantId: TENANT,
+          entryId: ENTRY,
+          paymentMethodId: CASH,
+          amount: 2500,
+          deletedAt: null,
+        },
+      ];
+      jest.spyOn(prisma.paymentMethod, 'findMany').mockResolvedValue([
+        { id: qrMethod, invoiceMode: 'auto' },
+        { id: CASH, invoiceMode: 'manual' },
+      ]);
+
+      const created = await service.createForClosedEntry(prisma as never, {
+        tenantId: TENANT,
+        entryId: ENTRY,
+        total: 5000,
+        paymentMethodIds: [qrMethod, CASH],
+        paymentLines: [
+          { id: qr, amount: 2500, paymentMethodId: qrMethod },
+          { id: cash, amount: 2500, paymentMethodId: CASH },
+        ],
+        selectedPaymentIds: [qr],
+      });
+
+      expect(created?.issueNow).toBe(true);
+      expect(state.invoices[0].impTotal).toBe(2500);
+      expect(state.invoices[0].selectedPaymentIds).toEqual([qr]);
+      await service.issueAfterClose(created!.invoiceId);
+      expect(gateway.createCalls[0].ImpTotal).toBe(2500);
+    });
+
+    it('rechaza una selección que no pertenece al cobro', async () => {
+      const { service, prisma } = setup();
+      expect(
+        codeOf(
+          await rejection(
+            service.createForClosedEntry(prisma as never, {
+              tenantId: TENANT,
+              entryId: ENTRY,
+              total: 1210,
+              paymentMethodIds: [CASH],
+              paymentLines: [
+                { id: 'payment-1', amount: 1210, paymentMethodId: CASH },
+              ],
+              selectedPaymentIds: ['otro-pago'],
+            }),
+          ),
+        ),
+      ).toBe('INVOICE_AMOUNT_CHANGED');
+    });
+
     it('medio en Automática → factura pendiente para emitir ya', async () => {
       const { service, state, prisma } = setup();
 

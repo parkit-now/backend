@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseArrayPipe,
   ParseUUIDPipe,
   Post,
   Query,
@@ -17,6 +18,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -57,11 +59,22 @@ export class InvoicesController {
     summary: 'Consultar el importe real antes de emitir una factura',
   })
   @ApiOkResponse({ type: InvoicePreviewDto })
+  @ApiQuery({
+    name: 'invoicePaymentIds',
+    required: false,
+    type: String,
+    isArray: true,
+  })
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   async preview(
     @Param('entryId', ParseUUIDPipe) entryId: string,
+    @Query(
+      'invoicePaymentIds',
+      new ParseArrayPipe({ items: String, optional: true, separator: ',' }),
+    )
+    invoicePaymentIds?: string[],
   ): Promise<InvoicePreviewDto> {
-    return this.invoicesService.previewForEntry(entryId);
+    return this.invoicesService.previewForEntry(entryId, invoicePaymentIds);
   }
 
   @Post('entries/:entryId/invoice')
@@ -91,6 +104,7 @@ export class InvoicesController {
       user?.id,
       dto?.receiverCuit,
       dto?.expectedAmount,
+      dto?.invoicePaymentIds,
     );
   }
 

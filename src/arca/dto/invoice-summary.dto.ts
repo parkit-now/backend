@@ -3,6 +3,13 @@ import { InvoiceStatus } from '@prisma/client';
 
 /** Lo que el cobro necesita saber de la factura: cómo salió y por qué. */
 export class InvoiceSummaryDto {
+  @ApiProperty({
+    type: [String],
+    format: 'uuid',
+    description: 'Pagos incluidos; vacío significa el total de la estadía.',
+  })
+  selectedPaymentIds: string[];
+
   @ApiProperty({ format: 'uuid' })
   id: string;
 

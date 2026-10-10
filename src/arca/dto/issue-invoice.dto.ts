@@ -1,13 +1,28 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
 
 export class IssueInvoiceDto {
+  @ApiPropertyOptional({
+    description:
+      'IDs de los pagos incluidos en esta factura. Se omite para conservar la selección previa o facturar el total.',
+    type: [String],
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('all', { each: true })
+  invoicePaymentIds?: string[];
+
   @ApiPropertyOptional({
     description: 'Importe confirmado por el operador. Si cambio, no se emite.',
     minimum: 0,

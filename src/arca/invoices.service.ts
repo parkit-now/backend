@@ -148,6 +148,12 @@ export class InvoicesService {
       readonly entryId: string;
       readonly total: number;
       readonly paymentMethodIds: readonly (string | null | undefined)[];
+      readonly paymentLines?: readonly {
+        id: string;
+        amount: number;
+        paymentMethodId?: string;
+      }[];
+      readonly selectedPaymentIds?: readonly string[];
       /**
        * CUIT que dio el cliente, tal cual lo mandó el cobro. Un CUIT inválido
        * NO hace fallar el cierre (puede venir de la cola offline): la factura
@@ -175,8 +181,24 @@ export class InvoicesService {
       return null;
     }
 
+    const selectedLines = input.selectedPaymentIds
+      ? this.selectPaymentLines(
+          input.entryId,
+          input.paymentLines ?? [],
+          input.selectedPaymentIds,
+        )
+      : input.paymentLines;
+    const paymentMethodIds = selectedLines
+      ? selectedLines.map((line) => line.paymentMethodId)
+      : input.paymentMethodIds;
+    const selectedTotal =
+      selectedLines && input.selectedPaymentIds
+        ? Math.round(
+            selectedLines.reduce((sum, line) => sum + line.amount, 0) * 100,
+          ) / 100
+        : input.total;
     const ids = [
-      ...new Set(input.paymentMethodIds.filter((id): id is string => !!id)),
+      ...new Set(paymentMethodIds.filter((id): id is string => !!id)),
     ];
     const methods =
       ids.length > 0
@@ -188,8 +210,8 @@ export class InvoicesService {
     const modeById = new Map(methods.map((m) => [m.id, m.invoiceMode]));
 
     const decision = resolveInitialInvoice({
-      total: input.total,
-      lineModes: input.paymentMethodIds.map((id) =>
+      total: selectedTotal,
+      lineModes: paymentMethodIds.map((id) =>
         id ? (modeById.get(id) ?? 'none') : 'none',
       ),
     });
@@ -223,7 +245,8 @@ export class InvoicesService {
         status,
         errorCode,
         errorMessage: errorCode ? (DEFAULT_MESSAGES[errorCode] ?? null) : null,
-        impTotal: input.total,
+        impTotal: selectedTotal,
+        selectedPaymentIds: [...(input.selectedPaymentIds ?? [])],
         ...(receiverCuit && status !== 'not_required'
           ? receiverFields(receiverCuit)
           : {}),
@@ -264,6 +287,7 @@ export class InvoicesService {
     userId?: string,
     receiverCuit?: string,
     expectedAmount?: number,
+    selectedPaymentIds?: string[],
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     const cuit = receiverCuit ? normalizeCuit(receiverCuit) : null;
@@ -293,13 +317,29 @@ export class InvoicesService {
         where: { tenantId, entryId },
       });
       if (!existing || !['issued', 'issuing'].includes(existing.status)) {
-        await this.assertInvoiceModeAllowsIssue(tx, tenantId, entryId);
+        await this.assertInvoiceModeAllowsIssue(
+          tx,
+          tenantId,
+          entryId,
+          selectedPaymentIds ?? existing?.selectedPaymentIds,
+        );
       }
       if (existing) return existing;
-      const amount = await this.resolveAmount(tx, entryId, null);
+      const amount = await this.resolveAmount(
+        tx,
+        entryId,
+        null,
+        selectedPaymentIds,
+      );
       this.assertExpectedAmount(entryId, amount, expectedAmount);
       return tx.invoice.create({
-        data: { tenantId, entryId, status: 'pending', impTotal: amount },
+        data: {
+          tenantId,
+          entryId,
+          status: 'pending',
+          impTotal: amount,
+          selectedPaymentIds: selectedPaymentIds ?? [],
+        },
       });
     });
 
@@ -307,10 +347,14 @@ export class InvoicesService {
       throwOnConflict: true,
       receiverCuit: cuit,
       expectedAmount,
+      selectedPaymentIds,
     });
   }
 
-  async previewForEntry(entryId: string): Promise<InvoicePreviewDto> {
+  async previewForEntry(
+    entryId: string,
+    selectedPaymentIds?: string[],
+  ): Promise<InvoicePreviewDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
     if (!this.config.enabled || !(await this.linkedAccount(tenantId))) {
       throw this.notLinked(entryId);
@@ -326,9 +370,19 @@ export class InvoicesService {
         where: { tenantId, entryId },
       });
       if (!invoice || !['issued', 'issuing'].includes(invoice.status)) {
-        await this.assertInvoiceModeAllowsIssue(tx, tenantId, entryId);
+        await this.assertInvoiceModeAllowsIssue(
+          tx,
+          tenantId,
+          entryId,
+          selectedPaymentIds ?? invoice?.selectedPaymentIds,
+        );
       }
-      const amount = await this.resolveAmount(tx, entryId, invoice);
+      const amount = await this.resolveAmount(
+        tx,
+        entryId,
+        invoice,
+        selectedPaymentIds,
+      );
       const conflict = invoice
         ? this.conflictFor({ ...invoice, impTotal: new Prisma.Decimal(amount) })
         : null;
@@ -350,7 +404,7 @@ export class InvoicesService {
         status: { in: ['pending', 'error', 'not_required'] },
         cbteNro: null,
       },
-      data: { impTotal: amount },
+      data: { impTotal: amount, selectedPaymentIds: [] },
     });
   }
 
@@ -388,14 +442,18 @@ export class InvoicesService {
     tx: Prisma.TransactionClient,
     tenantId: string,
     entryId: string,
+    selectedPaymentIds?: readonly string[],
   ): Promise<void> {
     const lines = await tx.paymentTransaction.findMany({
       where: { tenantId, entryId, deletedAt: null },
-      select: { paymentMethodId: true },
+      select: { id: true, paymentMethodId: true },
     });
+    const selected = selectedPaymentIds?.length
+      ? this.selectPaymentLines(entryId, lines, selectedPaymentIds)
+      : lines;
     const ids = [
       ...new Set(
-        lines
+        selected
           .map((line) => line.paymentMethodId)
           .filter((id): id is string => !!id),
       ),
@@ -408,8 +466,8 @@ export class InvoicesService {
       methods.map((method) => [method.id, method.invoiceMode]),
     );
     if (
-      lines.length === 0 ||
-      lines.some((line) =>
+      selected.length === 0 ||
+      selected.some((line) =>
         line.paymentMethodId
           ? (modeById.get(line.paymentMethodId) ?? 'none') === 'none'
           : true,
@@ -429,6 +487,7 @@ export class InvoicesService {
     tx: Prisma.TransactionClient,
     entryId: string,
     invoice: Invoice | null,
+    selectedPaymentIds?: readonly string[],
   ): Promise<number> {
     // An uncertain ARCA request must be reconciled using its original snapshot.
     if (
@@ -457,7 +516,45 @@ export class InvoicesService {
     if (!entry.leftAt || !Number.isFinite(amount) || !(amount > 0)) {
       throw this.notInvoiceable(entryId);
     }
-    return Math.round(amount * 100) / 100;
+    const ids = selectedPaymentIds ?? invoice?.selectedPaymentIds ?? [];
+    if (ids.length === 0) return Math.round(amount * 100) / 100;
+    const lines = await tx.paymentTransaction.findMany({
+      where: { tenantId, entryId, deletedAt: null },
+      select: { id: true, amount: true },
+    });
+    const selected = this.selectPaymentLines(entryId, lines, ids);
+    const selectedAmount = selected.reduce(
+      (sum, line) => sum + Number(line.amount),
+      0,
+    );
+    if (!(selectedAmount > 0) || selectedAmount > amount + 0.005) {
+      throw this.selectionChanged(entryId);
+    }
+    return Math.round(selectedAmount * 100) / 100;
+  }
+
+  private selectPaymentLines<T extends { id: string }>(
+    entryId: string,
+    lines: readonly T[],
+    selectedIds: readonly string[],
+  ): T[] {
+    const ids = new Set(selectedIds);
+    if (ids.size === 0 || ids.size !== selectedIds.length) {
+      throw this.selectionChanged(entryId);
+    }
+    const selected = lines.filter((line) => ids.has(line.id));
+    if (selected.length !== ids.size) throw this.selectionChanged(entryId);
+    return selected;
+  }
+
+  private selectionChanged(entryId: string): FormattedException {
+    return new FormattedException(
+      'Conflict',
+      HttpStatus.CONFLICT,
+      'The selected payments changed. Review the invoice amount before retrying.',
+      this.instance(entryId),
+      ErrorCodes.INVOICE_AMOUNT_CHANGED,
+    );
   }
 
   private assertExpectedAmount(
@@ -752,6 +849,7 @@ export class InvoicesService {
       readonly throwOnConflict: boolean;
       readonly receiverCuit?: string | null;
       readonly expectedAmount?: number;
+      readonly selectedPaymentIds?: readonly string[];
     },
   ): Promise<InvoiceSummaryDto> {
     const tenantId = this.tenantContext.getTenantIdOrThrow();
@@ -783,7 +881,12 @@ export class InvoicesService {
         where: { id: invoiceId, tenantId },
       });
       // Resolve and validate under the same lock used by history corrections.
-      const amount = await this.resolveAmount(tx, fresh.entryId, fresh);
+      const amount = await this.resolveAmount(
+        tx,
+        fresh.entryId,
+        fresh,
+        opts.selectedPaymentIds,
+      );
       const conflict = this.conflictFor({
         ...fresh,
         impTotal: new Prisma.Decimal(amount),
@@ -798,6 +901,9 @@ export class InvoicesService {
           where: { id: invoiceId },
           data: {
             impTotal: amount,
+            ...(opts.selectedPaymentIds !== undefined
+              ? { selectedPaymentIds: [...opts.selectedPaymentIds] }
+              : {}),
             ...(opts.receiverCuit !== undefined
               ? receiverFields(opts.receiverCuit)
               : {}),
@@ -1389,6 +1495,7 @@ function isoDate(value: Date | null): string | null {
 function toSummary(invoice: Invoice): InvoiceSummaryDto {
   return {
     id: invoice.id,
+    selectedPaymentIds: invoice.selectedPaymentIds ?? [],
     status: invoice.status,
     cbteTipo: invoice.cbteTipo,
     ptoVta: invoice.ptoVta,

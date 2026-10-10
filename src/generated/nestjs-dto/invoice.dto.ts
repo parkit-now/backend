@@ -81,6 +81,7 @@ receptorCondicionIvaId: number  | null;
   format: `double`,
 })
 impTotal: Prisma.Decimal ;
+selectedPaymentIds: string[] ;
 @ApiProperty({
   type: `number`,
   format: `double`,

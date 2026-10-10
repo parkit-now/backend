@@ -1022,6 +1022,8 @@ export class EntriesService {
           entryId,
           total: computedAmount,
           paymentMethodIds: (data.payments ?? []).map((p) => p.paymentMethodId),
+          paymentLines: data.payments,
+          selectedPaymentIds: data.invoicePaymentIds,
           receiverCuit: data.invoiceReceiverCuit,
         });
 

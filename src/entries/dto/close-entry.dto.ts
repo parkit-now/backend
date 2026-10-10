@@ -48,6 +48,17 @@ export class CloseEntryDto {
 
   @ApiPropertyOptional({
     description:
+      'IDs de las líneas de payments[] incluidas en la única factura. Si se omite, se factura el total.',
+    type: [String],
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  invoicePaymentIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
       'CUIT del cliente para identificarlo en la factura, con o sin guiones. ' +
       'La letra la decide el padrón (A sólo si el emisor es RI y el receptor ' +
       'RI o monotributista). Un CUIT inválido no hace fallar el cierre: la ' +
