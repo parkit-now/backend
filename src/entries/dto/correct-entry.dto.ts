@@ -151,6 +151,14 @@ export class CorrectEntryDto {
   manuallyInvoiced?: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'Solo el dueño: marca o quita el recordatorio de factura pendiente para una estadía cobrada.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  invoicePending?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Número de la factura emitida fuera de Parkit.',
     maxLength: 40,
   })

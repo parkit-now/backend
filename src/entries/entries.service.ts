@@ -1078,7 +1078,8 @@ export class EntriesService {
     const role = actorRole(membership);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (this.invoices) await lockEntryInvoice(tx, tenantId, entryId);
+      if (this.invoices || data.invoicePending !== undefined)
+        await lockEntryInvoice(tx, tenantId, entryId);
       const current = await tx.entry.findFirst({
         where: { tenantId, id: entryId, deletedAt: null },
         include: { cashSession: true, paymentTransactions: true },
@@ -1108,6 +1109,7 @@ export class EntriesService {
       // requieren dueño; la marca y el número manual conservan su permiso actual.
       const allowedClosedFields = new Set([
         'manuallyInvoiced',
+        'invoicePending',
         'manualInvoiceNumber',
         'manualInvoiceType',
         'manualInvoicePointOfSale',
@@ -1132,6 +1134,7 @@ export class EntriesService {
         (data.leftAt !== undefined ||
           data.payments !== undefined ||
           data.manuallyInvoiced !== undefined ||
+          data.invoicePending !== undefined ||
           data.manualInvoiceNumber !== undefined ||
           data.manualInvoiceType !== undefined ||
           data.manualInvoicePointOfSale !== undefined)
@@ -1169,6 +1172,83 @@ export class EntriesService {
         );
       }
       const externalMarked = data.manuallyInvoiced ?? current.manuallyInvoiced;
+      let invoiceReminderBefore: boolean | null = null;
+      let invoiceReminderChanged = false;
+      if (data.invoicePending !== undefined) {
+        if (role !== 'owner') {
+          throw new FormattedException(
+            'Forbidden',
+            HttpStatus.FORBIDDEN,
+            'Only the parking owner can change an invoice reminder.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.FORBIDDEN,
+          );
+        }
+        if (current.manuallyInvoiced || data.manuallyInvoiced === true) {
+          throw new FormattedException(
+            'Conflict',
+            HttpStatus.CONFLICT,
+            'The stay already has an external invoice.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.INVOICE_ALREADY_ISSUED,
+          );
+        }
+        if (!current.leftAt || !(Number(current.amountPaid) > 0)) {
+          throw new FormattedException(
+            'Unprocessable Entity',
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            'Only a paid stay can have an invoice reminder.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.INVOICE_NOT_INVOICEABLE,
+          );
+        }
+        const invoice = await tx.invoice.findFirst({
+          where: { tenantId, entryId },
+        });
+        invoiceReminderBefore = invoice?.status === 'pending';
+        invoiceReminderChanged = invoiceReminderBefore !== data.invoicePending;
+        if (
+          invoice &&
+          (invoice.status === 'issued' ||
+            invoice.status === 'issuing' ||
+            invoice.cbteNro !== null)
+        ) {
+          throw new FormattedException(
+            'Conflict',
+            HttpStatus.CONFLICT,
+            'The invoice was issued or may still be issuing.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            invoice.status === 'issued'
+              ? ErrorCodes.INVOICE_ALREADY_ISSUED
+              : ErrorCodes.INVOICE_IN_PROGRESS,
+          );
+        }
+        if (invoice && invoice.status === 'error') {
+          throw new FormattedException(
+            'Conflict',
+            HttpStatus.CONFLICT,
+            'An invoice error must be resolved before changing its reminder.',
+            `/tenants/:tenantId/entries/${entryId}/correction`,
+            ErrorCodes.CONFLICT,
+          );
+        }
+        const status = data.invoicePending ? 'pending' : 'not_required';
+        if (invoice) {
+          await tx.invoice.update({
+            where: { id: invoice.id },
+            data: { status, errorCode: null, errorMessage: null },
+          });
+        } else if (data.invoicePending) {
+          await tx.invoice.create({
+            data: {
+              tenantId,
+              entryId,
+              status,
+              impTotal: Number(current.amountPaid),
+            },
+          });
+        }
+      }
       const externalType = data.manualInvoiceType ?? current.manualInvoiceType;
       const externalPointOfSale =
         data.manualInvoicePointOfSale ?? current.manualInvoicePointOfSale;
@@ -1418,7 +1498,7 @@ export class EntriesService {
       const auditableChangedFields = changedFields.filter(
         (field) => !NON_AUDITED_CORRECTION_FIELDS.has(field),
       );
-      if (auditableChangedFields.length > 0) {
+      if (auditableChangedFields.length > 0 || invoiceReminderChanged) {
         const sensitive = auditableChangedFields.some((field) =>
           SENSITIVE_CORRECTION_FIELDS.has(field),
         );
@@ -1434,7 +1514,18 @@ export class EntriesService {
               origin: 'history',
               before,
               after: afterSnapshot,
-              changedFields,
+              changedFields: [
+                ...changedFields,
+                ...(invoiceReminderChanged ? ['invoicePending'] : []),
+              ],
+              ...(invoiceReminderChanged
+                ? {
+                    invoiceReminder: {
+                      before: invoiceReminderBefore,
+                      after: data.invoicePending,
+                    },
+                  }
+                : {}),
               economicImpact: correctionEconomicImpact(before, afterSnapshot),
               reason: data.reason?.trim() || null,
               actorRole: role,
