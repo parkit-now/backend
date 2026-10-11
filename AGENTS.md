@@ -328,6 +328,16 @@ bun test
 bun run build
 ```
 
+### Deploy a producción y migraciones
+
+El push a `main` dispara Cloud Build con `cloudbuild.yaml`: **Build → Push →
+Migrate → Deploy**. Migrate corre `supabase db push` contra prod antes de
+levantar la revisión nueva; si falla, no hay deploy. Consecuencia para quien
+escribe migraciones: la revisión vieja corre unos minutos contra el schema
+nuevo, así que **toda migración tiene que ser compatible con el código
+anterior** (aditiva; lo destructivo, con expand/contract — ver
+`CONTRIBUTING.md`).
+
 ### Por qué `build` y `typecheck` corren `prisma generate`
 
 `nest build` y `tsc` compilan contra el `@prisma/client` de `node_modules`. Si

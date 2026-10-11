@@ -1,5 +1,10 @@
 # CI/CD Pipeline
 
+> **Deploy real a producción:** lo hace Cloud Build con
+> [`cloudbuild.yaml`](../../cloudbuild.yaml) (Build → Push → Migrate → Deploy)
+> sobre cada push a `main`; ver `CONTRIBUTING.md` § Deploy a producción. Los
+> jobs `build-publish` / `deploy-*` descritos abajo siguen siendo placeholders.
+
 This directory contains the single GitHub Actions workflow for the project.
 
 ## Branching model recap
