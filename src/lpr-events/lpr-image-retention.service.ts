@@ -32,6 +32,14 @@ type PurgeCandidate = Pick<
 
 type Tier = 'registered' | 'noise' | 'archived';
 
+/** Lo que encontró una corrida: candidatos por tier y si fue un simulacro. */
+export interface LprImageRetentionSummary {
+  dryRun: boolean;
+  registered: number;
+  noise: number;
+  archived: number;
+}
+
 /**
  * Daily job that deletes LPR detection photos from the private bucket once
  * they've stopped having audit/billing value, per tier:
@@ -80,8 +88,11 @@ export class LprImageRetentionService {
     return this.config.get('LPR_IMAGE_RETENTION_DRY_RUN') !== 'false';
   }
 
+  // En Cloud Run este `@Cron` es de mejor esfuerzo: con scale-to-zero sólo
+  // dispara si hay una instancia viva a esa hora. La corrida garantizada la
+  // hace Cloud Scheduler contra `POST /internal/jobs/lpr-image-retention`.
   @Cron(CronExpression.EVERY_DAY_AT_4AM)
-  async run(): Promise<void> {
+  async run(): Promise<LprImageRetentionSummary> {
     const dryRun = this.dryRun;
     const [registered, noise, archived] = await Promise.all([
       this.findRegisteredCandidates(),
@@ -94,11 +105,18 @@ export class LprImageRetentionService {
         `${registered.length} registered, ${noise.length} noise, ${archived.length} archived candidates.`,
     );
 
-    if (dryRun) return;
+    const summary: LprImageRetentionSummary = {
+      dryRun,
+      registered: registered.length,
+      noise: noise.length,
+      archived: archived.length,
+    };
+    if (dryRun) return summary;
 
     await this.purge(registered, 'registered');
     await this.purge(noise, 'noise');
     await this.purge(archived, 'archived');
+    return summary;
   }
 
   private async findRegisteredCandidates(): Promise<PurgeCandidate[]> {

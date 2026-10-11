@@ -31,6 +31,7 @@ import { MpWebhookModule } from './mercado-pago/mp-webhook.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { LprIgnoredPlatesModule } from './lpr-ignored-plates/lpr-ignored-plates.module';
 import { ClientsModule } from './clients/clients.module';
+import { InternalJobsModule } from './internal-jobs/internal-jobs.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { ClientsModule } from './clients/clients.module';
     ReservationsModule,
     LprIgnoredPlatesModule,
     ClientsModule,
+    InternalJobsModule,
   ],
 })
 export class AppModule {}
