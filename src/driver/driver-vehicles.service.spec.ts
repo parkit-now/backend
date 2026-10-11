@@ -21,7 +21,7 @@ const client = {
     delete: jest.fn(),
   },
   reservation: { findMany: jest.fn() },
-  vehicleCatalogDefault: { findMany: jest.fn() },
+  vehicleCatalogDefault: { findMany: jest.fn(), findFirst: jest.fn() },
 };
 
 // La transacción corre el callback con el mismo doble: lo que importa es QUÉ
@@ -65,6 +65,7 @@ describe('DriverVehiclesService', () => {
     jest.clearAllMocks();
     client.reservation.findMany.mockResolvedValue([]);
     client.driverVehicle.findFirst.mockResolvedValue(vehicle());
+    client.vehicleCatalogDefault.findFirst.mockResolvedValue(null);
   });
 
   describe('list', () => {
@@ -158,6 +159,77 @@ describe('DriverVehiclesService', () => {
         'DRIVER_VEHICLE_PLATE_TAKEN',
       );
     });
+
+    it('guarda marca y modelo con la grafía del catálogo', async () => {
+      client.driverVehicle.count.mockResolvedValue(1);
+      client.driverVehicle.create.mockResolvedValue(vehicle());
+      client.vehicleCatalogDefault.findFirst.mockResolvedValue({
+        brand: 'Toyota',
+        model: 'Etios',
+      });
+
+      await service.create(
+        USER,
+        { ...dto, brand: 'toyota', model: 'ETIOS' },
+        NOW,
+      );
+
+      expect(client.vehicleCatalogDefault.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            brand: { equals: 'toyota', mode: 'insensitive' },
+            model: { equals: 'ETIOS', mode: 'insensitive' },
+          },
+        }),
+      );
+      expect(client.driverVehicle.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          brand: 'Toyota',
+          model: 'Etios',
+        }) as unknown,
+      });
+    });
+
+    it('acepta la marca sola si existe en el catálogo', async () => {
+      client.driverVehicle.count.mockResolvedValue(1);
+      client.driverVehicle.create.mockResolvedValue(vehicle({ model: null }));
+      client.vehicleCatalogDefault.findFirst.mockResolvedValue({
+        brand: 'Toyota',
+        model: 'Corolla',
+      });
+
+      await service.create(USER, { ...dto, brand: 'Toyota' }, NOW);
+
+      expect(client.vehicleCatalogDefault.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { brand: { equals: 'Toyota', mode: 'insensitive' } },
+        }),
+      );
+      expect(client.driverVehicle.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          brand: 'Toyota',
+          model: null,
+        }) as unknown,
+      });
+    });
+
+    it('rechaza marca o modelo que no están en el catálogo', async () => {
+      client.driverVehicle.count.mockResolvedValue(1);
+      await expectFailure(
+        service.create(USER, { ...dto, brand: 'Pirulo', model: 'X' }, NOW),
+        HttpStatus.BAD_REQUEST,
+        'DRIVER_VEHICLE_NOT_IN_CATALOG',
+      );
+      // Un modelo sin marca no se puede ubicar en el catálogo: ni se consulta.
+      client.vehicleCatalogDefault.findFirst.mockClear();
+      await expectFailure(
+        service.create(USER, { ...dto, model: 'Etios' }, NOW),
+        HttpStatus.BAD_REQUEST,
+        'DRIVER_VEHICLE_NOT_IN_CATALOG',
+      );
+      expect(client.vehicleCatalogDefault.findFirst).not.toHaveBeenCalled();
+      expect(client.driverVehicle.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('update', () => {
@@ -168,6 +240,10 @@ describe('DriverVehiclesService', () => {
       client.driverVehicle.update.mockResolvedValue(
         vehicle({ model: 'Yaris' }),
       );
+      client.vehicleCatalogDefault.findFirst.mockResolvedValue({
+        brand: 'Toyota',
+        model: 'Yaris',
+      });
 
       const result = await service.update(
         USER,
@@ -179,7 +255,49 @@ describe('DriverVehiclesService', () => {
       expect(result.model).toBe('Yaris');
       expect(client.driverVehicle.update).toHaveBeenCalledWith({
         where: { id: VEHICLE_ID },
-        data: { model: 'Yaris' },
+        data: { brand: 'Toyota', model: 'Yaris' },
+      });
+    });
+
+    it('rechaza cambiar a una marca o modelo fuera del catálogo', async () => {
+      await expectFailure(
+        service.update(USER, VEHICLE_ID, { model: 'Pirulo' }, NOW),
+        HttpStatus.BAD_REQUEST,
+        'DRIVER_VEHICLE_NOT_IN_CATALOG',
+      );
+      expect(client.driverVehicle.update).not.toHaveBeenCalled();
+    });
+
+    it('un vehículo con texto libre anterior se edita si no cambia marca ni modelo', async () => {
+      const legacy = vehicle({ brand: 'Pirulo', model: 'Viejo' });
+      client.driverVehicle.findFirst.mockResolvedValue(legacy);
+      client.driverVehicle.update.mockResolvedValue(legacy);
+
+      await service.update(
+        USER,
+        VEHICLE_ID,
+        { brand: 'Pirulo', model: 'Viejo', plate: 'AC456DE' },
+        NOW,
+      );
+
+      expect(client.vehicleCatalogDefault.findFirst).not.toHaveBeenCalled();
+      expect(client.driverVehicle.update).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+        data: { plate: 'AC456DE' },
+      });
+    });
+
+    it('quitar marca y modelo no consulta el catálogo', async () => {
+      client.driverVehicle.update.mockResolvedValue(
+        vehicle({ brand: null, model: null }),
+      );
+
+      await service.update(USER, VEHICLE_ID, { brand: null, model: null }, NOW);
+
+      expect(client.vehicleCatalogDefault.findFirst).not.toHaveBeenCalled();
+      expect(client.driverVehicle.update).toHaveBeenCalledWith({
+        where: { id: VEHICLE_ID },
+        data: { brand: null, model: null },
       });
     });
 

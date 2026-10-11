@@ -10,5 +10,6 @@ import { LprImageRetentionService } from './lpr-image-retention.service';
   imports: [PrismaModule, AuditModule, StorageModule],
   controllers: [LprEventsController],
   providers: [LprEventsService, LprImageRetentionService],
+  exports: [LprImageRetentionService],
 })
 export class LprEventsModule {}

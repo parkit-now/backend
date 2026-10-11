@@ -109,8 +109,15 @@ describe('LprImageRetentionService', () => {
     mockConfigService.get.mockReturnValue(undefined);
     stubTiers({ registered: [candidate('event-1')] });
 
-    await makeService().run();
+    const summary = await makeService().run();
 
+    // El resumen es lo que ve quien dispara el job (Cloud Scheduler).
+    expect(summary).toEqual({
+      dryRun: true,
+      registered: 1,
+      noise: 0,
+      archived: 0,
+    });
     expect(mockStorageService.remove.mock.calls).toHaveLength(0);
     expect(mockStorageService.removeMany.mock.calls).toHaveLength(0);
     expect(mockPrisma.lprDetectionEvent.updateMany.mock.calls).toHaveLength(0);
