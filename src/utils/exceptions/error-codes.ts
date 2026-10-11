@@ -191,6 +191,8 @@ export const ErrorCodes = {
     'DRIVER_VEHICLE_HAS_ACTIVE_RESERVATION',
   // El principal se cambia marcando otro; no se puede desmarcar.
   DRIVER_VEHICLE_PRIMARY_REQUIRED: 'DRIVER_VEHICLE_PRIMARY_REQUIRED',
+  // Marca o modelo que no están en el catálogo de la plataforma.
+  DRIVER_VEHICLE_NOT_IN_CATALOG: 'DRIVER_VEHICLE_NOT_IN_CATALOG',
 
   // Services (amenities)
   SERVICE_NOT_FOUND: 'SERVICE_NOT_FOUND',

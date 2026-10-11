@@ -47,14 +47,28 @@ export class CreateDriverVehicleDto {
   @IsIn(RESERVABLE_VEHICLE_CATEGORIES)
   category: ReservableVehicleCategory;
 
-  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 60 })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: 60,
+    description:
+      'Marca del catálogo (`GET /driver/vehicle-catalog`). No se acepta texto ' +
+      'libre: una marca que no está da 400.',
+  })
   @IsOptional()
   @Transform(trimToNull)
   @IsString()
   @MaxLength(60)
   brand?: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 60 })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: 60,
+    description:
+      'Modelo del catálogo para esa marca. Puede ir la marca sola; un modelo ' +
+      'sin marca, o que no es de esa marca, da 400.',
+  })
   @IsOptional()
   @Transform(trimToNull)
   @IsString()
@@ -93,14 +107,28 @@ export class UpdateDriverVehicleDto {
   @IsIn(RESERVABLE_VEHICLE_CATEGORIES)
   category?: ReservableVehicleCategory;
 
-  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 60 })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: 60,
+    description:
+      'Marca del catálogo (`GET /driver/vehicle-catalog`). No se acepta texto ' +
+      'libre: una marca que no está da 400.',
+  })
   @IsOptional()
   @Transform(trimToNull)
   @IsString()
   @MaxLength(60)
   brand?: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 60 })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: 60,
+    description:
+      'Modelo del catálogo para esa marca. Puede ir la marca sola; un modelo ' +
+      'sin marca, o que no es de esa marca, da 400.',
+  })
   @IsOptional()
   @Transform(trimToNull)
   @IsString()

@@ -27,6 +27,10 @@ type Tx = Prisma.TransactionClient;
  * - Con una reserva activa (confirmada y sin terminar) del vehículo no se lo
  *   borra ni se le cambia patente o categoría: la reserva se reconoce en la
  *   playa por esa patente.
+ * - Marca y modelo salen del catálogo de la plataforma (SCRUM-301): no se
+ *   guarda texto libre. Se acepta el par marca + modelo, la marca sola o
+ *   ninguno. Los vehículos cargados antes de esta regla quedan como están
+ *   mientras no se les cambie marca o modelo.
  */
 @Injectable()
 export class DriverVehiclesService {
@@ -52,14 +56,20 @@ export class DriverVehiclesService {
           where: { userId: user.id },
         });
         const isPrimary = count === 0 || dto.isPrimary === true;
+        const catalog = await this.resolveCatalogVehicle(
+          tx,
+          dto.brand ?? null,
+          dto.model ?? null,
+          VEHICLES_PATH,
+        );
         if (isPrimary) await clearPrimary(tx, user.id);
         return tx.driverVehicle.create({
           data: {
             userId: user.id,
             plate: dto.plate,
             category: dto.category,
-            brand: dto.brand ?? null,
-            model: dto.model ?? null,
+            brand: catalog.brand,
+            model: catalog.model,
             isPrimary,
           },
         });
@@ -94,6 +104,14 @@ export class DriverVehiclesService {
         if (changesIdentity) {
           await this.assertNoActiveReservation(tx, vehicle, now, instance);
         }
+        // Sólo se valida si cambian: un vehículo anterior a la regla se puede
+        // seguir editando (patente, principal) sin que su texto viejo lo trabe.
+        const brand = dto.brand !== undefined ? dto.brand : vehicle.brand;
+        const model = dto.model !== undefined ? dto.model : vehicle.model;
+        const catalog =
+          brand !== vehicle.brand || model !== vehicle.model
+            ? await this.resolveCatalogVehicle(tx, brand, model, instance)
+            : null;
         if (dto.isPrimary === true && !vehicle.isPrimary) {
           await clearPrimary(tx, user.id);
         }
@@ -102,8 +120,7 @@ export class DriverVehiclesService {
           data: {
             ...(dto.plate !== undefined && { plate: dto.plate }),
             ...(dto.category !== undefined && { category: dto.category }),
-            ...(dto.brand !== undefined && { brand: dto.brand }),
-            ...(dto.model !== undefined && { model: dto.model }),
+            ...(catalog && { brand: catalog.brand, model: catalog.model }),
             ...(dto.isPrimary === true && { isPrimary: true }),
           },
         });
@@ -160,6 +177,42 @@ export class DriverVehiclesService {
       select: { category: true },
     });
     return vehicle?.category ?? null;
+  }
+
+  /**
+   * Marca y modelo tal como están escritos en el catálogo, o 400 si no están.
+   * La comparación ignora mayúsculas, pero se guarda la grafía del catálogo
+   * para que no queden variantes ("toyota", "TOYOTA") de lo mismo.
+   */
+  private async resolveCatalogVehicle(
+    tx: Tx,
+    brand: string | null,
+    model: string | null,
+    instance: string,
+  ): Promise<{ brand: string | null; model: string | null }> {
+    if (brand === null && model === null) return { brand: null, model: null };
+    const row =
+      brand === null
+        ? null
+        : await tx.vehicleCatalogDefault.findFirst({
+            where: {
+              brand: { equals: brand, mode: 'insensitive' },
+              ...(model !== null && {
+                model: { equals: model, mode: 'insensitive' },
+              }),
+            },
+            orderBy: [{ brand: 'asc' }, { model: 'asc' }],
+            select: { brand: true, model: true },
+          });
+    if (!row) {
+      throw failure(
+        HttpStatus.BAD_REQUEST,
+        'Brand and model must come from the vehicle catalog.',
+        instance,
+        ErrorCodes.DRIVER_VEHICLE_NOT_IN_CATALOG,
+      );
+    }
+    return { brand: row.brand, model: model === null ? null : row.model };
   }
 
   private async findOwned(
