@@ -26,7 +26,7 @@ interface PurgeCounts {
  * Borra definitivamente los estacionamientos dados de baja cuya ventana de
  * gracia ya venció. Es el único lugar del backend que borra de verdad.
  *
- * CORRE A LAS 4:30, DESPUÉS DE `LprImageRetentionService` (4:00)
+ * CORRE A LAS 4:30 UTC, SIN DEPENDER DE `LprImageRetentionService`
  *
  * No se pisan por diseño: la retención saltea los tenants dados de baja
  * (`deletedAt: null` en sus tres tiers), así que durante la ventana de gracia

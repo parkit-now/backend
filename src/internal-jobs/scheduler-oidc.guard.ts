@@ -9,6 +9,7 @@ import { Request } from 'express';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { GoogleOidcService } from './google-oidc.service';
+import { schedulerConfig } from './scheduler-config';
 
 /**
  * Deja pasar sólo a Cloud Scheduler.
@@ -32,9 +33,8 @@ export class SchedulerOidcGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
-    const audience = this.config.get<string>('INTERNAL_JOBS_AUDIENCE');
-    const invoker = this.config.get<string>('INTERNAL_JOBS_INVOKER_EMAIL');
-    if (!audience || !invoker) {
+    const scheduler = schedulerConfig(this.config);
+    if (!scheduler) {
       throw new FormattedException(
         'Not Found',
         HttpStatus.NOT_FOUND,
@@ -58,7 +58,7 @@ export class SchedulerOidcGuard implements CanActivate {
     let email: string | undefined;
     let emailVerified: boolean | undefined;
     try {
-      const payload = await this.oidc.verify(token, audience);
+      const payload = await this.oidc.verify(token, scheduler.audience);
       email = payload.email;
       emailVerified = payload.email_verified;
     } catch {
@@ -73,7 +73,7 @@ export class SchedulerOidcGuard implements CanActivate {
 
     // Un token válido de Google para esta audiencia pero de OTRA cuenta no
     // alcanza: cualquier service account del mundo puede pedir uno.
-    if (email !== invoker || emailVerified !== true) {
+    if (email !== scheduler.invoker || emailVerified !== true) {
       throw new FormattedException(
         'Forbidden',
         HttpStatus.FORBIDDEN,
