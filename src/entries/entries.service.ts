@@ -529,6 +529,10 @@ type EntryChangesResponse = {
   maxSeq: number;
 };
 
+type EntryIdsResponse = {
+  ids: string[];
+};
+
 @Injectable()
 export class EntriesService {
   constructor(
@@ -618,6 +622,30 @@ export class EntriesService {
       orderBy: [{ enteredAt: 'desc' }],
     });
     return entries.map(toDto);
+  }
+
+  /**
+   * Ids de todas las estadías vivas del tenant.
+   *
+   * Lo consume la reconciliación del escritorio, que compara esta lista contra
+   * su base local y poda lo que acá no está. Por eso devuelve SÓLO ids: el
+   * listado completo pesa unas veinte veces más y nada de eso se usa.
+   *
+   * Dos cosas que no se pueden cambiar sin romper al cliente:
+   *
+   * - La lista tiene que ser COMPLETA. Cualquier filtro que se agregue acá
+   *   —por fecha, por caja, por lo que sea— convierte en fantasmas a las
+   *   estadías que queden afuera, y el cliente las borra de su base.
+   * - Los borrados (`deletedAt`) quedan afuera a propósito: es lo que hace que
+   *   una estadía eliminada en el servidor desaparezca también del equipo.
+   */
+  async findAllIds(): Promise<EntryIdsResponse> {
+    const tenantPrisma = this.prisma.getTenantClient();
+    const rows = await tenantPrisma.entry.findMany({
+      where: { deletedAt: null },
+      select: { id: true },
+    });
+    return { ids: rows.map((row) => row.id) };
   }
 
   async pullChanges(
