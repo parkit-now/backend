@@ -103,6 +103,8 @@ model Tenant {
   whitelists           Whitelist[]
   lprIgnoredPlates      LprIgnoredPlate[]
   clients               Client[]
+  plateProfiles         PlateProfile[]
+  plateProfileMutations  PlateProfileMutation[]
   clientPlates          ClientPlate[]
   lprDetectionEvents   LprDetectionEvent[]
   // Mercado Pago (global/mercado-pago.prisma). La cuenta es 0..1 por el

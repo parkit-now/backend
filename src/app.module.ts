@@ -32,6 +32,7 @@ import { MpWebhookModule } from './mercado-pago/mp-webhook.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { LprIgnoredPlatesModule } from './lpr-ignored-plates/lpr-ignored-plates.module';
 import { ClientsModule } from './clients/clients.module';
+import { PlateProfilesModule } from './plate-profiles/plate-profiles.module';
 import { InternalJobsModule } from './internal-jobs/internal-jobs.module';
 
 @Module({
@@ -69,6 +70,7 @@ import { InternalJobsModule } from './internal-jobs/internal-jobs.module';
     ReservationsModule,
     LprIgnoredPlatesModule,
     ClientsModule,
+    PlateProfilesModule,
     InternalJobsModule,
   ],
 })
