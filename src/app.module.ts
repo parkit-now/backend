@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TableTemplatesModule } from './table-templates/table-templates.module';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
@@ -36,6 +37,7 @@ import { InternalJobsModule } from './internal-jobs/internal-jobs.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    TableTemplatesModule,
     ScheduleModule.forRoot(),
     PrismaModule,
     UsersModule,

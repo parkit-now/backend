@@ -1,0 +1,29 @@
+// Personal preferences: contextKey is "admin" or the parking UUID, not a business tenant row.
+model UserTableTemplate {
+  userId String @map("user_id") @db.Uuid
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform String @db.VarChar(10)
+  contextKey String @map("context_key") @db.VarChar(40)
+  tableKey String @map("table_key") @db.VarChar(100)
+  id String @db.VarChar(200)
+  name String @db.VarChar(150)
+  description String? @db.VarChar(1000)
+  config Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@id([userId, platform, contextKey, tableKey, id])
+  @@map("user_table_templates")
+}
+
+model UserTableTemplateMutation {
+  userId String @map("user_id") @db.Uuid
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mutationId String @map("mutation_id") @db.Uuid
+  target String @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([userId, mutationId])
+  @@map("user_table_template_mutations")
+}
