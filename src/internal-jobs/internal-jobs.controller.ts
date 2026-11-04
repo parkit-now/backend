@@ -14,6 +14,17 @@ import { SchedulerOidcGuard } from './scheduler-oidc.guard';
  * imágenes LPR, a las 4:00, corría unas pocas noches por quincena. Un request
  * de Scheduler levanta la instancia y le da CPU mientras dura el job.
  *
+ * Cada job de acá tiene UN solo disparador por entorno: con Scheduler
+ * configurado corre por este endpoint; sin Scheduler (local), por el `@Cron`
+ * de `LocalJobsCron`. El job de Scheduler se crea con
+ * `scripts/setup-cloud-scheduler.sh`.
+ *
+ * Hoy sólo está la retención de imágenes. Los demás cron del backend
+ * (reservas, tokens de Mercado Pago, ARCA, purga de tenants) siguen siendo
+ * `@Cron` de mejor esfuerzo: Scheduler da 3 jobs gratis por cuenta de
+ * facturación y la regla del proyecto es no generar costo en GCP. Sumar uno
+ * es agregar su endpoint acá, su `@Cron` a `LocalJobsCron` y su job al script.
+ *
  * No es parte del contrato de los frontends: queda fuera de OpenAPI.
  */
 @ApiExcludeController()

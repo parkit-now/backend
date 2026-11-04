@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { LprDetectionEvent, LprDetectionStatus } from '@prisma/client';
 import { AuditActions, AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
@@ -88,10 +87,8 @@ export class LprImageRetentionService {
     return this.config.get('LPR_IMAGE_RETENTION_DRY_RUN') !== 'false';
   }
 
-  // En Cloud Run este `@Cron` es de mejor esfuerzo: con scale-to-zero sólo
-  // dispara si hay una instancia viva a esa hora. La corrida garantizada la
-  // hace Cloud Scheduler contra `POST /internal/jobs/lpr-image-retention`.
-  @Cron(CronExpression.EVERY_DAY_AT_4AM)
+  // Quién la dispara y cuándo: ver src/internal-jobs (Cloud Scheduler en
+  // producción, `@Cron` en local).
   async run(): Promise<LprImageRetentionSummary> {
     const dryRun = this.dryRun;
     const [registered, noise, archived] = await Promise.all([
