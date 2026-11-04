@@ -28,6 +28,8 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   memberships UserMembership[]
+  tableTemplates UserTableTemplate[]
+  tableTemplateMutations UserTableTemplateMutation[]
 
   // Onboarding (back-relations).
   applications         OnboardingApplication[] @relation("ApplicantApplications")

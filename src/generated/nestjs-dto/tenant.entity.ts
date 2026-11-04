@@ -18,6 +18,8 @@ import {PaymentTransactionEntity} from './payment-transaction.entity'
 import {WhitelistEntity} from './whitelist.entity'
 import {LprIgnoredPlateEntity} from './lpr-ignored-plate.entity'
 import {ClientEntity} from './client.entity'
+import {PlateProfileEntity} from './plate-profile.entity'
+import {PlateProfileMutationEntity} from './plate-profile-mutation.entity'
 import {ClientPlateEntity} from './client-plate.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
 import {MpAccountEntity} from './mp-account.entity'
@@ -137,6 +139,8 @@ paymentTransactions?: PaymentTransactionEntity[] ;
 whitelists?: WhitelistEntity[] ;
 lprIgnoredPlates?: LprIgnoredPlateEntity[] ;
 clients?: ClientEntity[] ;
+plateProfiles?: PlateProfileEntity[] ;
+plateProfileMutations?: PlateProfileMutationEntity[] ;
 clientPlates?: ClientPlateEntity[] ;
 lprDetectionEvents?: LprDetectionEventEntity[] ;
 mpAccount?: MpAccountEntity  | null;

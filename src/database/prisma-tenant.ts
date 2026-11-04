@@ -45,6 +45,8 @@ const TENANT_MODELS: readonly string[] = [
   'lprignoredplate',
   'client',
   'clientplate',
+  'plateprofile',
+  'plateprofilemutation',
   'lprdetectionevent',
   'invoice',
   'reservation',
