@@ -9,6 +9,12 @@ import {
 } from 'class-validator';
 import { PaginationQueryDto } from '../../utils/pagination/pagination-query.dto';
 
+export enum StaffSearchField {
+  all = 'all',
+  name = 'name',
+  email = 'email',
+}
+
 /** Filters for the owner's staff table. */
 export class ListStaffQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({
@@ -20,6 +26,16 @@ export class ListStaffQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(255)
   search?: string;
+
+  @ApiPropertyOptional({
+    enum: StaffSearchField,
+    default: StaffSearchField.all,
+    description:
+      'Field used by search. Omit or use all to match name and email.',
+  })
+  @IsOptional()
+  @IsEnum(StaffSearchField)
+  searchField?: StaffSearchField;
 
   @ApiPropertyOptional({
     enum: MembershipRole,

@@ -4,6 +4,7 @@ import { PermissionsService } from '../auth/permissions.service';
 import { PrismaService } from '../database/prisma.service';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { StaffService } from './staff.service';
+import { StaffSearchField } from './dto/list-staff-query.dto';
 
 const ONCE = 'tenant-once';
 const BELGRANO = 'tenant-belgrano';
@@ -222,6 +223,45 @@ describe('StaffService', () => {
       await service.listStaff(owner, { search: '   ' });
 
       expect(findManyArgs().where.OR).toBeUndefined();
+    });
+
+    it.each([StaffSearchField.name, StaffSearchField.email])(
+      'limits search to %s before counting and paginating',
+      async (searchField) => {
+        ownsBoth();
+        await service.listStaff(owner, {
+          search: '  ana  ',
+          searchField,
+          page: 2,
+          pageSize: 5,
+        });
+        const args = findManyArgs();
+        expect(args.where.OR).toBeUndefined();
+        expect(args.where[searchField]).toEqual({
+          contains: 'ana',
+          mode: 'insensitive',
+        });
+        expect(
+          args.where[searchField === StaffSearchField.name ? 'email' : 'name'],
+        ).toBeUndefined();
+        expect(args.where.memberships).toMatchObject({
+          some: { tenantId: { in: [ONCE, BELGRANO] } },
+        });
+        expect(args.skip).toBe(5);
+        expect(args.take).toBe(5);
+        expect(mockPrisma.user.count).toHaveBeenCalledWith({
+          where: args.where,
+        });
+      },
+    );
+
+    it('keeps the general search when all is explicit', async () => {
+      ownsBoth();
+      await service.listStaff(owner, {
+        search: 'ana',
+        searchField: StaffSearchField.all,
+      });
+      expect(findManyArgs().where.OR).toHaveLength(2);
     });
 
     it('filters who is listed by role', async () => {
