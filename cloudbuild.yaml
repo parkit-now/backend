@@ -1,0 +1,92 @@
+# Pipeline de deploy a PRODUCCIÓN (Cloud Build, trigger sobre push a `main`).
+#
+#   Build → Push → Migrate → Deploy
+#
+# Migrate aplica las migraciones nuevas de `supabase/migrations/` a la base de
+# prod ANTES de levantar la revisión nueva de Cloud Run. Si falla, el build se
+# corta y prod sigue corriendo la revisión anterior con el schema anterior.
+#
+# Entre Migrate y Deploy la revisión vieja corre unos minutos contra el schema
+# nuevo: por eso toda migración tiene que ser compatible con el código
+# anterior (expand/contract, ver CONTRIBUTING.md § Migraciones).
+#
+# Requisitos en GCP (una sola vez, ver CONTRIBUTING.md § Deploy a producción):
+#   - Secret `supabase-db-url-prod` con la connection string del SESSION
+#     POOLER de Supabase (puerto 5432). La conexión directa es sólo IPv6 y
+#     Cloud Build no tiene salida IPv6.
+#   - La service account del trigger con `roles/secretmanager.secretAccessor`
+#     sobre ese secret.
+#   - El trigger configurado con este archivo (`cloudbuild.yaml`).
+
+steps:
+  - id: Build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --no-cache
+      - -t
+      - $_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+      - .
+      - -f
+      - Dockerfile
+
+  - id: Push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - $_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+
+  # Sin --include-all a propósito: si una migración tiene timestamp anterior a
+  # la última aplicada en prod, la CLI se planta y el deploy no ocurre (mismo
+  # criterio que scripts/check-migrations.sh).
+  - id: Migrate
+    name: node:20
+    entrypoint: bash
+    secretEnv: [DB_URL]
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        npx --yes supabase@$_SUPABASE_CLI_VERSION db push --db-url "$$DB_URL" --yes
+
+  - id: Deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - update
+      - $_SERVICE_NAME
+      - --platform=managed
+      - --image=$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID,gcb-trigger-id=$_TRIGGER_ID
+      - --region=$_DEPLOY_REGION
+      - --quiet
+
+images:
+  - $_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/supabase-db-url-prod/versions/latest
+      env: DB_URL
+
+substitutions:
+  _AR_HOSTNAME: southamerica-east1-docker.pkg.dev
+  _AR_PROJECT_ID: parkit-496022
+  _AR_REPOSITORY: cloud-run-source-deploy
+  _DEPLOY_REGION: southamerica-east1
+  _PLATFORM: managed
+  _SERVICE_NAME: backend
+  _TRIGGER_ID: 54451b35-12f3-4149-9f39-f48c57a09088
+  # Misma versión que usa el equipo en local.
+  _SUPABASE_CLI_VERSION: 2.98.2
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE
+
+tags:
+  - gcp-cloud-build-deploy-cloud-run
+  - gcp-cloud-build-deploy-cloud-run-managed
+  - backend

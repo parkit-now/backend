@@ -139,7 +139,7 @@ Cuando tu feature esté lista para ser probada:
 
 Cuando se decide que la versión en `develop` está lista para ser productiva:
 1. Abrí un PR de `develop` contra **`main`**.
-2. Al mergear, el pipeline desplegará en PROD.
+2. Al mergear, el pipeline de Cloud Build aplica las migraciones nuevas y despliega en PROD (ver [Deploy a producción](#deploy-a-producción)).
 3. Se recomienda crear un `tag` de versión (ej: `v1.1.0`) sobre `main`.
 
 ## Casos borde
@@ -205,12 +205,13 @@ Mientras estés en tu rama podés tirar el archivo, renombrarlo, modificarlo, re
 
 **Pulleaste cambios de un compañero**: corré `make migration-apply` — aplica las migraciones que él/ella agregó y regenera tu cliente Prisma. Mismo comando que cuando aplicás las tuyas.
 
-**Al desplegar a prod** (manual o CI), corré `make push` para aplicar migraciones usando `DIRECT_URL` del `.env` (o de variables inyectadas en CI). Aplica sólo las migraciones nuevas. La data persiste.
+**Al desplegar a prod** las migraciones se aplican solas: el pipeline de Cloud Build corre `supabase db push` contra prod **antes** de desplegar el código nuevo (ver [Deploy a producción](#deploy-a-producción)). Aplica sólo las migraciones nuevas. La data persiste. `make push` queda como plan B manual.
 
 A partir de ese momento ese archivo está **congelado**. Cambios futuros van en una migración nueva.
 
 ### Reglas para no romper prod
 
+- **Compatible con el código anterior**: la migración se aplica antes del deploy, así que durante unos minutos la revisión vieja corre contra el schema nuevo. Agregar tablas, columnas nullable o con default y constraints que la data ya cumple es seguro; borrar o renombrar, no (ver expand/contract abajo).
 - **Forward-only**: no hay rollback. Si te equivocaste, escribís una migración nueva que enmiende.
 - **Una migración = un cambio coherente**. No mezcles "agregar tabla X" con "renombrar columna Y" en el mismo archivo.
 - **Nunca editar un archivo ya mergeado a `main`**. Si necesitás corregir, una migración nueva.
@@ -224,6 +225,49 @@ A partir de ese momento ese archivo está **congelado**. Cambios futuros van en 
 - **Backfills grandes en batches**, no en una sola transacción.
 - **Tablas grandes con tráfico**: usar `CREATE INDEX CONCURRENTLY`, evitar `ALTER TABLE` que tome `ACCESS EXCLUSIVE` lock por mucho tiempo.
 - **Probar en una Supabase branch** antes del merge cuando el cambio sea sensible.
+
+## Deploy a producción
+
+Cada push a `main` dispara el trigger de Cloud Build, que corre [`cloudbuild.yaml`](./cloudbuild.yaml):
+
+```
+Build (docker) → Push (Artifact Registry) → Migrate (supabase db push) → Deploy (Cloud Run)
+```
+
+- **Migrate** aplica las migraciones nuevas a la base de prod. Si falla (SQL inválido, orden incorrecto, base inaccesible), el build se corta y prod sigue con la revisión y el schema anteriores. No hace falta acordarse de correr `make push`.
+- Sin `--include-all`: una migración con timestamp anterior a la última aplicada frena el deploy, igual que `check-migrations` en el CI.
+- La connection string sale de Secret Manager (`supabase-db-url-prod`), nunca de un `.env`.
+
+### Setup (una sola vez)
+
+1. **Secret con la URL del session pooler.** La conexión directa de Supabase es sólo IPv6 y Cloud Build no tiene salida IPv6: usar la del *Session pooler* (Dashboard → Connect → Session pooler, puerto 5432).
+
+   ```bash
+   printf '%s' 'postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres' \
+     | gcloud secrets create supabase-db-url-prod --project parkit-496022 --data-file=-
+   ```
+
+2. **Permiso para leerlo** a la service account del trigger:
+
+   ```bash
+   gcloud secrets add-iam-policy-binding supabase-db-url-prod --project parkit-496022 \
+     --member=serviceAccount:148077191985-compute@developer.gserviceaccount.com \
+     --role=roles/secretmanager.secretAccessor
+   ```
+
+3. **Apuntar el trigger al archivo** (Cloud Build → Triggers → editar → Configuración: *Cloud Build configuration file*, `cloudbuild.yaml`).
+
+4. **Probar la conexión sin aplicar nada** (lista lo que se aplicaría):
+
+   ```bash
+   DB_URL="$(gcloud secrets versions access latest --secret supabase-db-url-prod --project parkit-496022)"
+   docker run --rm -v "$PWD":/workspace -w /workspace -e DB_URL="$DB_URL" node:20 \
+     bash -c 'npx --yes supabase@2.98.2 db push --db-url "$DB_URL" --dry-run'
+   ```
+
+### Si Migrate falla
+
+Prod no cambió: sigue la revisión anterior. Corregir con una migración nueva (o arreglar el secret/permiso) y re-ejecutar el build desde Cloud Build. Plan B manual: `make push-dry-run` y `make push` con la URL de prod en `DIRECT_URL`.
 
 ## Reglas de convivencia
 
