@@ -1,0 +1,36 @@
+model PlateProfile {
+  tenantId        String    @map("tenant_id") @db.Uuid
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plate           String    @db.VarChar(20)
+  vehicleBrand    String?   @map("vehicle_brand") @db.VarChar(120)
+  vehicleModel    String?   @map("vehicle_model") @db.VarChar(120)
+  vehicleTypeId   String?   @map("vehicle_type_id") @db.Uuid
+  vehicleTypeName String?   @map("vehicle_type_name") @db.VarChar(120)
+  color           String?   @db.VarChar(50)
+  rateId          String?   @map("rate_id") @db.Uuid
+  rateName        String?   @map("rate_name") @db.VarChar(120)
+  lastEntryId     String?   @map("last_entry_id") @db.Uuid
+  lastEnteredAt   DateTime? @map("last_entered_at") @db.Timestamptz(6)
+  learnAfter      DateTime? @map("learn_after") @db.Timestamptz(6)
+  editVersion     Int       @default(0) @map("edit_version")
+  version         Int       @default(1)
+  syncSeq         Int       @default(dbgenerated("nextval('plate_profiles_sync_seq')")) @map("sync_seq")
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([tenantId, plate])
+  @@index([tenantId, syncSeq], map: "plate_profiles_tenant_sync_seq_idx")
+  @@map("plate_profiles")
+}
+
+// Owner mutation receipts make a committed offline retry harmless, even after
+// another device has subsequently edited the same plate.
+model PlateProfileMutation {
+  id        String @id @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plate     String @db.VarChar(20)
+
+  @@map("plate_profile_mutations")
+}

@@ -2,6 +2,8 @@
 import {UserRole} from '@prisma/client'
 import {ApiProperty} from '@nestjs/swagger'
 import {UserMembershipEntity} from './user-membership.entity'
+import {UserTableTemplateEntity} from './user-table-template.entity'
+import {UserTableTemplateMutationEntity} from './user-table-template-mutation.entity'
 import {OnboardingApplicationEntity} from './onboarding-application.entity'
 import {AuditLogEntity} from './audit-log.entity'
 import {LprDetectionEventEntity} from './lpr-detection-event.entity'
@@ -26,6 +28,8 @@ name: string  | null;
 })
 createdAt: Date ;
 memberships?: UserMembershipEntity[] ;
+tableTemplates?: UserTableTemplateEntity[] ;
+tableTemplateMutations?: UserTableTemplateMutationEntity[] ;
 applications?: OnboardingApplicationEntity[] ;
 reviewedApplications?: OnboardingApplicationEntity[] ;
 auditLogs?: AuditLogEntity[] ;

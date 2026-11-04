@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TableTemplatesModule } from './table-templates/table-templates.module';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
@@ -31,11 +32,13 @@ import { MpWebhookModule } from './mercado-pago/mp-webhook.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { LprIgnoredPlatesModule } from './lpr-ignored-plates/lpr-ignored-plates.module';
 import { ClientsModule } from './clients/clients.module';
+import { PlateProfilesModule } from './plate-profiles/plate-profiles.module';
 import { InternalJobsModule } from './internal-jobs/internal-jobs.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    TableTemplatesModule,
     ScheduleModule.forRoot(),
     PrismaModule,
     UsersModule,
@@ -67,6 +70,7 @@ import { InternalJobsModule } from './internal-jobs/internal-jobs.module';
     ReservationsModule,
     LprIgnoredPlatesModule,
     ClientsModule,
+    PlateProfilesModule,
     InternalJobsModule,
   ],
 })

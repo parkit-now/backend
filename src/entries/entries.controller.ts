@@ -32,6 +32,7 @@ import { CreateEntryDto } from './dto/create-entry.dto';
 import { LprEntryDto } from './dto/lpr-entry.dto';
 import { EntryChangesQueryDto } from './dto/entry-changes-query.dto';
 import { EntryChangesResponseDto } from './dto/entry-changes-response.dto';
+import { EntryIdsResponseDto } from './dto/entry-ids-response.dto';
 import { EntryDto } from './dto/entry.dto';
 import { EntriesService } from './entries.service';
 import { ExpectedVersionQueryDto } from './dto/expected-version-query.dto';
@@ -50,6 +51,16 @@ export class EntriesController {
   @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
   async findAll() {
     return this.entriesService.findAll();
+  }
+
+  @Get('ids')
+  @ApiOperation({
+    summary: 'List the ids of every live entry, for offline reconciliation',
+  })
+  @ApiOkResponse({ type: EntryIdsResponseDto })
+  @ApiParam({ name: 'tenantId', description: 'Parking lot tenant ID' })
+  async findAllIds() {
+    return this.entriesService.findAllIds();
   }
 
   @Get('changes')

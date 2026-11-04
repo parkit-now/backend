@@ -110,6 +110,28 @@ describe('EntriesService', () => {
     });
   });
 
+  describe('findAllIds', () => {
+    it('devuelve sólo ids, sólo de las vivas y con aislamiento por tenant', async () => {
+      mockTenant.entry.findMany.mockResolvedValue([
+        { id: 'e-1' },
+        { id: 'e-2' },
+      ]);
+
+      const result = await service.findAllIds();
+
+      expect(result).toEqual({ ids: ['e-1', 'e-2'] });
+      expect(mockPrisma.getTenantClient).toHaveBeenCalled();
+
+      // Las dos condiciones de las que depende el cliente para podar sin
+      // borrar de más: la lista no puede llevar ningún filtro extra, y los
+      // borrados quedan afuera para que también desaparezcan del equipo.
+      expect(mockTenant.entry.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null },
+        select: { id: true },
+      });
+    });
+  });
+
   describe('correctEntry', () => {
     function makeEntry(overrides: Record<string, unknown> = {}) {
       return {
