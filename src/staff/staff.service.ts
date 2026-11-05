@@ -11,7 +11,10 @@ import { PrismaService } from '../database/prisma.service';
 import { ErrorCodes } from '../utils/exceptions/error-codes';
 import { FormattedException } from '../utils/exceptions/http-exception/formatted-exeption';
 import { resolvePagination } from '../utils/pagination/pagination-query.dto';
-import { ListStaffQueryDto } from './dto/list-staff-query.dto';
+import {
+  ListStaffQueryDto,
+  StaffSearchField,
+} from './dto/list-staff-query.dto';
 import { PaginatedStaffDto } from './dto/paginated-staff.dto';
 import { StaffMemberDto } from './dto/staff-member.dto';
 
@@ -27,9 +30,15 @@ type UserWithMemberships = User & { memberships: MembershipWithTenant[] };
  * admin panel and the owner dashboard can diverge without one silently
  * changing the other's results.
  */
-function searchWhere(search?: string): Prisma.UserWhereInput {
+function searchWhere(
+  search?: string,
+  field?: StaffSearchField,
+): Prisma.UserWhereInput {
   const term = search?.trim();
   if (!term) return {};
+  if (field === StaffSearchField.name || field === StaffSearchField.email) {
+    return { [field]: { contains: term, mode: 'insensitive' } };
+  }
   return {
     OR: [
       { name: { contains: term, mode: 'insensitive' } },
@@ -96,7 +105,7 @@ export class StaffService {
           ...(query.role ? { role: query.role } : {}),
         },
       },
-      ...searchWhere(query.search),
+      ...searchWhere(query.search, query.searchField),
     };
 
     const [rows, total] = await this.prisma.$transaction([
