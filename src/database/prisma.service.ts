@@ -1,9 +1,15 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { prismaForTenant, TenantPrismaClient } from './prisma-tenant';
 import { TenantContextService } from './tenant-context.service';
+import { databasePoolConfig } from './database-pool.config';
 
 /**
  * NestJS-managed Prisma 7 client.
@@ -21,11 +27,18 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly pool: Pool;
+  private readonly logger = new Logger(PrismaService.name);
 
   constructor(private readonly tenantContext: TenantContextService) {
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const pool = new Pool(databasePoolConfig());
     super({ adapter: new PrismaPg(pool) });
     this.pool = pool;
+    // Un socket ocioso puede fallar sin estar asociado a una solicitud HTTP.
+    pool.on('error', () => {
+      this.logger.error(
+        `Database idle connection failed (total=${pool.totalCount}, idle=${pool.idleCount}, waiting=${pool.waitingCount})`,
+      );
+    });
   }
 
   /**
@@ -39,10 +52,16 @@ export class PrismaService
 
   async onModuleInit(): Promise<void> {
     await this.$connect();
+    this.logger.log(
+      `Database pool ready (max=${this.pool.options.max}, connectTimeoutMs=${this.pool.options.connectionTimeoutMillis}, idleTimeoutMs=${this.pool.options.idleTimeoutMillis})`,
+    );
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.$disconnect();
-    await this.pool.end();
+    try {
+      await this.$disconnect();
+    } finally {
+      await this.pool.end();
+    }
   }
 }

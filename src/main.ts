@@ -91,6 +91,7 @@ async function bootstrap() {
     });
 
     logger.log('Nest application created');
+    app.enableShutdownHooks();
 
     app.enableCors({
       origin: '*',
